@@ -33,6 +33,18 @@ type scmTimestamping struct {
 	TS [3]unix.Timespec
 }
 
+// Both structures we reinterpret from raw control-message bytes must match
+// the kernel ABI exactly; a silent layout mismatch would yield plausible-
+// looking but wrong timestamps. sock_extended_err is fixed-width on every
+// Linux architecture, and scm_timestamping is three timespecs. These asserts
+// fail the build rather than the measurements.
+const (
+	_ = uint(unsafe.Sizeof(unix.SockExtendedErr{}) - 16)
+	_ = uint(16 - unsafe.Sizeof(unix.SockExtendedErr{}))
+	_ = uint(unsafe.Sizeof(scmTimestamping{}) - 3*unsafe.Sizeof(unix.Timespec{}))
+	_ = uint(3*unsafe.Sizeof(unix.Timespec{}) - unsafe.Sizeof(scmTimestamping{}))
+)
+
 func fromOOB(oob []byte) (time.Time, bool) {
 	cmsgs, err := unix.ParseSocketControlMessage(oob)
 	if err != nil {
@@ -45,7 +57,7 @@ func fromOOB(oob []byte) (time.Time, bool) {
 			if ts.Sec == 0 && ts.Nsec == 0 {
 				continue
 			}
-			return time.Unix(ts.Sec, ts.Nsec), true
+			return time.Unix(int64(ts.Sec), int64(ts.Nsec)), true
 		}
 	}
 	return time.Time{}, false
@@ -81,9 +93,8 @@ func readErrQueue(fd int) ([]TXStamp, error) {
 				}
 			case (m.Header.Level == unix.IPPROTO_IP && m.Header.Type == unix.IP_RECVERR) ||
 				(m.Header.Level == unix.IPPROTO_IPV6 && m.Header.Type == unix.IPV6_RECVERR):
-				// struct sock_extended_err: ee_data is the OPT_ID counter at
-				// byte offset 12.
-				if len(m.Data) >= 16 {
+				// struct sock_extended_err carries the OPT_ID counter in ee_data.
+				if len(m.Data) >= int(unsafe.Sizeof(unix.SockExtendedErr{})) {
 					se := (*unix.SockExtendedErr)(unsafe.Pointer(&m.Data[0]))
 					if se.Origin == unix.SO_EE_ORIGIN_TIMESTAMPING {
 						counter, haveErr = se.Data, true
@@ -105,5 +116,5 @@ func fromOOBCmsg(data []byte) (time.Time, bool) {
 	if ts.Sec == 0 && ts.Nsec == 0 {
 		return time.Time{}, false
 	}
-	return time.Unix(ts.Sec, ts.Nsec), true
+	return time.Unix(int64(ts.Sec), int64(ts.Nsec)), true
 }

@@ -89,8 +89,23 @@ versus the userspace fallback:
 Roughly 20× more apparent jitter from the measurement method alone — noise that would be
 drawn as smoke and read as network variance. The two rows are different hosts, so treat
 the ratio as indicative rather than a controlled benchmark; the order of magnitude is
-what matters. Verified on Linux 7.1 (aarch64); `internal/probe/timestamp` carries an
-integration test that exercises the full path and skips where the socket is unavailable.
+what matters.
+
+One kernel quirk worth knowing: Linux gates RX timestamping behind a static key that
+goes cold when nothing has requested timestamps for a few seconds. The first packets
+after that arrive with no `SCM_TIMESTAMPING` at all. smokeng handles this by design —
+those measurements are stamped in userspace and carry `FlagUserspaceRX` — so expect the
+occasional flagged measurement right after startup, and on targets whose interval is long
+enough that the socket goes quiet between bursts. Nothing is silently mis-measured; the
+flag is the record.
+
+Verified on Linux 7.1: aarch64 natively (full kernel path, plus an end-to-end run where
+every measurement was written with `flags=0`), and x86-64 under qemu-user, where the
+missing `SO_TIMESTAMPING` support exercised the fallback path instead. The structures
+read from control messages are architecture-independent — `sock_extended_err` is
+fixed-width on every Linux port — and compile-time assertions in
+`internal/probe/timestamp` fail the build if that ever stops being true. The package
+builds for linux/amd64, arm64, 386, arm and riscv64.
 
 ## Layout
 
