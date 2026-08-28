@@ -1,40 +1,75 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { fetchTargets, type Target } from './api'
+import Plot from './Plot'
 
-interface TargetsResponse {
-  targets: { id: number; path: string; host: string | null }[]
-}
+const RANGES: { label: string; seconds: number }[] = [
+  { label: '15m', seconds: 15 * 60 },
+  { label: '1h', seconds: 3600 },
+  { label: '6h', seconds: 6 * 3600 },
+  { label: '24h', seconds: 24 * 3600 },
+]
+const REFRESH_MS = 10_000
 
-// Scaffold placeholder. The real UI — density smoke plots, median line, loss
-// rail, shared crosshair, brush-zoom — replaces this per DESIGN.md §8.
 export default function App() {
-  const [targets, setTargets] = useState<TargetsResponse['targets'] | null>(null)
+  const [targets, setTargets] = useState<Target[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [rangeS, setRangeS] = useState(3600)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [live, setLive] = useState(true)
+  const [logScale, setLogScale] = useState(true)
 
   useEffect(() => {
-    fetch('/api/v1/targets')
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((body: TargetsResponse) => setTargets(body.targets))
+    fetchTargets()
+      .then(setTargets)
       .catch((e: Error) => setError(e.message))
   }, [])
 
+  useEffect(() => {
+    if (!live) return
+    const id = setInterval(() => setRefreshKey((k) => k + 1), REFRESH_MS)
+    return () => clearInterval(id)
+  }, [live])
+
+  // Freeze the window per refresh tick so all stacked plots share one time
+  // axis — the precondition for the shared crosshair later.
+  const [from, to] = useMemo(() => {
+    const now = Math.floor(Date.now() / 1000)
+    return [now - rangeS, now]
+  }, [rangeS, refreshKey])
+
+  const leaves = targets.filter((t) => t.host !== null && t.enabled && !t.hidden)
+
   return (
     <main>
-      <h1>smokeng</h1>
-      <p>
-        Scaffold build — rendering pipeline not implemented yet. The API is
-        live; the target tree below comes from <code>/api/v1/targets</code>.
-      </p>
-      {error && <p className="error">Failed to load targets: {error}</p>}
-      {targets && (
-        <ul>
-          {targets.map((t) => (
-            <li key={t.id}>
-              <code>{t.path}</code>
-              {t.host ? ` → ${t.host}` : ' (group)'}
-            </li>
+      <header>
+        <h1>smokeng</h1>
+        <div className="controls">
+          {RANGES.map((r) => (
+            <button
+              key={r.label}
+              className={r.seconds === rangeS ? 'active' : ''}
+              onClick={() => setRangeS(r.seconds)}
+            >
+              {r.label}
+            </button>
           ))}
-        </ul>
+          <button className={logScale ? 'active' : ''} onClick={() => setLogScale(!logScale)}>
+            log
+          </button>
+          <button className={live ? 'active' : ''} onClick={() => setLive(!live)}>
+            {live ? '● live' : '○ paused'}
+          </button>
+        </div>
+      </header>
+      {error && <p className="error">{error}</p>}
+      {!error && leaves.length === 0 && (
+        <p>
+          No targets yet — import some with <code>smokeng config import targets.toml</code>.
+        </p>
       )}
+      {leaves.map((t) => (
+        <Plot key={t.id} target={t} from={from} to={to} refreshKey={refreshKey} logScale={logScale} />
+      ))}
     </main>
   )
 }

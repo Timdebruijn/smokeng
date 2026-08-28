@@ -25,8 +25,7 @@ func New(st store.Store, webFS fs.FS) http.Handler {
 		w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("GET /api/v1/targets", s.handleTargets)
-	// Arrow IPC measurement endpoint (§7.2); implemented with the prober step.
-	mux.HandleFunc("GET /api/v1/measurements", notImplemented)
+	mux.HandleFunc("GET /api/v1/measurements", s.handleMeasurements)
 	// Signed agent ingest (§9); v0.4.
 	mux.HandleFunc("POST /api/v1/ingest", notImplemented)
 	mux.Handle("/", http.FileServerFS(webFS))

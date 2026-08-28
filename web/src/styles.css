@@ -1,16 +1,78 @@
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
+  --fg: light-dark(#1a1a1a, #e6e6e6);
+  --fg-dim: light-dark(#666, #999);
+  --accent: light-dark(#0369a1, #7dd3fc);
+  --border: light-dark(#ddd, #333);
 }
 
 body {
   margin: 0;
+  color: var(--fg);
 }
 
 main {
-  max-width: 48rem;
+  max-width: 72rem;
   margin: 0 auto;
-  padding: 2rem 1rem;
+  padding: 1rem 1.5rem 3rem;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 0.5rem 0;
+}
+
+.controls {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.controls button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.controls button.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.plot {
+  margin-top: 1.25rem;
+}
+
+.plot h2 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+}
+
+.plot h2 .host {
+  margin-left: 0.6rem;
+  font-weight: 400;
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+}
+
+.plot canvas {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 6px;
 }
 
 .error {

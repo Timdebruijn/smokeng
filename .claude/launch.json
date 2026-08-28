@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "smokeng",
+      "runtimeExecutable": "./bin/smokeng",
+      "runtimeArgs": ["serve", "--db", "smokeng.db", "--listen", "127.0.0.1:8080"],
+      "port": 8080
+    }
+  ]
+}
