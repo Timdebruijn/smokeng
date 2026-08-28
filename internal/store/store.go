@@ -42,5 +42,14 @@ type Store interface {
 	ListTargets(ctx context.Context) ([]tree.Target, error)
 	// UpsertTarget inserts (ID == 0, assigning t.ID) or updates a target.
 	UpsertTarget(ctx context.Context, t *tree.Target) error
+	// DeleteTarget removes a target row. Measurements are left untouched —
+	// history is only ever destroyed by an explicit operator action. Callers
+	// must delete children before their parent (foreign key).
+	DeleteTarget(ctx context.Context, id int64) error
+	// RecordResolution appends a row to the DNS change log (DESIGN.md §5.4).
+	RecordResolution(ctx context.Context, targetID, ts int64, address string) error
+	// LastResolution returns the most recently logged address for the target,
+	// or "" when none has been recorded.
+	LastResolution(ctx context.Context, targetID int64) (string, error)
 	Close() error
 }

@@ -275,6 +275,29 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 	return nil
 }
 
+func (s *SQLite) DeleteTarget(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM targets WHERE id = ?", id)
+	return err
+}
+
+func (s *SQLite) RecordResolution(ctx context.Context, targetID, ts int64, address string) error {
+	_, err := s.db.ExecContext(ctx,
+		"INSERT OR REPLACE INTO resolutions (target_id, ts, address) VALUES (?, ?, ?)",
+		targetID, ts, address)
+	return err
+}
+
+func (s *SQLite) LastResolution(ctx context.Context, targetID int64) (string, error) {
+	var addr string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT address FROM resolutions WHERE target_id = ? ORDER BY ts DESC LIMIT 1",
+		targetID).Scan(&addr)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return addr, err
+}
+
 func nullStr(v sql.NullString) *string {
 	if !v.Valid {
 		return nil

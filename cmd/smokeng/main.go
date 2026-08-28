@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"smokeng/internal/api"
+	"smokeng/internal/config"
 	"smokeng/internal/store"
 	"smokeng/web"
 )
@@ -35,8 +36,9 @@ func main() {
 			log.Fatal(err)
 		}
 	case "config":
-		fmt.Fprintln(os.Stderr, "smokeng config import/export: not implemented yet (DESIGN.md §7.3)")
-		os.Exit(1)
+		if err := configCmd(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 	case "version":
 		fmt.Printf("smokeng %s (%s)\n", version, runtime.Version())
 	default:
@@ -49,9 +51,56 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage: smokeng <command>
 
 commands:
-  serve      run the master: prober, API and web UI
-  config     import/export the target tree as TOML (not implemented yet)
-  version    print version`)
+  serve                          run the master: prober, API and web UI
+  config import [--prune] FILE   sync the target tree from a TOML file
+  config export                  write the target tree as TOML to stdout
+  version                        print version`)
+}
+
+func configCmd(args []string) error {
+	if len(args) < 1 {
+		usage()
+		os.Exit(2)
+	}
+	sub, args := args[0], args[1:]
+	fs := flag.NewFlagSet("config "+sub, flag.ExitOnError)
+	dbPath := fs.String("db", "smokeng.db", "path to the SQLite database")
+	prune := fs.Bool("prune", false, "delete targets absent from the file instead of disabling them")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	st, err := store.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	switch sub {
+	case "import":
+		if fs.NArg() != 1 {
+			return errors.New("usage: smokeng config import [--db path] [--prune] FILE")
+		}
+		data, err := os.ReadFile(fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		sum, err := config.Import(ctx, st, data, *prune)
+		if err != nil {
+			return err
+		}
+		fmt.Println(sum)
+		return nil
+	case "export":
+		data, err := config.Export(ctx, st)
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(data)
+		return err
+	default:
+		return fmt.Errorf("unknown config subcommand %q", sub)
+	}
 }
 
 func serve(args []string) error {
