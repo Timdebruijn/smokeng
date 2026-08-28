@@ -5,9 +5,15 @@ rebuilt from scratch. The one thing that makes it worth existing: it keeps the *
 distribution per measurement interval, forever, at full resolution**, and renders it as
 actual density — no rollup, no consolidation, no single-value-per-check.
 
-**Status: scaffold.** The design is agreed and frozen in [DESIGN.md](DESIGN.md); the
-storage layer, target-tree inheritance and API skeleton exist, the probing engine and
-the density renderer are the next implementation steps.
+**Status: v0.1 feature-complete, unreleased.** The design is agreed and frozen in
+[DESIGN.md](DESIGN.md). Working end to end: the ICMP prober (burst and spread, kernel
+timestamping with observable fallback), the SQLite store, TOML import/export of the
+target tree, the Arrow measurements API, and the browser renderer — density smoke,
+pooled median, loss rail, stacked plots with a shared crosshair, brush-zoom to free time
+ranges, and a log y-axis. Still to come: admin UI and OIDC (v0.3), remote agents (v0.4).
+
+Not yet verified on Linux: the kernel-timestamping path compiles for linux/amd64 and
+linux/arm64 but has only been run on macOS, where the userspace fallback is used.
 
 ## Build
 
@@ -23,8 +29,25 @@ make test
 Run:
 
 ```
+./bin/smokeng config import --db smokeng.db targets.toml
 ./bin/smokeng serve --db smokeng.db --listen 127.0.0.1:8080
 ```
+
+A minimal `targets.toml`:
+
+```toml
+[defaults]
+interval_s = 60
+pings_per_interval = 20
+
+[targets."Internet/cloudflare-v4"]
+host = "1.1.1.1"
+address_family = "v4"
+```
+
+Settings cascade down the tree; an unset key means "inherit". `config export` writes the
+tree back out, round-tripping exactly, and `config import --prune` deletes targets absent
+from the file instead of merely disabling them.
 
 There is no authentication before v0.3 (OIDC). `serve` therefore refuses to listen on a
 non-loopback address unless you pass `--i-know-this-is-unauthenticated`.

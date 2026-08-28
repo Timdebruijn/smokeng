@@ -1,12 +1,16 @@
 /**
  * Density renderer (DESIGN.md §8.2). Runs in a worker on an OffscreenCanvas
  * so the main thread never blocks. Per pixel column: pool the samples of
- * every interval in that column's time span, deposit them as impulses in
- * pixel space, run one 1-D Gaussian blur, map density to alpha, and write the
- * column into a single ImageData. The median line is computed from the pooled
- * samples — never a median of medians — and gaps stay gaps: no interpolation
- * across missing buckets.
+ * every interval overlapping that column's time span, deposit them as
+ * impulses in pixel space, run one 1-D Gaussian blur, map density to alpha,
+ * and write the column into a single ImageData. The median line comes from
+ * the pooled samples — never a median of medians — and gaps stay gaps: no
+ * interpolation across missing buckets.
+ *
+ * All geometry arrives in CSS pixels and is scaled by devicePixelRatio here,
+ * so text, line weights and the blur keep their intended size on any display.
  */
+import { AXIS_W, AXIS_H, RAIL_H, RAIL_GAP, fmtUs, inferSpan } from './layout'
 
 interface SeriesMsg {
   ts: Float64Array
@@ -17,8 +21,9 @@ interface SeriesMsg {
 }
 
 interface ViewMsg {
-  w: number
-  h: number
+  cssW: number
+  cssH: number
+  dpr: number
   t0: number
   t1: number
   dark: boolean
@@ -26,15 +31,10 @@ interface ViewMsg {
 }
 
 // Density→alpha: count-normalized fixed curve alpha = 1 − exp(−K·fraction)
-// (mode (b) of the design's trade-off #2), keeping columns comparable over
-// time regardless of how many samples they pool.
+// (mode (b) of the design's trade-off #2), so columns stay comparable over
+// time no matter how many samples they pool.
 const ALPHA_K = 14
-const SIGMA_PX = 1.5
-const KERNEL_R = 4
-const RAIL_H = 10
-const RAIL_GAP = 4
-const AXIS_W = 56
-const AXIS_H = 18
+const SIGMA_CSS = 1.1
 
 let canvas: OffscreenCanvas | null = null
 
@@ -47,18 +47,21 @@ self.onmessage = (ev: MessageEvent) => {
   }
 }
 
-function gaussianKernel(): Float32Array {
-  const k = new Float32Array(2 * KERNEL_R + 1)
+let kernelCache: { sigma: number; radius: number; k: Float32Array } | null = null
+function gaussianKernel(sigma: number) {
+  if (kernelCache && kernelCache.sigma === sigma) return kernelCache
+  const radius = Math.max(2, Math.ceil(sigma * 3))
+  const k = new Float32Array(2 * radius + 1)
   let sum = 0
-  for (let i = -KERNEL_R; i <= KERNEL_R; i++) {
-    const v = Math.exp(-(i * i) / (2 * SIGMA_PX * SIGMA_PX))
-    k[i + KERNEL_R] = v
+  for (let i = -radius; i <= radius; i++) {
+    const v = Math.exp(-(i * i) / (2 * sigma * sigma))
+    k[i + radius] = v
     sum += v
   }
   for (let i = 0; i < k.length; i++) k[i] /= sum
-  return k
+  kernelCache = { sigma, radius, k }
+  return kernelCache
 }
-const KERNEL = gaussianKernel()
 
 // Sequential viridis stops for the loss rail (perceptually uniform).
 const VIRIDIS: [number, number, number][] = [
@@ -79,25 +82,26 @@ function quantile(sorted: Uint32Array, q: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]
 }
 
-function fmtUs(us: number): string {
-  if (us < 1000) return `${Math.round(us)}µs`
-  if (us < 1_000_000) return `${(us / 1000).toFixed(us < 10_000 ? 1 : 0)}ms`
-  return `${(us / 1_000_000).toFixed(1)}s`
-}
-
 function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
-  const { w, h, t0, t1, dark, log } = view
+  const { cssW, cssH, dpr, t0, t1, dark, log } = view
+  const w = Math.round(cssW * dpr)
+  const h = Math.round(cssH * dpr)
   cv.width = w
   cv.height = h
   const ctx = cv.getContext('2d')!
   ctx.clearRect(0, 0, w, h)
 
-  const plotW = w - AXIS_W
-  const plotH = h - RAIL_H - RAIL_GAP - AXIS_H
+  const axisW = Math.round(AXIS_W * dpr)
+  const railH = Math.round(RAIL_H * dpr)
+  const railGap = Math.round(RAIL_GAP * dpr)
+  const axisH = Math.round(AXIS_H * dpr)
+  const plotW = w - axisW
+  const plotH = h - railH - railGap - axisH
   const n = d.ts.length
+  if (plotW <= 0 || plotH <= 0) return
 
-  // y scale. Log (the default): the full range fits naturally, outliers and
-  // all. Linear: clip the top 0.5% so one outlier doesn't crush the plot.
+  // y scale. Log (the default): the whole range fits, outliers and all.
+  // Linear: clip the top 0.5% so a single outlier can't crush the plot.
   const allSorted = sortedCopy(d.values)
   let ymax: number
   let ymin = 0
@@ -109,31 +113,19 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   }
   const lmin = Math.log10(Math.max(ymin, 1))
   const lmax = Math.log10(ymax)
-  // fraction of plot height for an RTT in µs (0 = bottom, 1 = top)
-  const yFrac = (us: number): number => {
-    if (log) return (Math.log10(Math.max(us, ymin)) - lmin) / (lmax - lmin)
-    return Math.min(us, ymax) / ymax
-  }
-  // inverse, for axis tick labels
+  const yFrac = (us: number): number =>
+    log ? (Math.log10(Math.max(us, ymin)) - lmin) / (lmax - lmin) : Math.min(us, ymax) / ymax
   const fracVal = (f: number): number => (log ? Math.pow(10, lmin + f * (lmax - lmin)) : f * ymax)
 
-  const text = dark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.6)'
+  const text = dark ? 'rgba(255,255,255,0.62)' : 'rgba(0,0,0,0.58)'
   const grid = dark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.08)'
-  const smoke: [number, number, number] = dark ? [120, 180, 255] : [23, 80, 190]
+  const smoke: [number, number, number] = dark ? [125, 185, 255] : [23, 80, 190]
   const medianColor = dark ? '#7dd3fc' : '#0369a1'
 
-  // Assign measurement rows to pixel columns. A row's ts is its interval
-  // START: the row covers [ts, ts + interval) and must land in every column
-  // that span overlaps. The interval isn't on the wire, so infer it from the
-  // median spacing between consecutive rows (robust against missed buckets).
+  // A row's ts is its interval START: it covers [ts, ts+span) and belongs in
+  // every column that span overlaps.
   const dt = (t1 - t0) / plotW
-  let span = 60
-  if (n > 1) {
-    const diffs: number[] = []
-    for (let i = 1; i < n; i++) diffs.push(d.ts[i] - d.ts[i - 1])
-    diffs.sort((a, b) => a - b)
-    span = diffs[Math.floor(diffs.length / 2)]
-  }
+  const span = inferSpan(d.ts, n)
   const colRows: number[][] = Array.from({ length: plotW }, () => [])
   for (let i = 0; i < n; i++) {
     const x0 = Math.max(0, Math.floor((d.ts[i] - t0) / dt))
@@ -146,6 +138,7 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   const blurred = new Float32Array(plotH)
   const median = new Float64Array(plotW).fill(NaN)
   const loss = new Float64Array(plotW).fill(NaN)
+  const { radius, k: KERNEL } = gaussianKernel(SIGMA_CSS * dpr)
 
   for (let x = 0; x < plotW; x++) {
     const rows = colRows[x]
@@ -180,9 +173,9 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
     for (let y = 0; y < plotH; y++) {
       const v = dens[y]
       if (v === 0) continue
-      for (let k = -KERNEL_R; k <= KERNEL_R; k++) {
-        const yy = y + k
-        if (yy >= 0 && yy < plotH) blurred[yy] += v * KERNEL[k + KERNEL_R]
+      for (let kk = -radius; kk <= radius; kk++) {
+        const yy = y + kk
+        if (yy >= 0 && yy < plotH) blurred[yy] += v * KERNEL[kk + radius]
       }
     }
     for (let y = 0; y < plotH; y++) {
@@ -196,23 +189,24 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
       img.data[p + 3] = Math.min(255, Math.round(a * 255))
     }
   }
-  ctx.putImageData(img, AXIS_W, 0)
+  ctx.putImageData(img, axisW, 0)
 
   // y grid + labels
-  ctx.font = '10px system-ui, sans-serif'
+  ctx.font = `${Math.round(10 * dpr)}px system-ui, sans-serif`
   ctx.fillStyle = text
   ctx.strokeStyle = grid
+  ctx.lineWidth = Math.max(1, Math.round(dpr / 2))
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
   for (let i = 0; i <= 4; i++) {
     const frac = i / 4
     const y = (plotH - 1) * (1 - frac)
     ctx.beginPath()
-    ctx.moveTo(AXIS_W, y + 0.5)
+    ctx.moveTo(axisW, y + 0.5)
     ctx.lineTo(w, y + 0.5)
     ctx.stroke()
     const label = log && i === 0 ? fmtUs(ymin) : fmtUs(fracVal(frac))
-    ctx.fillText(label, AXIS_W - 6, Math.min(Math.max(y, 6), plotH - 6))
+    ctx.fillText(label, axisW - 6 * dpr, Math.min(Math.max(y, 7 * dpr), plotH - 7 * dpr))
   }
 
   // time labels
@@ -220,15 +214,15 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   ctx.textBaseline = 'top'
   for (let i = 0; i <= 4; i++) {
     const t = t0 + ((t1 - t0) * i) / 4
-    const x = AXIS_W + (plotW * i) / 4
+    const x = axisW + (plotW * i) / 4
     const dte = new Date(t * 1000)
     const label = `${String(dte.getHours()).padStart(2, '0')}:${String(dte.getMinutes()).padStart(2, '0')}`
-    ctx.fillText(label, Math.min(Math.max(x, AXIS_W + 16), w - 16), h - AXIS_H + 4)
+    ctx.fillText(label, Math.min(Math.max(x, axisW + 18 * dpr), w - 18 * dpr), h - axisH + 4 * dpr)
   }
 
   // median line, breaking at gaps
   ctx.strokeStyle = medianColor
-  ctx.lineWidth = 1.25
+  ctx.lineWidth = 1.25 * dpr
   ctx.beginPath()
   let pen = false
   for (let x = 0; x < plotW; x++) {
@@ -237,31 +231,31 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
       continue
     }
     const y = (plotH - 1) * (1 - Math.min(yFrac(median[x]), 1))
-    if (pen) ctx.lineTo(AXIS_W + x + 0.5, y)
-    else ctx.moveTo(AXIS_W + x + 0.5, y)
+    if (pen) ctx.lineTo(axisW + x + 0.5, y)
+    else ctx.moveTo(axisW + x + 0.5, y)
     pen = true
   }
   ctx.stroke()
 
-  // loss rail: 0% stays background so the rail is silent when all is well
-  const railY = plotH + RAIL_GAP
+  // loss rail: 0% stays background, so the rail is silent when all is well
+  const railY = plotH + railGap
   for (let x = 0; x < plotW; x++) {
     const l = loss[x]
     if (Number.isNaN(l) || l <= 0) continue
     const [r, g, b] = viridis(l)
     ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`
-    ctx.fillRect(AXIS_W + x, railY, 1, RAIL_H)
+    ctx.fillRect(axisW + x, railY, 1, railH)
   }
   ctx.fillStyle = text
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
-  ctx.fillText('loss', AXIS_W - 6, railY + RAIL_H / 2)
+  ctx.fillText('loss', axisW - 6 * dpr, railY + railH / 2)
 
   postMessage({ type: 'rendered' })
 }
 
-// The per-row sample lists are sorted; a full ascending sort of the
-// concatenation is still cheap at these sizes and only needed for ymax.
+// Per-row sample lists are sorted; a full ascending sort of the concatenation
+// is still cheap at these sizes and is only needed for the y scale.
 // TypedArray.sort() is numeric.
 function sortedCopy(values: Uint32Array): Uint32Array {
   const copy = values.slice()
