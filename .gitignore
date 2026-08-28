@@ -1,0 +1,11 @@
+# binaries and local databases
+/bin/
+*.db
+*.db-wal
+*.db-shm
+
+# frontend
+web/node_modules/
+
+# OS noise
+.DS_Store

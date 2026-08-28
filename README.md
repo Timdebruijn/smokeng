@@ -1,0 +1,74 @@
+# smokeng
+
+A latency monitoring tool in the spirit of [SmokePing](https://oss.oetiker.ch/smokeping/),
+rebuilt from scratch. The one thing that makes it worth existing: it keeps the **full RTT
+distribution per measurement interval, forever, at full resolution**, and renders it as
+actual density — no rollup, no consolidation, no single-value-per-check.
+
+**Status: scaffold.** The design is agreed and frozen in [DESIGN.md](DESIGN.md); the
+storage layer, target-tree inheritance and API skeleton exist, the probing engine and
+the density renderer are the next implementation steps.
+
+## Build
+
+Requirements: Go 1.27+. Node 22+ only when rebuilding the frontend (`web/dist` is
+committed, so `go build` alone always produces a working binary).
+
+```
+make            # rebuild frontend + binary
+make build      # binary only, no Node needed
+make test
+```
+
+Run:
+
+```
+./bin/smokeng serve --db smokeng.db --listen 127.0.0.1:8080
+```
+
+There is no authentication before v0.3 (OIDC). `serve` therefore refuses to listen on a
+non-loopback address unless you pass `--i-know-this-is-unauthenticated`.
+
+## Unprivileged ICMP (Linux)
+
+smokeng pings from unprivileged datagram ICMP sockets — no root, no `CAP_NET_RAW`, no
+subprocess per measurement. The kernel gates this behind a sysctl listing the group IDs
+allowed to create such sockets:
+
+```
+sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+```
+
+Persist it in `/etc/sysctl.d/50-smokeng.conf`:
+
+```
+net.ipv4.ping_group_range = 0 2147483647
+```
+
+The setting covers ICMPv6 datagram sockets as well. Narrow the range to the GID smokeng
+runs as if you prefer. If the datagram socket is not permitted, smokeng falls back to raw
+sockets (which need `CAP_NET_RAW`) with a clear error message, and marks all affected
+measurements with a degraded-accuracy flag.
+
+## Timestamping accuracy
+
+On Linux, packets are timestamped by the kernel in both directions
+(`SO_TIMESTAMPING`), so scheduler jitter on a busy host does not widen the smoke. On
+other platforms (including macOS, supported for development) userspace timestamps are
+used instead — this is recorded per measurement in a flags field, never silently.
+
+## Layout
+
+| Path | Contents |
+|---|---|
+| `cmd/smokeng` | the binary: `serve`, `config`, (v0.4) `agent` |
+| `internal/tree` | target tree, inheritance resolution with provenance |
+| `internal/probe` | scheduler + ICMP engine (skeleton) |
+| `internal/store` | storage interface, SQLite backend, samples codec |
+| `internal/api` | HTTP API, Arrow serialization |
+| `internal/config` | TOML import/export, SmokePing importer (skeleton) |
+| `internal/ingest` | signed agent ingest, v0.4 (skeleton) |
+| `web` | React frontend, embedded into the binary |
+
+See [DESIGN.md](DESIGN.md) for the data model, rendering pipeline, agent protocol and
+the explicit non-goals.
