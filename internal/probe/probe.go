@@ -1,19 +1,17 @@
-// Package probe will contain the scheduler and the ICMP engine
-// (DESIGN.md §5): datagram ICMP sockets per address family, kernel TX+RX
-// timestamping with observable fallback, wall-clock-aligned interval buckets
-// with per-target phase offsets, and the burst/spread probe modes.
-//
-// Status: contract only. TargetSpec fixes the boundary between inheritance
-// resolution (internal/tree) and the engine: the engine receives flat,
-// fully-resolved specs and knows nothing about the tree.
+// Package probe contains the scheduler and the ICMP engine (DESIGN.md §5):
+// unprivileged datagram ICMP sockets per (address family, DSCP) with a
+// flagged raw-socket fallback, kernel TX+RX timestamping on Linux with a
+// flagged userspace fallback, wall-clock-aligned interval buckets with
+// deterministic per-target phase offsets, burst and spread probe modes, and
+// TTL-based DNS refresh via dnscache.
 package probe
 
-// TargetSpec is one leaf target with all inheritable settings resolved.
-// Address is a literal IP; DNS resolution and TTL-based refresh are the
-// dnscache package's job (DESIGN.md §5.4).
+// TargetSpec is one leaf target with all inheritable settings resolved flat:
+// the boundary between inheritance resolution (internal/tree) and the engine,
+// which knows nothing about the tree. Host may be a hostname or a literal IP.
 type TargetSpec struct {
 	TargetID   int64
-	Address    string
+	Host       string
 	Family     string // "v4" | "v6"
 	IntervalS  int
 	Pings      int

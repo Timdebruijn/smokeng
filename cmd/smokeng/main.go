@@ -18,6 +18,7 @@ import (
 
 	"smokeng/internal/api"
 	"smokeng/internal/config"
+	"smokeng/internal/probe"
 	"smokeng/internal/store"
 	"smokeng/web"
 )
@@ -124,6 +125,21 @@ func serve(args []string) error {
 	}
 	defer st.Close()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	eng, err := probe.NewEngine(st)
+	if err != nil {
+		return err
+	}
+	engDone := make(chan struct{})
+	go func() {
+		defer close(engDone)
+		if err := eng.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("probe engine: %v", err)
+		}
+	}()
+
 	dist, err := web.Dist()
 	if err != nil {
 		return err
@@ -133,20 +149,18 @@ func serve(args []string) error {
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
 	log.Printf("smokeng %s listening on http://%s (db: %s)", version, *listen, *dbPath)
-	log.Printf("note: probing engine not implemented yet — serving API and UI only")
 
-	sigc := make(chan os.Signal, 1)
-	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
 	select {
 	case err := <-errc:
 		return err
-	case sig := <-sigc:
-		log.Printf("received %s, shutting down", sig)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	case <-ctx.Done():
+		log.Printf("shutting down")
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := srv.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Shutdown(sctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
+		<-engDone // engine flushes its last batch before the store closes
 	}
 	return nil
 }

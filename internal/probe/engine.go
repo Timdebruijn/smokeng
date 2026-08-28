@@ -1,0 +1,338 @@
+package probe
+
+import (
+	"context"
+	"log"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"smokeng/internal/probe/dnscache"
+	"smokeng/internal/store"
+	"smokeng/internal/tree"
+)
+
+const (
+	specRefresh    = 30 * time.Second
+	writerFlush    = time.Second
+	writerMaxBatch = 512 // measurements per transaction at most
+)
+
+// Engine runs the local agent: it schedules every enabled leaf target whose
+// effective agent list includes "local", probes it per bucket, and batches
+// finalized measurements into the store (single writer, DESIGN.md §6).
+type Engine struct {
+	st  store.Store
+	dns *dnscache.Cache
+
+	results chan store.Measurement
+	late    atomic.Int64 // replies that arrived after their bucket finalized
+
+	mu       sync.Mutex
+	conns    map[connKey]*conn
+	running  map[int64]*runningTarget
+	targetWG sync.WaitGroup
+}
+
+type connKey struct {
+	family string
+	dscp   int
+}
+
+type runningTarget struct {
+	spec   TargetSpec
+	cancel context.CancelFunc
+}
+
+func NewEngine(st store.Store) (*Engine, error) {
+	dns, err := dnscache.New()
+	if err != nil {
+		return nil, err
+	}
+	return &Engine{
+		st:      st,
+		dns:     dns,
+		results: make(chan store.Measurement, 1024),
+		conns:   map[connKey]*conn{},
+		running: map[int64]*runningTarget{},
+	}, nil
+}
+
+// Run blocks until ctx is cancelled. Target specs are re-read from the store
+// periodically, so TOML imports (and later the admin UI) take effect without
+// a restart.
+func (e *Engine) Run(ctx context.Context) error {
+	stopWriter := make(chan struct{})
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		e.writer(stopWriter)
+	}()
+
+	e.reload(ctx)
+	tick := time.NewTicker(specRefresh)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			// Orderly teardown: stop target loops first (so nothing sends on
+			// a closing socket), then the sockets, then the writer — which
+			// drains and flushes every measurement the loops produced.
+			e.mu.Lock()
+			for _, rt := range e.running {
+				rt.cancel()
+			}
+			conns := e.conns
+			e.conns = map[connKey]*conn{}
+			e.mu.Unlock()
+			e.targetWG.Wait()
+			for _, c := range conns {
+				c.close()
+			}
+			close(stopWriter)
+			<-writerDone
+			return ctx.Err()
+		case <-tick.C:
+			e.reload(ctx)
+		}
+	}
+}
+
+// reload diffs the desired spec set against what is running and starts/stops
+// per-target loops accordingly.
+func (e *Engine) reload(ctx context.Context) {
+	specs, err := e.loadSpecs(ctx)
+	if err != nil {
+		log.Printf("probe: reload targets: %v", err)
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for id, rt := range e.running {
+		if spec, ok := specs[id]; !ok || spec != rt.spec {
+			rt.cancel()
+			delete(e.running, id)
+		}
+	}
+	for id, spec := range specs {
+		if _, ok := e.running[id]; ok {
+			continue
+		}
+		tctx, cancel := context.WithCancel(ctx)
+		e.running[id] = &runningTarget{spec: spec, cancel: cancel}
+		e.targetWG.Add(1)
+		go func(spec TargetSpec) {
+			defer e.targetWG.Done()
+			e.runTarget(tctx, spec)
+		}(spec)
+	}
+}
+
+func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
+	targets, err := e.st.ListTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tr, err := tree.New(targets)
+	if err != nil {
+		return nil, err
+	}
+	specs := map[int64]TargetSpec{}
+	for i := range targets {
+		n := &targets[i]
+		if n.Host == nil || !n.Enabled {
+			continue
+		}
+		res, err := tr.Resolve(n.ID)
+		if err != nil {
+			return nil, err
+		}
+		local := false
+		for _, a := range strings.Fields(res.Agents.Effective) {
+			if a == "local" {
+				local = true
+			}
+		}
+		if !local {
+			continue
+		}
+		specs[n.ID] = TargetSpec{
+			TargetID:   n.ID,
+			Host:       *n.Host,
+			Family:     *n.AddressFamily,
+			IntervalS:  res.IntervalS.Effective,
+			Pings:      res.PingsPerInterval.Effective,
+			Mode:       res.ProbeMode.Effective,
+			BurstGapMS: res.BurstGapMS.Effective,
+			TimeoutMS:  res.TimeoutMS.Effective,
+			PacketSize: res.PacketSize.Effective,
+			DSCP:       res.DSCP.Effective,
+		}
+	}
+	return specs, nil
+}
+
+func (e *Engine) connFor(family string, dscp int) (*conn, error) {
+	key := connKey{family, dscp}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if c, ok := e.conns[key]; ok {
+		return c, nil
+	}
+	c, err := openConn(family, dscp, &e.late)
+	if err != nil {
+		return nil, err
+	}
+	e.conns[key] = c
+	return c, nil
+}
+
+// runTarget is the per-target loop: one iteration per interval bucket.
+func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
+	lastAddr, err := e.st.LastResolution(ctx, spec.TargetID)
+	if err != nil {
+		log.Printf("probe: target %d: read last resolution: %v", spec.TargetID, err)
+	}
+	interval := time.Duration(spec.IntervalS) * time.Second
+	timeout := time.Duration(spec.TimeoutMS) * time.Millisecond
+
+	for {
+		// Pick the next bucket whose first send is still in the future.
+		bucket := bucketStart(time.Now().Unix(), spec.IntervalS)
+		times := sendTimes(spec, bucket)
+		if !time.Now().Before(times[0]) {
+			bucket += int64(spec.IntervalS)
+			times = sendTimes(spec, bucket)
+		}
+
+		if !sleepUntil(ctx, times[0].Add(-10*time.Millisecond)) {
+			return
+		}
+
+		addr, err := e.dns.Lookup(ctx, spec.Host, spec.Family)
+		if err != nil {
+			// No address, no measurement: the gap in the data is the honest
+			// representation (DESIGN.md §8.2).
+			log.Printf("probe: target %d (%s): resolve: %v", spec.TargetID, spec.Host, err)
+			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
+				return
+			}
+			continue
+		}
+		if a := addr.String(); a != lastAddr {
+			if lastAddr != "" {
+				log.Printf("probe: target %d (%s): address changed %s -> %s", spec.TargetID, spec.Host, lastAddr, a)
+			}
+			if err := e.st.RecordResolution(ctx, spec.TargetID, time.Now().Unix(), a); err != nil {
+				log.Printf("probe: target %d: record resolution: %v", spec.TargetID, err)
+			}
+			lastAddr = a
+		}
+
+		c, err := e.connFor(spec.Family, spec.DSCP)
+		if err != nil {
+			log.Printf("probe: target %d: %v", spec.TargetID, err)
+			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
+				return
+			}
+			continue
+		}
+
+		col := newCollector(spec.Pings, &e.late)
+		aborted := false
+		for i, at := range times {
+			if !sleepUntil(ctx, at) {
+				aborted = true
+				break
+			}
+			if err := c.send(col, i, addr, spec.PacketSize); err != nil {
+				log.Printf("probe: target %d: send: %v", spec.TargetID, err)
+			}
+		}
+
+		// Finalize asynchronously: the finalization wait (bucket end + timeout)
+		// overlaps the next bucket's send window, so awaiting it inline would
+		// skip buckets whenever the phase offset is shorter than the timeout.
+		finalizeAt := time.Unix(bucket, 0).Add(interval).Add(timeout)
+		e.targetWG.Add(1)
+		go func(col *collector, bucket int64) {
+			defer e.targetWG.Done()
+			// On shutdown this returns early: the bucket finalizes with
+			// whatever was measured, and the writer still flushes it.
+			sleepUntil(ctx, finalizeAt)
+			m := col.finalize(spec, bucket, c.raw)
+			c.forget(col)
+			select {
+			case e.results <- m:
+			default:
+				log.Printf("probe: results backlog full, dropping measurement for target %d", spec.TargetID)
+			}
+		}(col, bucket)
+		if aborted {
+			return
+		}
+	}
+}
+
+// writer is the single store writer: it batches finalized measurements into
+// one transaction per flush tick. It runs until stop closes AND the results
+// channel is drained, so a shutdown never loses finalized measurements.
+func (e *Engine) writer(stop <-chan struct{}) {
+	var batch []store.Measurement
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		wctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := e.st.WriteMeasurements(wctx, batch); err != nil {
+			log.Printf("probe: write %d measurements: %v", len(batch), err)
+		}
+		cancel()
+		batch = batch[:0]
+	}
+	tick := time.NewTicker(writerFlush)
+	defer tick.Stop()
+	for {
+		select {
+		case m := <-e.results:
+			batch = append(batch, m)
+			if len(batch) >= writerMaxBatch {
+				flush()
+			}
+		case <-tick.C:
+			flush()
+		case <-stop:
+			for {
+				select {
+				case m := <-e.results:
+					batch = append(batch, m)
+					continue
+				default:
+				}
+				break
+			}
+			flush()
+			return
+		}
+	}
+}
+
+func sleepUntil(ctx context.Context, t time.Time) bool {
+	d := time.Until(t)
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// LateReplies counts replies that arrived after their bucket finalized; it
+// feeds the upcoming /metrics endpoint.
+func (e *Engine) LateReplies() int64 { return e.late.Load() }
