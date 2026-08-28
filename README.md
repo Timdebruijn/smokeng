@@ -12,9 +12,6 @@ target tree, the Arrow measurements API, and the browser renderer — density sm
 pooled median, loss rail, stacked plots with a shared crosshair, brush-zoom to free time
 ranges, and a log y-axis. Still to come: admin UI and OIDC (v0.3), remote agents (v0.4).
 
-Not yet verified on Linux: the kernel-timestamping path compiles for linux/amd64 and
-linux/arm64 but has only been run on macOS, where the userspace fallback is used.
-
 ## Build
 
 Requirements: Go 1.27+. Node 22+ only when rebuilding the frontend (`web/dist` is
@@ -76,9 +73,24 @@ measurements with a degraded-accuracy flag.
 ## Timestamping accuracy
 
 On Linux, packets are timestamped by the kernel in both directions
-(`SO_TIMESTAMPING`), so scheduler jitter on a busy host does not widen the smoke. On
-other platforms (including macOS, supported for development) userspace timestamps are
-used instead — this is recorded per measurement in a flags field, never silently.
+(`SO_TIMESTAMPING`: RX from the reply's control messages, TX read back from the socket
+error queue), so scheduler jitter on a busy host does not widen the smoke. On other
+platforms (including macOS, supported for development) userspace timestamps are used
+instead — recorded per measurement in a flags field, never silently.
+
+This is not a theoretical difference. Loopback bursts of 10 pings, kernel timestamping
+versus the userspace fallback:
+
+| Timestamps | Median RTT | Median intra-burst spread |
+|---|---|---|
+| kernel (Linux, `flags=0`) | ~15–31 µs | **26 µs** |
+| userspace (macOS, `flags=3`) | ~270–650 µs | **563 µs** |
+
+Roughly 20× more apparent jitter from the measurement method alone — noise that would be
+drawn as smoke and read as network variance. The two rows are different hosts, so treat
+the ratio as indicative rather than a controlled benchmark; the order of magnitude is
+what matters. Verified on Linux 7.1 (aarch64); `internal/probe/timestamp` carries an
+integration test that exercises the full path and skips where the socket is unavailable.
 
 ## Layout
 
