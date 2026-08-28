@@ -120,8 +120,15 @@ Two modes, both v0.1, modeled as the inheritable `probe_mode` setting:
   SmokePing's continuous ping probe.
 
 Measuring one host both ways = two sibling targets (same pattern as address families).
-A separate `probe_defs` table is deliberately deferred until a second protocol
-(TCP-connect) exists; see §13.
+
+**Further probe types are planned** (decided 2026-08-29, revising the kickoff brief's
+"no probe buffet" ban): TCP-connect first, more later. The extension seam is already in
+place — `measurements` is protocol-agnostic (sent / received / sorted RTT samples), and
+adding an inheritable `probe_type` setting (default `icmp`) plus per-type settings is a
+plain additive schema migration when the second protocol lands; see §13 #6. The
+guardrail that replaces the ban: every probe type must produce an RTT distribution of N
+samples per interval. A check that yields a single scalar or an up/down status does not
+belong here, ever — that is the road to a generic uptime dashboard.
 
 ### 3.3 Sample encoding
 
@@ -594,9 +601,10 @@ or wire format. Nothing else in v0.1 is cuttable without violating the premise.
 - **v0.4 — distributed**: `smokeng agent`, signed ingest, enrolment, per-agent series in UI.
 - **v0.5 — traceroute correlation.**
 
-Explicit non-goals are unchanged from the brief (no probe buffet, no notification matrix,
-no user management, no RRD import, no config distribution, no multi-tenancy, nothing
-that is not latency).
+Explicit non-goals, updated 2026-08-29: additional *latency* probe types are now planned
+(§3.2) and the narrow agent-assignment pull is allowed (§9); unchanged from the brief
+remain — no non-latency checks or status probes, no notification matrix, no user
+management, no RRD import, no config distribution beyond §9, no multi-tenancy.
 
 ## 13. Open trade-offs
 
@@ -607,7 +615,7 @@ that is not latency).
 | 3 | SQLite driver | modernc.org/sqlite (pure Go) vs mattn (CGO) | modernc; benchmark escape hatch (§6) |
 | 4 | Arrow JS reader | apache-arrow (large) vs flechette (small, read-only) | **resolved**: flechette 2.5 — verified maintained (§11); we only read |
 | 5 | Sample unit | 1 µs vs 1 ns | µs — below timestamping noise; version byte keeps ns possible |
-| 6 | Probe modes modeling | inheritable `probe_mode` vs `probe_defs` table | inheritable column; introduce probe_defs only when TCP-connect lands |
+| 6 | Probe modes modeling | inheritable `probe_mode` vs `probe_defs` table | inheritable column now; an inheritable `probe_type` (+ per-type settings) is an additive migration when TCP-connect lands — expected, per the 2026-08-29 decision to allow more latency probes (§3.2) |
 | 7 | Multi-series endpoint | per-target requests vs batched | per-target now; batch only if measured overhead |
 | 8 | Alert rule inheritance | child replaces vs child adds | defer to v0.3 design, model constrains neither |
 | 9 | Agent target assignment | hand-configured per agent vs narrow pull of assigned targets from master | **agreed 2026-08-29**: pull (data-only, signed, pull-only — see §9) |
