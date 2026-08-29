@@ -18,6 +18,7 @@ const SETTINGS: { key: SettingKey; label: string; unit?: string; kind: 'number' 
   { key: 'packet_size', label: 'Packet size', unit: 'bytes', kind: 'number' },
   { key: 'dscp', label: 'DSCP', kind: 'number' },
   { key: 'agents', label: 'Agents', kind: 'text' },
+  { key: 'trace_interval_s', label: 'Path discovery', unit: 's (0 = off)', kind: 'number' },
 ]
 
 export default function Admin({ readOnly = false }: { readOnly?: boolean }) {

@@ -20,4 +20,6 @@ type TargetSpec struct {
 	TimeoutMS  int
 	PacketSize int
 	DSCP       int
+	// TraceIntervalS is how often to discover the path; 0 disables it.
+	TraceIntervalS int
 }

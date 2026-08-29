@@ -37,6 +37,10 @@ type Settings struct {
 	PacketSize       *int
 	DSCP             *int
 	Agents           *string // space-separated agent names
+	// TraceIntervalS is how often to discover the path; 0 disables it.
+	// Separate from IntervalS because a traceroute costs a round trip per
+	// hop, and a path changes on a scale of days rather than seconds.
+	TraceIntervalS *int
 }
 
 // Source identifies the node an effective value came from.
@@ -64,6 +68,7 @@ type Resolved struct {
 	PacketSize       Value[int]
 	DSCP             Value[int]
 	Agents           Value[string]
+	TraceIntervalS   Value[int]
 }
 
 // Validate checks one node's field-level invariants — the rules that hold
@@ -109,6 +114,10 @@ func (t *Target) Validate() error {
 	}
 	if s.Agents != nil && strings.TrimSpace(*s.Agents) == "" {
 		return fmt.Errorf("tree: agents must name at least one agent, or be unset to inherit")
+	}
+	// 0 disables path discovery, so only a negative value is wrong.
+	if s.TraceIntervalS != nil && *s.TraceIntervalS < 0 {
+		return fmt.Errorf("tree: trace_interval_s must not be negative (0 disables it)")
 	}
 	return nil
 }
@@ -157,7 +166,7 @@ func New(targets []Target) (*Tree, error) {
 	s := t.root.Settings
 	if s.IntervalS == nil || s.PingsPerInterval == nil || s.ProbeMode == nil ||
 		s.BurstGapMS == nil || s.TimeoutMS == nil || s.PacketSize == nil ||
-		s.DSCP == nil || s.Agents == nil {
+		s.DSCP == nil || s.Agents == nil || s.TraceIntervalS == nil {
 		return nil, fmt.Errorf("tree: root %d must set every inheritable default", t.root.ID)
 	}
 	for _, n := range t.nodes {
@@ -258,6 +267,7 @@ func (t *Tree) Resolve(id int64) (Resolved, error) {
 		PacketSize:       resolve(t, chain, func(s *Settings) *int { return s.PacketSize }),
 		DSCP:             resolve(t, chain, func(s *Settings) *int { return s.DSCP }),
 		Agents:           resolve(t, chain, func(s *Settings) *string { return s.Agents }),
+		TraceIntervalS:   resolve(t, chain, func(s *Settings) *int { return s.TraceIntervalS }),
 	}, nil
 }
 

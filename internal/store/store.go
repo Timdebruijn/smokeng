@@ -98,5 +98,9 @@ type Store interface {
 	// LastResolution returns the most recently logged address for the target,
 	// or "" when none has been recorded.
 	LastResolution(ctx context.Context, targetID int64) (string, error)
+	// LastPath and RecordPath keep the route change log (DESIGN.md §9a).
+	// Only changes are written: a route is stable for days and then is not.
+	LastPath(ctx context.Context, targetID, agentID int64) (string, error)
+	RecordPath(ctx context.Context, targetID, agentID, ts int64, hops string) error
 	Close() error
 }

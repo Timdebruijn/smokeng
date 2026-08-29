@@ -68,6 +68,7 @@ func targetJSON(tr *tree.Tree, n *tree.Target) (map[string]any, error) {
 			"packet_size":        settingJSON(n.ID, res.PacketSize),
 			"dscp":               settingJSON(n.ID, res.DSCP),
 			"agents":             settingJSON(n.ID, res.Agents),
+			"trace_interval_s":   settingJSON(n.ID, res.TraceIntervalS),
 		},
 	}, nil
 }
@@ -322,6 +323,7 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 			"timeout_ms":         &n.Settings.TimeoutMS,
 			"packet_size":        &n.Settings.PacketSize,
 			"dscp":               &n.Settings.DSCP,
+			"trace_interval_s":   &n.Settings.TraceIntervalS,
 		}
 		strs := map[string]**string{
 			"probe_mode": &n.Settings.ProbeMode,

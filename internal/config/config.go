@@ -40,6 +40,7 @@ type Values struct {
 	PacketSize       *int    `toml:"packet_size,omitempty"`
 	DSCP             *int    `toml:"dscp,omitempty"`
 	Agents           *string `toml:"agents,omitempty"`
+	TraceIntervalS   *int    `toml:"trace_interval_s,omitempty"`
 }
 
 // AlertRule is one alert condition in TOML form, keyed by its name within the
@@ -499,6 +500,7 @@ func valuesFrom(s tree.Settings) Values {
 		PacketSize:       s.PacketSize,
 		DSCP:             s.DSCP,
 		Agents:           s.Agents,
+		TraceIntervalS:   s.TraceIntervalS,
 	}
 }
 
@@ -526,6 +528,9 @@ func overlayValues(dst *tree.Settings, v Values) {
 	}
 	if v.Agents != nil {
 		dst.Agents = v.Agents
+	}
+	if v.TraceIntervalS != nil {
+		dst.TraceIntervalS = v.TraceIntervalS
 	}
 }
 
@@ -555,6 +560,7 @@ func validateEntry(p string, e Entry) error {
 			PacketSize:       e.PacketSize,
 			DSCP:             e.DSCP,
 			Agents:           e.Agents,
+			TraceIntervalS:   e.TraceIntervalS,
 		},
 	}
 	if err := t.Validate(); err != nil {

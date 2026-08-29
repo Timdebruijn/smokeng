@@ -83,6 +83,7 @@ export interface SettingValue<T> {
 
 export interface TargetSettings {
   interval_s: SettingValue<number>
+  trace_interval_s: SettingValue<number>
   pings_per_interval: SettingValue<number>
   probe_mode: SettingValue<string>
   burst_gap_ms: SettingValue<number>
@@ -195,6 +196,26 @@ const ICMP_NAMES: Record<number, string> = {
 
 export function icmpErrorName(packed: number): string {
   return ICMP_NAMES[packed] ?? `ICMP type ${packed >> 8} code ${packed & 0xff}`
+}
+
+/** One recorded route, and when it took effect. */
+export interface PathChange {
+  ts: number
+  hops: string[]
+}
+
+export async function fetchPathChanges(
+  targetId: number,
+  agentId: number,
+  from: number,
+  to: number,
+): Promise<PathChange[]> {
+  const r = await fetch(
+    `/api/v1/paths?target_id=${targetId}&agent_id=${agentId}&from=${from}&to=${to}`,
+    { cache: 'no-store' },
+  )
+  if (!r.ok) throw new Error(`paths: HTTP ${r.status}`)
+  return ((await r.json()) as { changes: PathChange[] }).changes ?? []
 }
 
 export interface AgentInfo {

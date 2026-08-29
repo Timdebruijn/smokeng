@@ -159,3 +159,56 @@ func (s *SQLite) MarkSubmitted(ctx context.Context, ms []Measurement) error {
 	}
 	return tx.Commit()
 }
+
+// PathChange is a recorded route to a target at a moment in time.
+type PathChange struct {
+	TargetID, AgentID, TS int64
+	Hops                  string
+}
+
+// LastPath returns the most recently recorded path, or "" if none.
+func (s *SQLite) LastPath(ctx context.Context, targetID, agentID int64) (string, error) {
+	var hops string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT hops FROM paths WHERE target_id = ? AND agent_id = ? ORDER BY ts DESC LIMIT 1",
+		targetID, agentID).Scan(&hops)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return hops, err
+}
+
+// RecordPath appends a path change. Callers write only when the path differs
+// from the last one: a route is stable for days and then is not, so storing
+// every run would be the same list thousands of times over.
+func (s *SQLite) RecordPath(ctx context.Context, targetID, agentID, ts int64, hops string) error {
+	_, err := s.db.ExecContext(ctx,
+		"INSERT OR REPLACE INTO paths (target_id, agent_id, ts, hops) VALUES (?, ?, ?, ?)",
+		targetID, agentID, ts, hops)
+	return err
+}
+
+// PathChanges returns the changes for one series over [from, to), plus the
+// one in force when the window opened — without it a window that contains no
+// change would look as though the path were unknown.
+func (s *SQLite) PathChanges(ctx context.Context, targetID, agentID, from, to int64) ([]PathChange, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ts, hops FROM paths
+		WHERE target_id = ? AND agent_id = ? AND ts < ?
+		  AND ts >= COALESCE((SELECT MAX(ts) FROM paths
+		                      WHERE target_id = ? AND agent_id = ? AND ts <= ?), 0)
+		ORDER BY ts`, targetID, agentID, to, targetID, agentID, from)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PathChange
+	for rows.Next() {
+		c := PathChange{TargetID: targetID, AgentID: agentID}
+		if err := rows.Scan(&c.TS, &c.Hops); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

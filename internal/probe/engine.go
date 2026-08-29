@@ -2,6 +2,7 @@ package probe
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"smokeng/internal/alert"
 	"smokeng/internal/probe/dnscache"
+	"smokeng/internal/probe/trace"
 	"smokeng/internal/store"
 	"smokeng/internal/tree"
 )
@@ -46,7 +48,11 @@ type Engine struct {
 	written   atomic.Int64
 	writeErrs atomic.Int64
 	dnsErrs   atomic.Int64
+	traces    atomic.Int64
+	pathHops  atomic.Int64
 	dropped   atomic.Int64 // measurements lost because the results channel was full
+
+	traceUnsupported sync.Once
 
 	mu       sync.Mutex
 	conns    map[connKey]*conn
@@ -161,6 +167,13 @@ func (e *Engine) reload(ctx context.Context) {
 			defer e.targetWG.Done()
 			e.runTarget(tctx, spec)
 		}(spec)
+		if spec.TraceIntervalS > 0 {
+			e.targetWG.Add(1)
+			go func(spec TargetSpec) {
+				defer e.targetWG.Done()
+				e.runTracer(tctx, spec)
+			}(spec)
+		}
 	}
 }
 
@@ -193,16 +206,17 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 			continue
 		}
 		specs[n.ID] = TargetSpec{
-			TargetID:   n.ID,
-			Host:       *n.Host,
-			Family:     *n.AddressFamily,
-			IntervalS:  res.IntervalS.Effective,
-			Pings:      res.PingsPerInterval.Effective,
-			Mode:       res.ProbeMode.Effective,
-			BurstGapMS: res.BurstGapMS.Effective,
-			TimeoutMS:  res.TimeoutMS.Effective,
-			PacketSize: res.PacketSize.Effective,
-			DSCP:       res.DSCP.Effective,
+			TargetID:       n.ID,
+			Host:           *n.Host,
+			Family:         *n.AddressFamily,
+			IntervalS:      res.IntervalS.Effective,
+			Pings:          res.PingsPerInterval.Effective,
+			Mode:           res.ProbeMode.Effective,
+			BurstGapMS:     res.BurstGapMS.Effective,
+			TimeoutMS:      res.TimeoutMS.Effective,
+			PacketSize:     res.PacketSize.Effective,
+			DSCP:           res.DSCP.Effective,
+			TraceIntervalS: res.TraceIntervalS.Effective,
 		}
 	}
 	return specs, nil
@@ -403,6 +417,8 @@ type Stats struct {
 	MeasurementsWritten int64
 	WriteErrors         int64
 	DNSFailures         int64
+	// PathChanges counts routes recorded because they differed from the last.
+	PathChanges int64
 	// Dropped measurements were finalized but never stored, because the
 	// writer could not keep up. This should always be zero.
 	Dropped int64
@@ -420,7 +436,70 @@ func (e *Engine) Stats() Stats {
 		MeasurementsWritten: e.written.Load(),
 		WriteErrors:         e.writeErrs.Load(),
 		DNSFailures:         e.dnsErrs.Load(),
+		PathChanges:         e.traces.Load(),
 		Dropped:             e.dropped.Load(),
 		ActiveTargets:       active,
+	}
+}
+
+// runTracer discovers the path to a target periodically and records it only
+// when it differs from the last one. It runs on its own schedule, well apart
+// from the measurement loop: a traceroute costs a round trip per hop, and a
+// route changes on a scale of days rather than seconds.
+func (e *Engine) runTracer(ctx context.Context, spec TargetSpec) {
+	interval := time.Duration(spec.TraceIntervalS) * time.Second
+	// Stagger the first run so a restart does not traceroute every target at
+	// once, and so the first measurements are not competing with it.
+	if !sleepUntil(ctx, time.Now().Add(phaseOffset(spec)+5*time.Second)) {
+		return
+	}
+	for {
+		e.traceOnce(ctx, spec)
+		if !sleepUntil(ctx, time.Now().Add(interval)) {
+			return
+		}
+	}
+}
+
+func (e *Engine) traceOnce(ctx context.Context, spec TargetSpec) {
+	addr, err := e.dns.Lookup(ctx, spec.Host, spec.Family)
+	if err != nil {
+		return // the measurement loop already logs and counts this
+	}
+	path, err := trace.Trace(ctx, trace.Options{Dest: addr, Timeout: 2 * time.Second})
+	if err != nil {
+		// Unsupported is reported once per target rather than every run: it
+		// is a property of the platform, not an event.
+		if errors.Is(err, trace.ErrUnsupported) {
+			e.traceUnsupported.Do(func() {
+				log.Printf("probe: path discovery unavailable on this platform; " +
+					"no routes will be recorded")
+			})
+			return
+		}
+		log.Printf("probe: target %d: trace: %v", spec.TargetID, err)
+		return
+	}
+	if len(path) == 0 {
+		return
+	}
+	hops := path.String()
+
+	last, err := e.st.LastPath(ctx, spec.TargetID, store.LocalAgentID)
+	if err != nil {
+		log.Printf("probe: target %d: read last path: %v", spec.TargetID, err)
+		return
+	}
+	if last == hops {
+		return
+	}
+	if err := e.st.RecordPath(ctx, spec.TargetID, store.LocalAgentID, time.Now().Unix(), hops); err != nil {
+		log.Printf("probe: target %d: record path: %v", spec.TargetID, err)
+		return
+	}
+	e.traces.Add(1)
+	if last != "" {
+		log.Printf("probe: target %d (%s): path changed\n  was: %s\n  now: %s",
+			spec.TargetID, spec.Host, last, hops)
 	}
 }

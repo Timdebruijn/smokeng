@@ -13,7 +13,7 @@ renderer — density smoke, pooled median, loss rail, stacked plots with a share
 crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that edits the
 target tree and shows, per setting, whether a value is set here or inherited and from
 where; alerting with webhook delivery; OIDC login with viewer and admin roles; and remote
-agents pushing signed measurements. Still to come: traceroute correlation (v0.5).
+agents pushing signed measurements; and path correlation. That is the whole roadmap.
 
 
 ## Build
@@ -158,6 +158,26 @@ hearing about. Grouping, silencing, escalation and notification channels are
 Alertmanager's job; smokeng does not reimplement them. Without `--alert-webhook`, rules
 are stored but never evaluated, which the UI says plainly rather than pretending to
 watch.
+
+## Path correlation
+
+When the smoke changes shape, the next question is always whether the path changed.
+smokeng records the route to each target and marks every change on the same time axis as
+the measurements, so "the path changed at 14:02" sits beside "the smoke widened at
+14:03". Hovering names the route in force at that instant.
+
+That is the whole feature. There is no standalone traceroute view, no per-hop latency
+graph and no path scoring: those are a different product, and this one exists to make the
+distribution legible.
+
+Enable it per target with the inheritable `trace_interval_s` (0 disables it), defaulting
+to five minutes — a traceroute costs a round trip per hop, and a route changes on a scale
+of days rather than seconds. Only changes are stored, the same way DNS resolutions are,
+so a stable route costs one row rather than one per run.
+
+Hops are found with TTL-limited probes, reading each router's address from the ICMP
+time-exceeded reply on the socket error queue. That needs Linux; elsewhere no route is
+recorded rather than a wrong one.
 
 ## Remote agents
 

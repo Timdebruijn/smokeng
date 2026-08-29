@@ -18,6 +18,11 @@ import (
 // measurement, so this is orders of magnitude above any honest agent.
 const maxIngestBody = 8 << 20
 
+// PathStore reads the route change log.
+type PathStore interface {
+	PathChanges(ctx context.Context, targetID, agentID, from, to int64) ([]store.PathChange, error)
+}
+
 // AgentStore is the persistence the agent endpoints need.
 type AgentStore interface {
 	ListAgents(ctx context.Context) ([]store.AgentRecord, error)

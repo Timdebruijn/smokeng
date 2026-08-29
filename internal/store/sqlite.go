@@ -68,6 +68,7 @@ INSERT INTO targets (id, parent_id, name, interval_s, pings_per_interval,
                      probe_mode, burst_gap_ms, timeout_ms, packet_size, dscp, agents)
 VALUES (1, NULL, '', 60, 20, 'burst', 10, 1000, 56, 0, 'local');
 
+
 INSERT INTO agents (id, name) VALUES (0, 'local');
 `
 
@@ -143,6 +144,21 @@ CREATE TABLE alert_state (
 	// receipt, so an unreachable master costs latency rather than data. The
 	// column is unused on a master, where nothing ever reads it.
 	`ALTER TABLE measurements ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0`,
+	// v6: path correlation. Paths are stable for days and then are not, so a
+	// row is written only when one differs from the last — the same
+	// change-only shape the resolutions log uses, and for the same reason.
+	`
+CREATE TABLE paths (
+  target_id INTEGER NOT NULL,
+  agent_id  INTEGER NOT NULL,
+  ts        INTEGER NOT NULL,
+  hops      TEXT NOT NULL,
+  PRIMARY KEY (target_id, agent_id, ts)
+) WITHOUT ROWID;
+
+ALTER TABLE targets ADD COLUMN trace_interval_s INTEGER;
+UPDATE targets SET trace_interval_s = 300 WHERE parent_id IS NULL;
+`,
 }
 
 func (s *SQLite) migrate() error {
@@ -236,7 +252,7 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 
 const targetCols = `id, parent_id, name, host, address_family, title, notes,
 	hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
-	burst_gap_ms, timeout_ms, packet_size, dscp, agents`
+	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s`
 
 func (s *SQLite) ListTargets(ctx context.Context) ([]tree.Target, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+targetCols+" FROM targets ORDER BY id")
@@ -259,10 +275,10 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 	var t tree.Target
 	var parentID sql.NullInt64
 	var host, af, title, notes, probeMode, agents sql.NullString
-	var intervalS, pings, burstGap, timeout, packetSize, dscp sql.NullInt64
+	var intervalS, pings, burstGap, timeout, packetSize, dscp, traceInterval sql.NullInt64
 	err := rows.Scan(&t.ID, &parentID, &t.Name, &host, &af, &title, &notes,
 		&t.Hidden, &t.Enabled, &t.SortOrder, &intervalS, &pings, &probeMode,
-		&burstGap, &timeout, &packetSize, &dscp, &agents)
+		&burstGap, &timeout, &packetSize, &dscp, &agents, &traceInterval)
 	if err != nil {
 		return t, err
 	}
@@ -282,6 +298,7 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 		PacketSize:       nullInt(packetSize),
 		DSCP:             nullInt(dscp),
 		Agents:           nullStr(agents),
+		TraceIntervalS:   nullInt(traceInterval),
 	}
 	return t, nil
 }
@@ -294,8 +311,8 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO targets (id, parent_id, name, host, address_family, title, notes,
 			hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
-			burst_gap_ms, timeout_ms, packet_size, dscp, agents)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			parent_id = excluded.parent_id, name = excluded.name,
 			host = excluded.host, address_family = excluded.address_family,
@@ -309,13 +326,15 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 			timeout_ms = excluded.timeout_ms,
 			packet_size = excluded.packet_size,
 			dscp = excluded.dscp,
-			agents = excluded.agents`,
+			agents = excluded.agents,
+			trace_interval_s = excluded.trace_interval_s`,
 		id, ptrOrNil(t.ParentID), t.Name, ptrOrNil(t.Host), ptrOrNil(t.AddressFamily),
 		ptrOrNil(t.Title), ptrOrNil(t.Notes), t.Hidden, t.Enabled, t.SortOrder,
 		ptrOrNil(t.Settings.IntervalS), ptrOrNil(t.Settings.PingsPerInterval),
 		ptrOrNil(t.Settings.ProbeMode), ptrOrNil(t.Settings.BurstGapMS),
 		ptrOrNil(t.Settings.TimeoutMS), ptrOrNil(t.Settings.PacketSize),
-		ptrOrNil(t.Settings.DSCP), ptrOrNil(t.Settings.Agents))
+		ptrOrNil(t.Settings.DSCP), ptrOrNil(t.Settings.Agents),
+		ptrOrNil(t.Settings.TraceIntervalS))
 	if err != nil {
 		return err
 	}

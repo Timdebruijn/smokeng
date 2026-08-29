@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchSeries, icmpErrorName, type Target } from './api'
+import { fetchPathChanges, fetchSeries, icmpErrorName, type PathChange, type Target } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtUs, inferSpan } from './layout'
 
@@ -109,6 +109,7 @@ export default function Plot({
   const rowsRef = useRef<RowIndex | null>(null)
   const cursorRef = useRef<number | null>(null)
   const brushRef = useRef<{ t0: number; t1: number } | null>(null)
+  const pathsRef = useRef<PathChange[]>([])
   const draggingRef = useRef(false)
   const rangeRef = useRef({ from, to })
   rangeRef.current = { from, to }
@@ -162,6 +163,21 @@ export default function Plot({
       ctx.stroke()
     }
 
+    // Path changes: a mark on the time axis, so "the path changed at 14:02"
+    // sits beside "the smoke widened at 14:03" without a second view.
+    for (const change of pathsRef.current) {
+      const x = timeToX(change.ts, cssW)
+      if (x < AXIS_W || x > cssW) continue
+      ctx.strokeStyle = dark ? 'rgba(217,119,6,0.85)' : 'rgba(180,83,9,0.8)'
+      ctx.lineWidth = 1
+      ctx.setLineDash([3, 3])
+      ctx.beginPath()
+      ctx.moveTo(Math.round(x) + 0.5, 0)
+      ctx.lineTo(Math.round(x) + 0.5, plotH)
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+
     // Shared crosshair
     const t = cursorRef.current
     if (t === null) return
@@ -198,6 +214,13 @@ export default function Plot({
     ]
     const err = rows.icmpErrors[idx]
     if (err !== null && err !== undefined) lines.push(icmpErrorName(err))
+    // The route in force at this instant, so a step in the smoke can be read
+    // against the path that carried it.
+    const inForce = pathsRef.current.filter((c) => c.ts <= t).at(-1)
+    if (inForce) {
+      const named = inForce.hops.filter((h) => h !== '*')
+      lines.push(`path: ${named.length ? named.join(' → ') : 'no hops answered'}`)
+    }
     ctx.font = '11px system-ui, sans-serif'
     const boxW = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 14
     const boxH = lines.length * 14 + 10
@@ -284,6 +307,18 @@ export default function Plot({
         drawOverlay()
       })
       .catch((e: Error) => console.error(`plot ${target.path}:`, e))
+
+    // Route changes are a separate, much smaller fetch; a failure here must
+    // not stop the smoke rendering.
+    fetchPathChanges(target.id, agentId, from, to)
+      .then((changes) => {
+        if (cancelled) return
+        pathsRef.current = changes
+        drawOverlay()
+      })
+      .catch(() => {
+        pathsRef.current = []
+      })
     return () => {
       cancelled = true
     }

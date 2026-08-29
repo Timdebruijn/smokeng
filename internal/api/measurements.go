@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -45,19 +46,10 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	to := time.Now().Unix()
-	if v := q.Get("to"); v != "" {
-		if to, err = strconv.ParseInt(v, 10, 64); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad to"})
-			return
-		}
-	}
-	from := to - 3600
-	if v := q.Get("from"); v != "" {
-		if from, err = strconv.ParseInt(v, 10, 64); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad from"})
-			return
-		}
+	from, to, err := timeRange(q.Get("from"), q.Get("to"))
+	if err != nil {
+		badRequestMsg(w, err.Error())
+		return
 	}
 
 	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, from, to)
@@ -106,4 +98,22 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	if rb.Field(0).Len() > 0 || len(ms) == 0 {
 		flush() // remainder, or an empty batch so the schema still arrives
 	}
+}
+
+// timeRange parses the window shared by every series endpoint, defaulting to
+// the trailing hour so the two cannot drift apart.
+func timeRange(fromRaw, toRaw string) (from, to int64, err error) {
+	to = time.Now().Unix()
+	if toRaw != "" {
+		if to, err = strconv.ParseInt(toRaw, 10, 64); err != nil {
+			return 0, 0, errors.New("bad to")
+		}
+	}
+	from = to - 3600
+	if fromRaw != "" {
+		if from, err = strconv.ParseInt(fromRaw, 10, 64); err != nil {
+			return 0, 0, errors.New("bad from")
+		}
+	}
+	return from, to, nil
 }

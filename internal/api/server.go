@@ -33,6 +33,7 @@ type AlertView interface {
 type Store interface {
 	AlertStore
 	AgentStore
+	PathStore
 }
 
 type server struct {
@@ -122,6 +123,7 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", admin(s.handleDeleteAlertRule))
 	mux.HandleFunc("GET /api/v1/alerts", viewer(s.handleFiringAlerts))
 	mux.HandleFunc("GET /api/v1/agents", viewer(s.handleAgents))
+	mux.HandleFunc("GET /api/v1/paths", viewer(s.handlePaths))
 	// Signed agent endpoints (§9). These carry their own authentication, so
 	// they are deliberately outside the session middleware.
 	mux.HandleFunc("POST /api/v1/ingest", s.handleIngest)
@@ -148,6 +150,11 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 // offending field and are meant to be shown in the admin UI.
 func badRequest(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+}
+
+// badRequestMsg reports a caller mistake without wrapping a Go error.
+func badRequestMsg(w http.ResponseWriter, msg string) {
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 }
 
 func notFound(w http.ResponseWriter) {

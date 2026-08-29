@@ -15,6 +15,7 @@ func testTargets() []Target {
 			PacketSize:       ptr(56),
 			DSCP:             ptr(0),
 			Agents:           ptr("local"),
+			TraceIntervalS:   ptr(300),
 		}},
 		{ID: 2, ParentID: ptr(int64(1)), Name: "Production", Enabled: true,
 			Settings: Settings{IntervalS: ptr(30)}},

@@ -555,6 +555,50 @@ receive pure data — their assigned targets with resolved effective settings, n
 else, never code, pull-only, master remains the single source of truth. Decision
 (2026-08-29): exactly this is allowed; the ban stands for everything beyond it.
 
+## 9a. Path correlation (v0.5)
+
+Designed 2026-08-29; the roadmap named it, nothing specified it.
+
+**The question this answers.** When the smoke changes shape — latency steps up, the
+distribution goes bimodal, loss appears — did the path change? That is the one question
+worth asking of a traceroute in a latency tool, and it is one SmokePing cannot ask at
+all. Everything else a traceroute could offer is a different product.
+
+**Scope, stated as refusals.** No standalone traceroute view, no per-hop latency graphs,
+no path-quality scoring, no MTR. A route is recorded, its changes are marked on the
+timeline, and the smoke is left to speak for itself.
+
+**How.** TTL-limited echo requests on a dedicated short-lived socket, with the hop
+address read from the ICMP time-exceeded reply. This is the machinery already built for
+§3.4's ICMP errors: `IP_RECVERR` puts the error on the socket error queue together with
+the offending datagram, whose sequence number identifies which probe it answers. A
+separate socket keeps `IP_TTL` off the measurement socket, where it would corrupt every
+other target sharing it.
+
+Where the error queue is unavailable the tracer reports no path rather than a wrong one,
+and the absence is visible — the same rule the timestamping fallback follows.
+
+**Storage: changes only.** Paths are stable for days and then are not. Recording every
+run would store the same list thousands of times over, so a row is written only when the
+path differs from the last one, exactly as `resolutions` already does for DNS:
+
+```sql
+paths(target_id, agent_id, ts, hops TEXT)   -- schema v6
+```
+
+`hops` is the comma-separated hop list, `*` for a hop that did not answer. Text, because
+it is diffed far more often than parsed, and being readable in a `sqlite3` session is
+worth more here than bytes.
+
+**Frequency.** A separate inheritable `trace_interval_s` (0 disables), defaulting to
+something in the minutes: a traceroute costs a round trip per hop, and a path that
+changes between two runs is caught by the next one either way. It is emphatically not
+per measurement interval.
+
+**Rendering.** Path changes are vertical marks on the time axis and the path is named in
+the crosshair readout. That places "the path changed at 14:02" next to "the smoke
+widened at 14:03" without needing a second view, which is the whole point.
+
 ## 10. Package layout
 
 ```
