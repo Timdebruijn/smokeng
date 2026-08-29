@@ -53,6 +53,8 @@ The ones that matter:
 | `smokeng_alert_webhook` | `""` | Empty means rules are stored but never evaluated |
 | `smokeng_targets_file` | `""` | Path on the controller to a `targets.toml` |
 | `smokeng_targets_prune` | `false` | Delete absent targets instead of disabling them |
+| `smokeng_prober_enabled` | `false` | Run the prober as its own process next to the master — see below |
+| `smokeng_prober_agent_name` | `local-probe` | The name a target's `agents` must list to be measured there |
 
 Put the OIDC client secret in a vault, not in `group_vars` in the clear.
 
@@ -66,6 +68,18 @@ which is why it has to be written down.
 
 The durable arrangement is a TLS-terminating reverse proxy in front and OIDC
 behind it.
+
+## Splitting the prober off
+
+`smokeng_prober_enabled: true` installs a second unit, `smokeng-prober`, that runs the
+probing engine in its own process and reports to the master over loopback. The role
+generates its key, enrols it, and templates the unit with the resulting agent id; every
+step is idempotent, so the play can be re-run.
+
+It changes nothing by itself. The master keeps its built-in prober under the name `local`,
+and a target only measures in the new process once its `agents` setting names
+`local-probe`. Why you might want that, and what it costs, is in
+[../../docs/operations.md](../../docs/operations.md#running-the-prober-as-its-own-process).
 
 ## Adding a remote agent
 

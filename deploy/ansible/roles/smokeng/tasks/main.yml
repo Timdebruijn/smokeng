@@ -123,3 +123,72 @@
     smokeng_import.stdout_lines
     | reject('search', '0 created, 0 updated, 0 disabled, 0 deleted')
     | list | length > 0
+
+# ---------------------------------------------------------------------------
+# Optional: the prober as its own process next to the master.
+#
+# Each step is idempotent on its own — `agent key` reuses an existing key and
+# `agent add` accepts an already-enrolled agent with the same key — so the
+# whole block can run every pass without a "when: not already done" guard.
+# ---------------------------------------------------------------------------
+
+- name: Create the prober's identity
+  ansible.builtin.command:
+    argv: ["{{ smokeng_bin }}", "agent", "key", "--key", "{{ smokeng_prober_key }}"]
+  become: true
+  become_user: "{{ smokeng_user }}"
+  when: smokeng_prober_enabled | bool
+  register: smokeng_prober_key_out
+  # The key is created once and read thereafter; the unit below is what
+  # actually changes the machine.
+  changed_when: "'created a new private key' in smokeng_prober_key_out.stderr"
+
+- name: Enrol the prober on the master
+  ansible.builtin.command:
+    argv:
+      - "{{ smokeng_bin }}"
+      - agent
+      - add
+      - --db
+      - "{{ smokeng_db }}"
+      - --name
+      - "{{ smokeng_prober_agent_name }}"
+      - --pubkey
+      - "{{ smokeng_prober_key_out.stdout | trim }}"
+  become: true
+  become_user: "{{ smokeng_user }}"
+  when: smokeng_prober_enabled | bool
+  register: smokeng_prober_enrol
+  changed_when: "'enrolled agent' in smokeng_prober_enrol.stderr"
+
+- name: Install the prober unit
+  ansible.builtin.template:
+    src: smokeng-prober.service.j2
+    dest: /etc/systemd/system/smokeng-prober.service
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    smokeng_prober_agent_id: "{{ smokeng_prober_enrol.stdout | trim }}"
+  when: smokeng_prober_enabled | bool
+  notify:
+    - Reload systemd
+    - Restart smokeng prober
+
+- name: Enable and start the prober
+  ansible.builtin.systemd_service:
+    name: smokeng-prober
+    enabled: true
+    state: started
+  when: smokeng_prober_enabled | bool
+
+# Turning the flag off stops the prober rather than leaving an orphan unit
+# running. Targets assigned to it stop being measured, which is the operator's
+# to undo by reassigning them — smokeng will not quietly move them back.
+- name: Stop the prober when it is disabled
+  ansible.builtin.systemd_service:
+    name: smokeng-prober
+    enabled: false
+    state: stopped
+  when: not (smokeng_prober_enabled | bool)
+  failed_when: false

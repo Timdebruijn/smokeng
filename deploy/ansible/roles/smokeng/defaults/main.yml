@@ -40,6 +40,25 @@ smokeng_oidc_redirect_url: ""
 smokeng_oidc_admin_claim: groups
 smokeng_oidc_admin_value: ""
 
+# Run the prober as its own process next to the master, instead of inside it.
+#
+# Off by default: one process is the right shape for one host, and this trades
+# a shared database handle for a signed HTTP round trip plus a second unit to
+# operate. Turn it on when you want to restart the UI without interrupting
+# measurement, upgrade the two separately, or keep the ICMP permission on the
+# half that needs it. See docs/operations.md.
+#
+# Enabling it does not move anything by itself: the master keeps its built-in
+# "local" prober, and a target measures here only once its `agents` setting
+# names smokeng_prober_agent_name.
+smokeng_prober_enabled: false
+smokeng_prober_agent_name: local-probe
+# Where the prober reaches the master. Loopback, so nothing leaves the host —
+# note that plain http is only accepted because of that.
+smokeng_prober_master_url: "http://{{ smokeng_listen }}"
+smokeng_prober_key: "{{ smokeng_state_dir }}/prober.key"
+smokeng_prober_db: "{{ smokeng_state_dir }}/prober.db"
+
 # Optional path on the controller to a targets.toml to import after install.
 smokeng_targets_file: ""
 smokeng_targets_prune: false

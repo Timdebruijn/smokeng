@@ -143,18 +143,32 @@ func newCollector(n int, late *atomic.Int64) *collector {
 	return c
 }
 
+// The unlocks below are deferred rather than called, which matters more than
+// it looks: an out-of-range index panics with the mutex held, and a contained
+// panic would then leave finalize blocked on it forever. A prober wedged on a
+// mutex is worse than one that crashed — systemd restarts a crash.
 func (c *collector) markSent(idx int, seq uint16, txUser time.Time) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.pings[idx].sent = true
 	c.pings[idx].seq = seq
 	c.pings[idx].txUser = txUser
-	c.mu.Unlock()
 }
 
+// markSendFailed records a probe the local side could not put on the wire.
+//
+// It marks the ping sent as well, which finalize needs in order to count it at
+// all: an attempt that failed locally is still an attempt, and dropping it
+// would render an unreachable target as no data rather than as total loss —
+// the outcome the loop in finalize says in so many words that it is avoiding.
+// The icmp path happened to call markSent first and so was unaffected; the
+// userspace types call this on its own, and were silently losing the flag
+// along with the row.
 func (c *collector) markSendFailed(idx int) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pings[idx].sent = true
 	c.pings[idx].sendFailed = true
-	c.mu.Unlock()
 }
 
 func (c *collector) onRX(idx int, t time.Time, kernel bool) {
@@ -170,6 +184,34 @@ func (c *collector) onRX(idx int, t time.Time, kernel bool) {
 	}
 	p.rx = t
 	p.rxKernel = kernel
+}
+
+// recordRoundTrip stores a round trip that was measured elsewhere and handed
+// back as a duration — the irtt case, where a cooperating server paces the
+// train and reports each packet itself.
+//
+// The pair of timestamps is synthesised backwards from the duration, because
+// what a measurement stores is the RTT and the bucket, never the wall-clock
+// instant of an individual packet. Nothing downstream can tell the difference,
+// and the alternative — a second path through finalize that bypasses the
+// timeout and clock-step checks — would let irtt samples escape the scrutiny
+// every other sample gets.
+func (c *collector) recordRoundTrip(idx int, rtt time.Duration) {
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done {
+		c.late.Add(1)
+		return
+	}
+	p := &c.pings[idx]
+	if !p.rx.IsZero() {
+		return
+	}
+	p.sent = true
+	p.txUser = now.Add(-rtt)
+	p.rx = now
+	p.rxKernel = false
 }
 
 func (c *collector) onICMPError(idx int, icmpType, code uint8) {

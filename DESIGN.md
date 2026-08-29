@@ -20,6 +20,21 @@ One Go binary, frontend embedded via `embed`. Modes:
   signed measurement batches to the master. Not built until v0.4, but the wire format and
   schema are fixed now (§9).
 
+**The prober is separable from the UI, and this is how.** `smokeng agent run` pointed at
+loopback is a prober in its own process on the master's own host — the same signed path a
+prober in another datacentre uses, deliberately not a second local-only mechanism. It buys
+restarting the UI without interrupting measurement, and keeping the ICMP permission off
+the half that serves web pages; it costs a signed HTTP round trip where there was a shared
+writer, and a second unit to operate. One process stays the default because it is the
+right shape for one host.
+
+What splitting processes does *not* fix is a panic taking everything down, since that
+would only move it. Panics are contained where they happen instead: on the per-target loop
+and on the per-probe goroutines, which hold no shared lock — narrow on purpose, because a
+process that survives a panic into a deadlock is worse off than one that crashed. Systemd
+restarts a crash and cannot see a wedge. Contained panics are counted in
+`smokeng_probe_panics_total` and the target is rescheduled within `specRefresh`.
+
 Data flow:
 
 ```
@@ -122,14 +137,13 @@ Two modes, both v0.1, modeled as the inheritable `probe_mode` setting:
 
 Measuring one host both ways = two sibling targets (same pattern as address families).
 
-**Further probe types are planned** (decided 2026-08-29, revising the kickoff brief's
-"no probe buffet" ban): TCP-connect first, more later. The extension seam is already in
-place — `measurements` is protocol-agnostic (sent / received / sorted RTT samples), and
-adding an inheritable `probe_type` setting (default `icmp`) plus per-type settings is a
-plain additive schema migration when the second protocol lands; see §13 #6. The
-guardrail that replaces the ban: every probe type must produce an RTT distribution of N
-samples per interval. A check that yields a single scalar or an up/down status does not
-belong here, ever — that is the road to a generic uptime dashboard.
+**Further probe types are built** (decided 2026-08-29, revising the kickoff brief's
+"no probe buffet" ban; landed 2026-08-30). The seam was already in place —
+`measurements` is protocol-agnostic (sent / received / sorted RTT samples) — so it was
+the additive migration §13 #6 predicted. The guardrail that replaces the ban: every
+probe type must produce an RTT distribution of N samples per interval. A check that
+yields a single scalar or an up/down status does not belong here, ever — that is the
+road to a generic uptime dashboard. See §3.2b.
 
 ### 3.2b Probe types (v0.7)
 
@@ -142,7 +156,7 @@ must produce a distribution of N round-trip times per interval. A check yielding
 number, or up/down, does not belong here however useful it might be elsewhere. That is
 what keeps this a latency instrument rather than a monitoring suite.
 
-Four types, in the order they land:
+Six types, all built:
 
 | Type | What it times | Why it earns its place |
 | --- | --- | --- |
@@ -150,7 +164,33 @@ Four types, in the order they land:
 | `dns` | Query sent to answer received | A resolver going slow looks like a healthy network on ICMP |
 | `tcp` | SYN to the handshake completing | Sees firewalls, SYN drops and a port closing, which ICMP cannot |
 | `http` / `https` | Request to response headers | Service latency including TLS, for the thing users actually wait on |
-| `irtt` | One-way delay, both directions | The only type that can say *which* direction is slow |
+| `irtt` | A UDP session against `irtt server` | Ordinary UDP: not control-plane rate-limited like ICMP, and never answered by a middlebox |
+
+**IRTT's one-way delays are not stored.** The type was admitted partly because it can say
+*which* direction is slow, and that capability is deliberately left on the floor: a
+measurement here is one distribution per interval, and a second and third distribution per
+row would change what a measurement *is* rather than add to it. Storing it properly means
+revisiting §6, not widening a column.
+
+**IRTT is also the one type that is not N independent probes.** It is a session: the far
+end paces the train and reports every packet, so the engine calls it once per interval
+rather than once per probe. It still honours `probe_mode` — switching a target between
+`icmp` and `irtt` changes what the packets are, not when they leave.
+
+**Only `icmp` can be kernel-timestamped.** Everything else is timed around a userspace
+call and carries `FlagUserspaceTX|FlagUserspaceRX` unconditionally (§5.2). This is the
+flag doing exactly its job: a band widened by a busy prober must not be readable as a slow
+service.
+
+**Two failure modes are recorded as loss rather than as a sample**, because the alternative
+draws a healthy band over an outage. An HTTP response of 400 or above, and a refused TCP
+connection. Both are named once per interval in the log, so "100% loss" does not send an
+operator looking at the network for a fault in the application.
+
+**`tcp` has no default port and none is guessed.** A `tcp` target with no `probe_port`
+resolved is refused by `validateSpec` before it is ever scheduled, named in the log once,
+and flagged on its page in the UI. Guessing 80 would produce a graph of something nobody
+asked for.
 
 **Per-type settings** are columns, not a JSON blob, so they inherit and carry provenance
 like everything else — a value shown in the UI must be able to say where it came from.
@@ -881,7 +921,7 @@ pull (§9), no multi-tenancy.
 | 3 | SQLite driver | modernc.org/sqlite (pure Go) vs mattn (CGO) | modernc; benchmark escape hatch (§6) |
 | 4 | Arrow JS reader | apache-arrow (large) vs flechette (small, read-only) | **resolved**: flechette 2.5 — verified maintained (§11); we only read |
 | 5 | Sample unit | 1 µs vs 1 ns | µs — below timestamping noise; version byte keeps ns possible |
-| 6 | Probe modes modeling | inheritable `probe_mode` vs `probe_defs` table | inheritable column now; an inheritable `probe_type` (+ per-type settings) is an additive migration when TCP-connect lands — expected, per the 2026-08-29 decision to allow more latency probes (§3.2) |
+| 6 | Probe modes modeling | inheritable `probe_mode` vs `probe_defs` table | inheritable column; `probe_type` and its per-type settings landed 2026-08-30 as the predicted additive migration, with no change to `measurements` (§3.2b) |
 | 7 | Multi-series endpoint | per-target requests vs batched | per-target now; batch only if measured overhead |
 | 8 | Alert rule inheritance | child replaces vs child adds | **decided 2026-08-29**: replace, consistently with every other setting and with SmokePing (§4.3) |
 | 9 | Agent target assignment | hand-configured per agent vs narrow pull of assigned targets from master | **agreed 2026-08-29**: pull (data-only, signed, pull-only — see §9) |

@@ -73,13 +73,18 @@ table.
 
 | Key | Type | Root default | Constraint | Meaning |
 | --- | --- | --- | --- | --- |
+| `probe_type` | string | `"icmp"` | `icmp`, `dns`, `tcp`, `http`, `https`, `irtt` | What the N probes of an interval are — see [Probe types](#probe-types) |
 | `interval_s` | int | `60` | > 0 | Seconds between measurement intervals |
-| `pings_per_interval` | int | `20` | > 0 | Echo requests sent per interval — this is the width of your distribution |
+| `pings_per_interval` | int | `20` | > 0 | Probes sent per interval — this is the width of your distribution |
 | `probe_mode` | string | `"burst"` | `burst` or `spread` | See below |
-| `burst_gap_ms` | int | `10` | ≥ 0 | Milliseconds between pings in burst mode |
+| `burst_gap_ms` | int | `10` | ≥ 0 | Milliseconds between probes in burst mode |
 | `timeout_ms` | int | `1000` | > 0 | How long a reply may take before it counts as lost |
-| `packet_size` | int | `56` | 12–65000 | ICMP payload bytes |
+| `packet_size` | int | `56` | 12–65000 | Payload bytes; `icmp` and `irtt` only |
 | `dscp` | int | `0` | 0–63 | DSCP marking, for measuring a specific traffic class |
+| `probe_port` | int | unset | 1–65535 | Port for the types that have one; unset means the type's default |
+| `dns_query` | string | unset | a domain name | What a `dns` probe asks for |
+| `dns_rr_type` | string | unset | `A`, `AAAA`, `CNAME`, `MX`, `NS`, `PTR`, `SOA`, `SRV`, `TXT` | Which record a `dns` probe asks for |
+| `http_path` | string | unset | a path | What an `http` or `https` probe requests; unset means `/` |
 | `agents` | array | `["local"]` | every name must be enrolled | Which vantage points measure this target |
 | `trace_interval_s` | int | `300` | ≥ 0 | Seconds between traceroutes; `0` disables path discovery |
 
@@ -99,6 +104,93 @@ legitimate; they answer different questions. Burst is the SmokePing-compatible d
 
 A burst must fit inside its interval: `pings_per_interval × burst_gap_ms` must be less
 than `interval_s × 1000`, or the import is rejected.
+
+## Probe types
+
+`probe_mode` says *when* the probes of an interval go out. `probe_type` says *what* they
+are. It is inherited like everything else, so a whole subtree can be measured over HTTPS
+by setting it once on the group.
+
+Every type produces a distribution of N round-trip times per interval. That is the
+admission rule, not a coincidence: a check that yields one number, or an up/down verdict,
+is a different kind of instrument and does not belong on these graphs.
+
+| Type | Measures | Default port | Extra settings |
+| --- | --- | --- | --- |
+| `icmp` | Echo request to echo reply | — | `packet_size` |
+| `dns` | A query against this host **as a resolver** | 53 | `dns_query`, `dns_rr_type`, `probe_port` |
+| `tcp` | The TCP handshake — SYN to SYN-ACK | none; **required** | `probe_port` |
+| `http` | Request to first response byte | 80 | `http_path`, `probe_port` |
+| `https` | As `http`, including the TLS handshake | 443 | `http_path`, `probe_port` |
+| `irtt` | A UDP session against `irtt server` | 2112 | `packet_size`, `probe_port` |
+
+```toml
+[targets."Klanten/GemeenteX/portaal"]
+host = "portaal.gemeentex.nl"
+address_family = "v4"
+probe_type = "https"
+http_path = "/health"
+
+[targets."Klanten/GemeenteX/resolver"]
+host = "10.20.0.53"
+address_family = "v4"
+probe_type = "dns"
+dns_query = "gemeentex.nl"
+dns_rr_type = "A"
+```
+
+### What each one is for
+
+**`icmp`** is the default and the cheapest. It measures the path, not the service.
+
+**`dns`** points at a resolver and times a query against it. The host is the resolver
+being measured, not the name being asked about. A resolver going slow is invisible to
+ICMP — the box answers pings promptly while every lookup behind it crawls.
+
+**`tcp`** measures a handshake, which goes through a queue ICMP does not share. A router
+that deprioritises ICMP, or a middlebox that answers pings on a dead host's behalf, both
+look healthy to an echo request. There is no default port and none is guessed: a `tcp`
+target without `probe_port` is **not measured at all**, and says so in the log and on the
+target's page in the UI.
+
+**`http`/`https`** measure the service rather than the path. Each probe builds a fresh
+connection — TCP, then TLS for `https`, then the request — because reusing one would make
+the first sample of a session include a handshake the others skipped, and a distribution
+split between two unrelated populations is worse than a slower one. Timing stops at the
+response headers: how fast a page transfers is a bandwidth question, and mixing it in
+would make a large page look like a slow network.
+
+Two consequences worth knowing before you point one at production:
+
+- **A response of 400 or above counts as loss.** The transport worked and the server
+  answered, but it did not serve what was asked for, and drawing a healthy green band over
+  an outage would be the wrong answer. The status is named once per interval in the log,
+  so "100% loss" does not send you looking at the network for a fault in the application.
+- **Redirects are not followed.** A 3xx is one round trip to this host and is recorded as
+  such. Following it would add a second round trip, to a second host, and report the pair
+  as one measurement of the first.
+- **Certificates are verified.** An `https` target with a self-signed certificate reads as
+  total loss. There is no switch to turn that off; point such a target at `tcp` on 443 if
+  you only want to know the far end is up.
+
+**`irtt`** needs [`irtt server`](https://github.com/heistp/irtt) running at the far end,
+so it only works where you control both sides. What it buys is a measurement the network
+has no reason to treat specially: ordinary UDP, not rate-limited by the control plane the
+way ICMP echo is on most routers, and never answered by a middlebox on the target's
+behalf. It runs one session per interval rather than N independent probes — the far end
+paces the train itself and reports each packet — and it honours `probe_mode`, so switching
+a target between `icmp` and `irtt` changes what the packets are, not when they go out.
+
+IRTT also measures one-way delay in each direction, which is more than smokeng stores.
+Only the round trip is kept: a measurement here is one distribution per interval, and
+splitting it would change what a measurement *is*.
+
+### Timing accuracy
+
+Only `icmp` can be kernel-timestamped. Every other type is timed around a userspace call,
+so every measurement they produce carries the `userspace TX/RX` quality flag and is
+labelled as such on the graph. That is not a defect being hidden — it is the reason the
+flag exists. A band widened by a busy prober must never be readable as a slow service.
 
 ## Presentation and lifecycle
 

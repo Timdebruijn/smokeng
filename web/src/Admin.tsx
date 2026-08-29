@@ -8,6 +8,7 @@ import {
   type SettingKey,
   type AgentInfo,
   fetchAgents,
+  isUnset,
   type SettingValue,
   type Target,
 } from './api'
@@ -20,12 +21,35 @@ interface SettingDef {
   min?: number
   max?: number
   choices?: { value: string; label: string }[]
+  /** Which probe types this setting does anything for; absent means all. */
+  types?: string[]
+  hint?: string
+  /**
+   * What "Override" writes when nothing is inherited yet. Optional settings
+   * have no inherited value to copy, and their unset form — port 0, record
+   * type "" — is one the server rejects, so overriding without a seed would
+   * answer a click with a validation error.
+   */
+  seed?: number | string
 }
 
 // The bounds and choices here are the ones the server enforces. Stating them
 // twice is deliberate: a value the server will refuse should be refused while
 // the operator is still looking at the field, not after a round trip.
 const SETTINGS: SettingDef[] = [
+  {
+    key: 'probe_type',
+    label: 'Probe type',
+    kind: 'choice',
+    choices: [
+      { value: 'icmp', label: 'icmp — echo request, the default' },
+      { value: 'dns', label: 'dns — a query against this host as a resolver' },
+      { value: 'tcp', label: 'tcp — handshake against a port' },
+      { value: 'http', label: 'http — request, timed to the first byte' },
+      { value: 'https', label: 'https — as http, including the TLS handshake' },
+      { value: 'irtt', label: 'irtt — UDP session; needs irtt server at the far end' },
+    ],
+  },
   { key: 'interval_s', label: 'Interval', unit: 's', kind: 'number', min: 1 },
   { key: 'pings_per_interval', label: 'Pings per interval', kind: 'number', min: 1 },
   {
@@ -39,11 +63,83 @@ const SETTINGS: SettingDef[] = [
   },
   { key: 'burst_gap_ms', label: 'Burst gap', unit: 'ms', kind: 'number', min: 0 },
   { key: 'timeout_ms', label: 'Timeout', unit: 'ms', kind: 'number', min: 1 },
-  { key: 'packet_size', label: 'Packet size', unit: 'bytes', kind: 'number', min: 12, max: 65000 },
+  {
+    key: 'packet_size',
+    label: 'Packet size',
+    unit: 'bytes',
+    kind: 'number',
+    min: 12,
+    max: 65000,
+    // The other types send whatever their protocol sends; showing a size
+    // control that changes nothing would be a lie about what is configurable.
+    types: ['icmp', 'irtt'],
+  },
+  {
+    key: 'probe_port',
+    label: 'Port',
+    kind: 'number',
+    min: 1,
+    max: 65535,
+    types: ['dns', 'tcp', 'http', 'https', 'irtt'],
+    hint: 'Unset uses the default for the type — 53, 80, 443, 2112. tcp has no default and needs one.',
+  },
+  {
+    key: 'dns_query',
+    label: 'DNS query',
+    kind: 'text',
+    types: ['dns'],
+    hint: 'The name to ask for. Unset asks the root for its NS records, the smallest question every resolver can answer.',
+  },
+  {
+    key: 'dns_rr_type',
+    label: 'DNS record type',
+    kind: 'choice',
+    types: ['dns'],
+    seed: 'A',
+    choices: ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'PTR', 'SOA', 'SRV', 'TXT'].map((v) => ({
+      value: v,
+      label: v,
+    })),
+  },
+  {
+    key: 'http_path',
+    label: 'HTTP path',
+    kind: 'text',
+    types: ['http', 'https'],
+    hint: 'Unset requests /. Redirects are not followed: a 3xx is one round trip to this host, and chasing it would report two as one.',
+  },
   { key: 'dscp', label: 'DSCP', kind: 'number', min: 0, max: 63 },
   { key: 'agents', label: 'Agents', kind: 'agents' },
   { key: 'trace_interval_s', label: 'Path discovery', unit: 's (0 = off)', kind: 'number', min: 0 },
 ]
+
+/**
+ * The settings that do something for the type this node actually uses.
+ *
+ * Hiding the rest is the point: a DNS query field on an ICMP target invites
+ * someone to fill it in and then wonder why nothing changed. The effective
+ * type is what matters here, not the local one — a node inheriting `dns` from
+ * its parent needs the DNS fields just as much as one that sets it itself.
+ */
+function settingsFor(target: Target): SettingDef[] {
+  const type = String(target.settings.probe_type.effective || 'icmp')
+  return SETTINGS.filter((s) => !s.types || s.types.includes(type)).map((s) =>
+    s.key === 'probe_port' ? { ...s, seed: PORT_SEED[type] } : s,
+  )
+}
+
+// What "Override" puts in the port field when nothing is inherited. These are
+// the type's own defaults, so overriding changes nothing until the operator
+// edits it — except for tcp, which has no default and gets the port people
+// most often watch. That is a starting value in a field they are looking at,
+// not a choice made behind their back.
+const PORT_SEED: Record<string, number> = {
+  dns: 53,
+  tcp: 443,
+  http: 80,
+  https: 443,
+  irtt: 2112,
+}
 
 export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
   const [targets, setTargets] = useState<Target[]>([])
@@ -197,6 +293,12 @@ function validateSetting(target: Target, def: SettingDef, next: number | string 
     return 'a target measured by nobody is not a configuration; disable it instead'
   }
 
+  // A tcp target with no port is refused by the prober, but it is not blocked
+  // here: the port field only appears once the type is tcp, so refusing the
+  // switch would make the combination unreachable rather than invalid. The
+  // banner on the panel names the gap instead, which leaves the target visibly
+  // misconfigured rather than unspellable.
+
   const eff = (k: SettingKey) => Number(target.settings[k].effective)
   const proposed = (k: SettingKey) => (k === def.key ? Number(next) : eff(k))
   const mode = def.key === 'probe_mode' ? String(next) : String(target.settings.probe_mode.effective)
@@ -297,9 +399,20 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
         Unset values are inherited from an ancestor. Overriding writes the value on this node;
         reverting clears it so it follows its parent again.
       </p>
+      {/* The prober skips this target entirely and says so in the log. Saying
+          it here too is the difference between a flat graph someone eventually
+          notices and a problem they can see while they are causing it. */}
+      {!target.is_group &&
+        String(target.settings.probe_type.effective) === 'tcp' &&
+        !Number(target.settings.probe_port.effective) && (
+          <p className="field-error">
+            This target is set to <code>tcp</code> with no port, and there is no port to guess — so
+            it is not being measured at all. Set one below.
+          </p>
+        )}
       <table className="settings">
         <tbody>
-          {SETTINGS.map((s) => (
+          {settingsFor(target).map((s) => (
             <SettingRow
               key={s.key}
               def={s}
@@ -360,12 +473,16 @@ function SettingRow({
   onSet: (v: number | string | null) => Promise<boolean>
 }) {
   const isLocal = value.local !== null
-  const [draft, setDraft] = useState(String(value.effective))
+  // A number whose minimum is 1 cannot legitimately be 0, so 0 there means
+  // "nobody set one" and is shown as empty. Printing "Port: 0" would name a
+  // port that does not exist and hide the fact that the type's default applies.
+  const shown = def.kind === 'number' && def.min === 1 && value.effective === 0 ? '' : String(value.effective)
+  const [draft, setDraft] = useState(shown)
   const [problem, setProblem] = useState<string | null>(null)
   useEffect(() => {
-    setDraft(String(value.effective))
+    setDraft(shown)
     setProblem(null)
-  }, [value.effective])
+  }, [shown])
 
   const set = (next: number | string | null) => {
     const bad = validate(next)
@@ -419,10 +536,13 @@ function SettingRow({
             {def.unit && <span className="unit">{def.unit}</span>}
           </>
         )}
+        {def.hint && <p className="hint small">{def.hint}</p>}
         {problem && <p className="field-error">{problem}</p>}
       </td>
       <td className="provenance">
-        {value.source === 'local' ? (
+        {isUnset(value) ? (
+          <span className="chip">not set anywhere</span>
+        ) : value.source === 'local' ? (
           <span className="chip local">set here</span>
         ) : value.source === 'outside' ? (
           // The ancestor that set this is above the caller's scope, so it has
@@ -441,7 +561,10 @@ function SettingRow({
             Revert
           </button>
         ) : (
-          <button disabled={busy} onClick={() => void onSet(value.effective)}>
+          <button
+            disabled={busy}
+            onClick={() => void onSet(value.effective === '' || shown === '' ? (def.seed ?? value.effective) : value.effective)}
+          >
             Override
           </button>
         )}

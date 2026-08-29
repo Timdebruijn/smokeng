@@ -75,6 +75,7 @@ commands:
   agent add --name N --pubkey K          enrol a remote agent on the master
   agent list                             list enrolled agents
   agent enable|disable|remove ID         change an agent's standing
+  agent key [--key PATH]                 create the agent's key if absent, print its public half
   agent run --master URL --agent-id ID   run as a remote measurement node
   version                                print version`)
 }

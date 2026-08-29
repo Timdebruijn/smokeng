@@ -160,6 +160,15 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 			"timeout_ms":     res.TimeoutMS.Effective,
 			"packet_size":    res.PacketSize.Effective,
 			"dscp":           res.DSCP.Effective,
+			// Without these a remote agent would fall back to icmp while the
+			// tree, the UI and the exported TOML all said the target was
+			// measured some other way — the same measurement labelled two
+			// different things depending on where you read it.
+			"probe_type":  res.ProbeType.Effective,
+			"probe_port":  res.ProbePort.Effective,
+			"dns_query":   res.DNSQuery.Effective,
+			"dns_rr_type": res.DNSRRType.Effective,
+			"http_path":   res.HTTPPath.Effective,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"targets": out})

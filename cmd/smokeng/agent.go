@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -38,9 +39,42 @@ func agentCmd(args []string) error {
 		return agentSetState(args[1:], "enable")
 	case "run":
 		return agentRun(args[1:])
+	case "key":
+		return agentKey(args[1:])
 	default:
 		return fmt.Errorf("unknown agent subcommand %q", args[0])
 	}
+}
+
+// agentKey creates the agent's private key if it does not exist yet and prints
+// the public half, without starting anything.
+//
+// The manual route is to start the agent, read its public key off the console
+// and stop it again. That is fine by hand and awkward from a provisioning
+// tool, which needs the key before it can write the unit that would print it.
+// Splitting the two makes "generate identity" and "start measuring" separate
+// steps, which is what they always were.
+//
+// It is deliberately idempotent: run against an existing key it prints that
+// key and changes nothing, so re-running a playbook does not silently issue a
+// new identity and orphan every measurement signed with the old one.
+func agentKey(args []string) error {
+	fs := flag.NewFlagSet("agent key", flag.ExitOnError)
+	keyPath := fs.String("key", "probe.key", "path to this agent's private key")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	priv, created, err := agent.LoadOrCreateKey(*keyPath)
+	if err != nil {
+		return err
+	}
+	if created {
+		fmt.Fprintf(os.Stderr, "created a new private key at %s\n", *keyPath)
+	}
+	// The public key alone on stdout, so a caller can capture it without
+	// having to parse around a sentence.
+	fmt.Println(agent.PublicKey(priv))
+	return nil
 }
 
 // agentAdd enrols an agent on the master by pasting in its public key. This
@@ -68,12 +102,43 @@ func agentAdd(args []string) error {
 	}
 	defer st.Close()
 
-	rec, err := st.AddAgent(context.Background(), *name, ed25519.PublicKey(raw))
+	ctx := context.Background()
+	// Enrolling an agent that is already enrolled with this very key is a
+	// no-op, not an error. Provisioning tools run the same step every pass,
+	// and failing the second run would mean either a hand-written "only if
+	// absent" guard around it or a playbook that cannot be run twice.
+	//
+	// The same name with a *different* key is the opposite: either a key was
+	// regenerated and every measurement signed with the old one is about to
+	// stop verifying, or something is trying to take over an identity. Both
+	// deserve a stop rather than a silent overwrite.
+	existing, err := st.ListAgents(ctx)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("enrolled agent %q with id %d\n", rec.Name, rec.ID)
-	fmt.Printf("assign targets to it by setting `agents` to include %q, "+
+	for _, a := range existing {
+		if a.Name != *name {
+			continue
+		}
+		if !bytes.Equal(a.PubKey, raw) {
+			return fmt.Errorf("agent %q is already enrolled with a different public key; "+
+				"remove it with 'smokeng agent remove %d' if you meant to re-key it, "+
+				"which invalidates the old key", *name, a.ID)
+		}
+		fmt.Println(a.ID)
+		fmt.Fprintf(os.Stderr, "agent %q is already enrolled with this key, as id %d\n", a.Name, a.ID)
+		return nil
+	}
+
+	rec, err := st.AddAgent(ctx, *name, ed25519.PublicKey(raw))
+	if err != nil {
+		return err
+	}
+	// The id alone on stdout, so a caller can capture it; everything a person
+	// needs to read goes to stderr, where it does not have to be parsed around.
+	fmt.Println(rec.ID)
+	fmt.Fprintf(os.Stderr, "enrolled agent %q with id %d\n", rec.Name, rec.ID)
+	fmt.Fprintf(os.Stderr, "assign targets to it by setting `agents` to include %q, "+
 		"then start it with --agent-id %d\n", rec.Name, rec.ID)
 	return nil
 }

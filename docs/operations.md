@@ -66,6 +66,69 @@ affects logging and nothing else: smokeng authorises agents by signature and bro
 session cookie, never by address, so a forged header cannot get past anything. It can
 only put a lie in your logs, which is precisely what this stops.
 
+## Running the prober as its own process
+
+By default one process does everything: scheduler, probing engine, database, API and web
+UI. That is the right shape for one host, and it is what `smokeng serve` gives you.
+
+It does not have to be. `smokeng agent run` is the probing engine without the UI, and
+nothing about it requires the far end to be far away — pointed at loopback it is a
+separate prober on the same machine as the master. Reasons to want that:
+
+- restart or upgrade the UI without interrupting measurement, and the reverse;
+- keep the unprivileged-ICMP permission on the half that needs it, off the half that
+  serves a web page;
+- contain a prober that is misbehaving without taking the API down with it.
+
+The cost is real and worth stating: measurements travel over signed HTTP instead of going
+straight to the writer, there are two units to run and upgrade, and there are two ways to
+be half-broken instead of one. It is the same code path a prober in another datacentre
+uses, which is exactly why it is worth having rather than a second local-only mechanism.
+
+```bash
+sudo -u smokeng smokeng agent key --key /var/lib/smokeng/prober.key
+```
+
+That prints the public key, creating it on first run and reusing it after. Enrol it on the
+master, which prints the agent id:
+
+```bash
+sudo -u smokeng smokeng agent add --db /var/lib/smokeng/smokeng.db \
+    --name local-probe --pubkey <the key above>
+```
+
+Then run it, with its own buffer database:
+
+```bash
+sudo -u smokeng smokeng agent run --master http://127.0.0.1:8080 --agent-id 1 \
+    --key /var/lib/smokeng/prober.key --db /var/lib/smokeng/prober.db \
+    --insecure-allow-http
+```
+
+`--insecure-allow-http` is needed because the traffic is plain HTTP; over loopback it never
+leaves the host. Point it at your external HTTPS URL instead if you would rather it did
+not depend on that reasoning.
+
+Nothing moves by itself. The master keeps its built-in prober under the name `local`, and
+a target measures here only once its `agents` setting names `local-probe`. Both can be
+listed: two vantage points on one host is a strange thing to want, but it is not
+prevented, and the two series stay separate like any others.
+
+The Ansible role does all of this behind `smokeng_prober_enabled: true`, including a
+second unit — see [`deploy/ansible`](../deploy/ansible/README.md).
+
+### What this does not fix
+
+A panic inside a probe used to end the whole process. Splitting the prober out would only
+have moved that, so it is fixed where it happens instead: a panic in one probe, or in one
+target's loop, is contained, logged with its stack, counted in
+`smokeng_probe_panics_total`, and the target is rescheduled. One target's gap, not an
+outage.
+
+The containment is deliberately narrow — only on goroutines holding no shared lock. A
+process that survives a panic into a deadlock is worse off than one that crashed, because
+systemd restarts a crash and cannot see a wedge.
+
 ## Storage growth
 
 smokeng keeps every measurement at full resolution forever. That is the whole point, and
@@ -121,6 +184,7 @@ reducing it to summary statistics, which is the thing smokeng refuses to do.
 | `smokeng_measurements_written_total` | counter | | Measurements written to the store |
 | `smokeng_measurement_write_errors_total` | counter | | Failed write batches |
 | `smokeng_measurements_dropped_total` | counter | | Finalised measurements discarded — **data loss** |
+| `smokeng_probe_panics_total` | counter | | Panics contained instead of ending the process — **a bug in smokeng** |
 | `smokeng_late_replies_total` | counter | | Replies that arrived after their interval closed |
 | `smokeng_socket_overflow_measurements_total` | counter | | Measurements taken while the receive queue overflowed |
 | `smokeng_dns_failures_total` | counter | | Intervals skipped because a hostname would not resolve |
@@ -130,7 +194,7 @@ reducing it to summary statistics, which is the thing smokeng refuses to do.
 | `smokeng_agent_last_seen_seconds` | gauge | `agent`, `id` | Unix time of the agent's last submission; absent if never |
 | `smokeng_alerts_firing` | gauge | | Alert rules currently firing |
 
-Four of these are worth an alert of their own:
+Five of these are worth an alert of their own:
 
 - `smokeng_measurements_dropped_total` increasing means smokeng is throwing away
   measurements it took. Nothing else should be able to cause a gap in the data.
@@ -141,6 +205,9 @@ Four of these are worth an alert of their own:
 - `smokeng_targets_unmeasured` above zero means a target is assigned only to agents that
   do not exist — usually because one was removed after the assignment was written. Its
   graph is empty and looks exactly like a target that is measured and never answers.
+- `smokeng_probe_panics_total` above zero is a bug in smokeng, not in your network. The
+  measurement was contained rather than allowed to end the process, so the damage is a gap
+  in one series — but the log holds the stack, and it is worth reporting.
 
 Scraping needs `--metrics-public`, since a scraper cannot present a session cookie.
 

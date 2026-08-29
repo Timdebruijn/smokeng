@@ -147,6 +147,11 @@ type assignment struct {
 	TimeoutMS     int    `json:"timeout_ms"`
 	PacketSize    int    `json:"packet_size"`
 	DSCP          int    `json:"dscp"`
+	ProbeType     string `json:"probe_type"`
+	ProbePort     int    `json:"probe_port"`
+	DNSQuery      string `json:"dns_query"`
+	DNSRRType     string `json:"dns_rr_type"`
+	HTTPPath      string `json:"http_path"`
 }
 
 // pull fetches the agent's assignments and mirrors them into the local store,
@@ -201,6 +206,25 @@ func (a *Agent) mirror(ctx context.Context, targets []assignment) error {
 				TimeoutMS: &t.TimeoutMS, PacketSize: &t.PacketSize, DSCP: &t.DSCP,
 				Agents: ptr("local"),
 			},
+		}
+		// The probe-type settings are mirrored only where the master actually
+		// set one. An empty string is not "no opinion" to tree.Validate — it
+		// is an invalid value, and writing it would make every assignment fail
+		// validation on arrival and leave the agent measuring nothing at all.
+		if t.ProbeType != "" {
+			node.Settings.ProbeType = &t.ProbeType
+		}
+		if t.ProbePort != 0 {
+			node.Settings.ProbePort = &t.ProbePort
+		}
+		if t.DNSQuery != "" {
+			node.Settings.DNSQuery = &t.DNSQuery
+		}
+		if t.DNSRRType != "" {
+			node.Settings.DNSRRType = &t.DNSRRType
+		}
+		if t.HTTPPath != "" {
+			node.Settings.HTTPPath = &t.HTTPPath
 		}
 		if err := a.st.UpsertTarget(ctx, &node); err != nil {
 			return fmt.Errorf("agent: mirror %s: %w", t.Path, err)

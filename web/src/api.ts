@@ -113,6 +113,19 @@ export function deleteAlertRule(id: number): Promise<unknown> {
 export type Provenance = 'local' | 'outside' | { id: number; name: string; path: string }
 
 /**
+ * True when no node in the tree sets this value at all.
+ *
+ * Only the optional per-probe-type settings can be in this state — the root is
+ * required to set every other inheritable default — and it arrives as a zero
+ * provenance with no id and no path. Rendering that as "inherited from" would
+ * name an ancestor that does not exist, so the two cases are told apart here
+ * rather than in each screen that shows a setting.
+ */
+export function isUnset(v: SettingValue<unknown>): boolean {
+  return v.local === null && typeof v.source === 'object' && v.source.id === 0
+}
+
+/**
  * One resolved setting (DESIGN.md §4.2). `local` is null when the value is
  * inherited, which is exactly what the override and revert controls act on —
  * the server never flattens this away.
@@ -133,6 +146,13 @@ export interface TargetSettings {
   packet_size: SettingValue<number>
   dscp: SettingValue<number>
   agents: SettingValue<string>
+  /** What the N probes of an interval are: icmp, dns, tcp, http, https, irtt. */
+  probe_type: SettingValue<string>
+  /** 0 means "the default for this probe type"; tcp has none and requires one. */
+  probe_port: SettingValue<number>
+  dns_query: SettingValue<string>
+  dns_rr_type: SettingValue<string>
+  http_path: SettingValue<string>
 }
 
 export type SettingKey = keyof TargetSettings

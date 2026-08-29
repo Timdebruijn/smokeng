@@ -1,0 +1,59 @@
+{{ ansible_managed | comment }}
+# The prober as its own process, on the same host as the master.
+#
+# smokeng's single binary runs the scheduler, the probing engine, the database
+# and the web UI together, which is the right shape for one host. This unit is
+# for when it is not: restarting the UI without interrupting measurement,
+# upgrading the two on different schedules, or giving the prober the ICMP
+# permission the UI has no business holding.
+#
+# It is the ordinary remote-agent path pointed at loopback — the same signed
+# ingest a prober in another datacentre uses, so there is one code path and not
+# a second local-only one. That is also its cost: measurements travel over HTTP
+# and are signed and verified rather than handed to the writer directly.
+#
+# Assign targets to it by setting `agents` to this agent's name. The master
+# keeps its own built-in prober ("local"); a target names one or the other.
+[Unit]
+Description=smokeng prober ({{ smokeng_prober_agent_name }})
+Documentation=https://github.com/{{ smokeng_repo }}
+After=network-online.target smokeng.service
+Wants=network-online.target
+# Not Requires: the prober keeps measuring into its own buffer while the
+# master is down, and drains when it comes back. Tying its lifetime to the
+# master's would throw away exactly the measurements taken during the outage.
+After=smokeng.service
+
+[Service]
+Type=simple
+User={{ smokeng_user }}
+Group={{ smokeng_group }}
+ExecStart={{ smokeng_bin }} agent run \
+    --master {{ smokeng_prober_master_url }} \
+    --agent-id {{ smokeng_prober_agent_id }} \
+    --key {{ smokeng_prober_key }} \
+    --db {{ smokeng_prober_db }}{% if smokeng_prober_master_url is match('http://') %} \
+    --insecure-allow-http{% endif %}
+
+
+Restart=always
+RestartSec=5
+
+# Same lockdown as the master. The prober is the half that needs the ICMP
+# sysctl; it is here rather than there once measurement moves out.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths={{ smokeng_state_dir }}
+
+[Install]
+WantedBy=multi-user.target

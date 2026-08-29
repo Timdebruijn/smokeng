@@ -8,10 +8,12 @@ actual density — no rollup, no consolidation, no single-value-per-check.
 ![Three targets in the smokeng UI: the density smoke, the pooled median line and the loss
 rail, stacked on a shared time axis](docs/images/smokeng.png)
 
-**Status: released, [v0.4.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.4.0).**
+**Status: released, [v0.6.1](https://github.com/timdebruijn/smokeng/releases/tag/v0.6.1).**
 The design is agreed and frozen in
-[DESIGN.md](DESIGN.md). Working end to end: the ICMP prober (burst and spread, kernel
-timestamping with observable fallback), the SQLite store, TOML import/export of the
+[DESIGN.md](DESIGN.md). Working end to end: the prober — ICMP, DNS, TCP-connect, HTTP(S)
+and IRTT, burst and spread, kernel
+timestamping with observable fallback where the type allows it, and a userspace flag
+where it does not — the SQLite store, TOML import/export of the
 target tree, a SmokePing `Targets` importer, the Arrow measurements API, the browser
 renderer — density smoke, pooled median, loss rail, stacked plots with a shared
 crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that edits the
@@ -400,7 +402,7 @@ builds for linux/amd64, arm64, 386, arm and riscv64.
 |---|---|
 | `cmd/smokeng` | the binary: `serve`, `config`, `agent`, `version` |
 | `internal/tree` | target tree, inheritance resolution with provenance |
-| `internal/probe` | scheduler + ICMP engine |
+| `internal/probe` | scheduler + the probe engines (icmp, dns, tcp, http/s, irtt) |
 | `internal/probe/timestamp` | kernel packet timestamping and the socket error queue |
 | `internal/probe/dnscache` | TTL-respecting hostname resolution |
 | `internal/probe/trace` | path discovery, to see whether the route changed |

@@ -78,6 +78,11 @@ func targetJSON(sc *Scope, n *tree.Target) (map[string]any, error) {
 			"dscp":               settingJSON(sc, n.ID, res.DSCP),
 			"agents":             settingJSON(sc, n.ID, res.Agents),
 			"trace_interval_s":   settingJSON(sc, n.ID, res.TraceIntervalS),
+			"probe_type":         settingJSON(sc, n.ID, res.ProbeType),
+			"probe_port":         settingJSON(sc, n.ID, res.ProbePort),
+			"dns_query":          settingJSON(sc, n.ID, res.DNSQuery),
+			"dns_rr_type":        settingJSON(sc, n.ID, res.DNSRRType),
+			"http_path":          settingJSON(sc, n.ID, res.HTTPPath),
 		},
 	}, nil
 }
@@ -418,10 +423,15 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 			"packet_size":        &n.Settings.PacketSize,
 			"dscp":               &n.Settings.DSCP,
 			"trace_interval_s":   &n.Settings.TraceIntervalS,
+			"probe_port":         &n.Settings.ProbePort,
 		}
 		strs := map[string]**string{
-			"probe_mode": &n.Settings.ProbeMode,
-			"agents":     &n.Settings.Agents,
+			"probe_mode":  &n.Settings.ProbeMode,
+			"agents":      &n.Settings.Agents,
+			"probe_type":  &n.Settings.ProbeType,
+			"dns_query":   &n.Settings.DNSQuery,
+			"dns_rr_type": &n.Settings.DNSRRType,
+			"http_path":   &n.Settings.HTTPPath,
 		}
 		for key, raw := range settings {
 			// The UI sends agents as an array; a string still works and means

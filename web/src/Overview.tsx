@@ -220,7 +220,19 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
                           r.agentName && <span className="from-agent">from {r.agentName}</span>
                         )}
                       </span>
-                      <span className="health-host">{r.target.host}</span>
+                      <span className="health-host">
+                        {r.target.host}
+                        {/* Only when it is not the default. On a dense list a
+                            badge reading "icmp" on every row carries no
+                            information; one reading "https" tells you why this
+                            row's numbers are an order of magnitude larger than
+                            its neighbour's. The detail page always says. */}
+                        {r.target.settings.probe_type.effective !== 'icmp' && (
+                          <span className="badge probe-type">
+                            {r.target.settings.probe_type.effective}
+                          </span>
+                        )}
+                      </span>
                     </span>
                     <Spark values={r.spark} />
                     <span className="mono">{noData || noReplies ? '—' : fmtUs(r.median)}</span>

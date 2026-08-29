@@ -36,8 +36,12 @@ dropped in silence. You will typically see some of these:
 | `slaves = …` | Imported as an `agents` list, but the agents must be enrolled separately first — with a one-time enrolment token or with `smokeng agent add` — or the import refuses the unknown names. See [Remote agents](agents.md). |
 | `nomasterpoll` with no slaves | Warned about — the target would never be measured. |
 
-Probe types other than ICMP are not imported: smokeng measures ICMP today. A TCP-connect
-probe is designed and not yet built.
+SmokePing's `probe = …` lines are not translated, and every imported target arrives as
+`icmp`. smokeng has its own probe types — `dns`, `tcp`, `http`, `https` and `irtt` as well
+as `icmp` — but the names and per-probe settings do not map one to one onto SmokePing's,
+and a wrong guess would measure something other than what you asked for while looking
+correct. Set `probe_type` on the imported targets yourself; see
+[Configuration](configuration.md#probe-types).
 
 ## What is different once you are across
 

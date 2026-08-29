@@ -3,8 +3,10 @@ package probe
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/netip"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,6 +54,7 @@ type Engine struct {
 	traces    atomic.Int64
 	pathHops  atomic.Int64
 	dropped   atomic.Int64 // measurements lost because the results channel was full
+	panics    atomic.Int64 // panics contained rather than allowed to end the process
 
 	traceUnsupported sync.Once
 
@@ -59,6 +62,9 @@ type Engine struct {
 	conns    map[connKey]*conn
 	running  map[int64]*runningTarget
 	targetWG sync.WaitGroup
+	// warned remembers the last configuration problem reported per target, so
+	// a misconfiguration is named once instead of twice a minute forever.
+	warned map[int64]string
 }
 
 type connKey struct {
@@ -85,6 +91,7 @@ func NewEngine(st store.Store, alerter Alerter) (*Engine, error) {
 		results: make(chan store.Measurement, 1024),
 		conns:   map[connKey]*conn{},
 		running: map[int64]*runningTarget{},
+		warned:  map[int64]string{},
 	}, nil
 }
 
@@ -188,6 +195,7 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 		return nil, err
 	}
 	specs := map[int64]TargetSpec{}
+	problems := map[int64]string{}
 	for i := range targets {
 		n := &targets[i]
 		if n.Host == nil || !n.Enabled {
@@ -206,7 +214,7 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 		if !local {
 			continue
 		}
-		specs[n.ID] = TargetSpec{
+		spec := TargetSpec{
 			TargetID:       n.ID,
 			Host:           *n.Host,
 			Family:         *n.AddressFamily,
@@ -224,8 +232,63 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 			DNSRRType:      res.DNSRRType.Effective,
 			HTTPPath:       res.HTTPPath.Effective,
 		}
+		// A target that cannot be measured as configured is skipped and said
+		// out loud. Probing it anyway would mean guessing at the missing
+		// piece, and a graph drawn from a guess is worse than no graph.
+		if err := validateSpec(spec); err != nil {
+			problems[n.ID] = err.Error()
+			continue
+		}
+		specs[n.ID] = spec
 	}
+	e.reportSpecProblems(targets, problems)
 	return specs, nil
+}
+
+// validateSpec checks the settings a probe type needs but the tree cannot
+// enforce. tree.Validate sees one node's own settings; whether a port is set
+// is only answerable once inheritance has been resolved, which is here.
+func validateSpec(spec TargetSpec) error {
+	switch spec.ProbeType {
+	case "", "icmp", "dns", "http", "https", "irtt":
+		return nil
+	case "tcp":
+		if spec.ProbePort == 0 {
+			return errors.New("probe_type tcp needs a probe_port, and there is no sensible port to guess")
+		}
+		return nil
+	}
+	return fmt.Errorf("probe_type %q has no prober behind it", spec.ProbeType)
+}
+
+// reportSpecProblems names each unmeasurable target once, and again only if
+// the problem changes. The reload runs twice a minute and a misconfiguration
+// lasts until somebody fixes it, so logging every pass would bury the event
+// that matters under a thousand copies of itself.
+func (e *Engine) reportSpecProblems(targets []tree.Target, problems map[int64]string) {
+	host := func(id int64) string {
+		for i := range targets {
+			if targets[i].ID == id && targets[i].Host != nil {
+				return *targets[i].Host
+			}
+		}
+		return "?"
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for id, msg := range problems {
+		if e.warned[id] != msg {
+			e.warned[id] = msg
+			log.Printf("probe: target %d (%s) is not being measured: %s", id, host(id), msg)
+		}
+	}
+	// Forget a target that is healthy again, so a problem that returns is
+	// reported again rather than swallowed as already-known.
+	for id := range e.warned {
+		if _, still := problems[id]; !still {
+			delete(e.warned, id)
+		}
+	}
 }
 
 // connFor returns the socket for a (family, DSCP) pair, opening one the first
@@ -254,6 +317,7 @@ func (e *Engine) connFor(family string, dscp int) (*conn, error) {
 
 // runTarget is the per-target loop: one iteration per interval bucket.
 func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
+	defer e.recoverTarget(spec)
 	lastAddr, err := e.st.LastResolution(ctx, spec.TargetID)
 	if err != nil {
 		log.Printf("probe: target %d: read last resolution: %v", spec.TargetID, err)
@@ -316,35 +380,54 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 		}
 		aborted := false
 		var probeWG sync.WaitGroup
-		for i, at := range times {
-			if !sleepUntil(ctx, at) {
-				aborted = true
-				break
-			}
-			if c != nil {
-				if err := c.send(col, i, addr, spec.PacketSize); err != nil {
-					log.Printf("probe: target %d: send: %v", spec.TargetID, err)
-				}
-				continue
-			}
-			// A userspace probe blocks until it answers or times out, so it
-			// runs on its own goroutine: waiting here would push every later
-			// probe of the interval out by however long this one took, and
-			// the schedule is what the distribution means.
-			probeWG.Add(1)
-			go func(i int) {
-				defer probeWG.Done()
-				runUserspaceProbe(ctx, col, i, addr, spec)
-			}(i)
-		}
-
 		// Finalize asynchronously: the finalization wait (bucket end + timeout)
 		// overlaps the next bucket's send window, so awaiting it inline would
 		// skip buckets whenever the phase offset is shorter than the timeout.
 		finalizeAt := time.Unix(bucket, 0).Add(interval).Add(timeout)
+
+		if spec.ProbeType == "irtt" {
+			// One session covers the whole interval: the far end paces the
+			// train and reports every packet, so there is nothing to schedule
+			// here beyond when it starts.
+			if !sleepUntil(ctx, times[0]) {
+				aborted = true
+			} else {
+				probeWG.Add(1)
+				go func() {
+					defer probeWG.Done()
+					defer e.recoverProbe(spec, "irtt session")
+					probeIRTT(ctx, col, addr, spec, finalizeAt)
+				}()
+			}
+		} else {
+			for i, at := range times {
+				if !sleepUntil(ctx, at) {
+					aborted = true
+					break
+				}
+				if c != nil {
+					if err := c.send(col, i, addr, spec.PacketSize); err != nil {
+						log.Printf("probe: target %d: send: %v", spec.TargetID, err)
+					}
+					continue
+				}
+				// A userspace probe blocks until it answers or times out, so it
+				// runs on its own goroutine: waiting here would push every later
+				// probe of the interval out by however long this one took, and
+				// the schedule is what the distribution means.
+				probeWG.Add(1)
+				go func(i int) {
+					defer probeWG.Done()
+					defer e.recoverProbe(spec, "probe")
+					runUserspaceProbe(ctx, col, i, addr, spec)
+				}(i)
+			}
+		}
+
 		e.targetWG.Add(1)
 		go func(col *collector, bucket int64) {
 			defer e.targetWG.Done()
+			defer e.recoverProbe(spec, "finalize")
 			// On shutdown this returns early: the bucket finalizes with
 			// whatever was measured, and the writer still flushes it. What it
 			// must not do is call the probes that were still in flight lost,
@@ -476,6 +559,9 @@ type Stats struct {
 	Dropped int64
 	// ActiveTargets is how many target loops are currently running.
 	ActiveTargets int64
+	// Panics were contained instead of ending the process. Any non-zero value
+	// is a bug in smokeng, and the log line next to it has the stack.
+	Panics int64
 }
 
 func (e *Engine) Stats() Stats {
@@ -491,6 +577,7 @@ func (e *Engine) Stats() Stats {
 		PathChanges:         e.traces.Load(),
 		Dropped:             e.dropped.Load(),
 		ActiveTargets:       active,
+		Panics:              e.panics.Load(),
 	}
 }
 
@@ -565,9 +652,61 @@ func runUserspaceProbe(ctx context.Context, col *collector, idx int, addr netip.
 	switch spec.ProbeType {
 	case "dns":
 		probeDNS(ctx, col, idx, addr, spec)
+	case "tcp":
+		probeTCP(ctx, col, idx, addr, spec)
+	case "http", "https":
+		probeHTTP(ctx, col, idx, addr, spec)
 	default:
-		// loadSpecs refuses an unknown type, so reaching this means a type was
-		// added to the tree's allowed set without a prober behind it.
+		// validateSpec refuses an unknown type before it can be scheduled, so
+		// reaching this means a type was added to the tree's allowed set
+		// without a prober behind it. Recording it as a send failure rather
+		// than as loss keeps the distinction that matters: nothing was asked
+		// of the target, so the target is not what failed.
 		col.markSendFailed(idx)
 	}
+}
+
+// recoverProbe contains a panic to the single probe that caused it.
+//
+// The alternative is what smokeng did until now: one malformed reply, in one
+// probe, against one of two hundred targets, ends the process — and takes the
+// UI, the API and every other target's measurement with it. A gap in one
+// series is the proportionate outcome, and the counter makes the gap
+// attributable rather than mysterious.
+//
+// This is deliberately not a blanket recover. It sits on goroutines that hold
+// no shared lock when they run, so recovering cannot leave a mutex held: a
+// process that survives a panic into a deadlock is worse off than one that
+// crashed, because systemd restarts a crash and cannot see a wedge.
+func (e *Engine) recoverProbe(spec TargetSpec, what string) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	e.panics.Add(1)
+	log.Printf("probe: target %d (%s): %s panicked: %v\n%s",
+		spec.TargetID, spec.Host, what, r, debug.Stack())
+}
+
+// recoverTarget contains a panic to the target loop that caused it, and
+// arranges for that target to start measuring again.
+//
+// Descheduling is the point. Without it the loop would end, e.running would
+// still hold the target, and reload would never restart it — the target would
+// simply stop being measured, quietly, until somebody noticed the flat line.
+func (e *Engine) recoverTarget(spec TargetSpec) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	e.panics.Add(1)
+	log.Printf("probe: target %d (%s): probe loop panicked: %v\n%s",
+		spec.TargetID, spec.Host, r, debug.Stack())
+	e.mu.Lock()
+	if rt, ok := e.running[spec.TargetID]; ok && rt.spec == spec {
+		rt.cancel()
+		delete(e.running, spec.TargetID)
+	}
+	e.mu.Unlock()
+	log.Printf("probe: target %d will be restarted within %s", spec.TargetID, specRefresh)
 }

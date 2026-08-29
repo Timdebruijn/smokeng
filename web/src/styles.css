@@ -1272,6 +1272,14 @@ a.button {
   color: var(--dim);
 }
 
+/* Sits next to the host on an overview row, and only for a target measured by
+   something other than icmp — see Overview.tsx. It borrows .badge wholesale
+   rather than restating it: this is the same object as the tree's badge, and
+   two near-identical rules would drift apart the first time one is tuned. */
+.probe-type {
+  margin-left: 6px;
+}
+
 .activity-line {
   display: flex;
   gap: 10px;

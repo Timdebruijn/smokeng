@@ -3,6 +3,7 @@ import Plot from './Plot'
 import {
   fetchAlertRules,
   fetchSeries,
+  isUnset,
   type AgentInfo,
   type AlertRule,
   type SettingValue,
@@ -17,13 +18,27 @@ const RANGES: { label: string; seconds: number }[] = [
   { label: '24h', seconds: 86400 },
 ]
 
-const SETTING_LABELS: { key: keyof Target['settings']; label: string; unit?: string }[] = [
+// `types` limits a row to the probe types it means something for, the same way
+// the admin form does. A packet size on an http target is not a setting with
+// an unusual value; it is a setting that does nothing, and listing it under
+// "effective settings" would claim otherwise.
+const SETTING_LABELS: {
+  key: keyof Target['settings']
+  label: string
+  unit?: string
+  types?: string[]
+}[] = [
+  { key: 'probe_type', label: 'Probe type' },
   { key: 'interval_s', label: 'Interval', unit: 's' },
   { key: 'pings_per_interval', label: 'Pings per interval' },
   { key: 'probe_mode', label: 'Probe mode' },
   { key: 'burst_gap_ms', label: 'Burst gap', unit: 'ms' },
   { key: 'timeout_ms', label: 'Timeout', unit: 'ms' },
-  { key: 'packet_size', label: 'Packet size', unit: 'bytes' },
+  { key: 'packet_size', label: 'Packet size', unit: 'bytes', types: ['icmp', 'irtt'] },
+  { key: 'probe_port', label: 'Port', types: ['dns', 'tcp', 'http', 'https', 'irtt'] },
+  { key: 'dns_query', label: 'DNS query', types: ['dns'] },
+  { key: 'dns_rr_type', label: 'DNS record type', types: ['dns'] },
+  { key: 'http_path', label: 'HTTP path', types: ['http', 'https'] },
   { key: 'dscp', label: 'DSCP' },
   { key: 'agents', label: 'Agents' },
   { key: 'trace_interval_s', label: 'Path discovery', unit: 's' },
@@ -55,6 +70,7 @@ export default function Detail({
   const [stats, setStats] = useState<Stats | null>(null)
   const [rules, setRules] = useState<AlertRule[]>([])
 
+  const probeType = String(target.settings.probe_type.effective || 'icmp')
   const agentNames = (target.settings.agents.effective || 'local').split(/\s+/).filter(Boolean)
   const byName = new Map(agents.map((a) => [a.name, a.id]))
   // Null rather than 0: falling back to the local prober would show one
@@ -99,8 +115,12 @@ export default function Detail({
       <div className="detail-head">
         <span className="dot" style={{ background: stats?.dot ?? 'var(--dim)' }} />
         <h1>{target.title ?? target.path}</h1>
+        {/* The probe type belongs on the identity line, not buried in the
+            settings table: two targets with the same host and family are
+            different measurements if one is icmp and the other https, and the
+            graphs beneath them are not comparable. */}
         <code className="host">
-          {target.host} · {target.address_family}
+          {target.host} · {target.address_family} · {probeType}
         </code>
         <span className="spacer" />
         <button className="pill" onClick={onEdit}>
@@ -165,22 +185,28 @@ export default function Detail({
       <div className="detail-columns">
         <div className="card panel">
           <h2>Effective settings</h2>
-          {SETTING_LABELS.map((s) => {
+          {SETTING_LABELS.filter(
+            (s) => !s.types || s.types.includes(probeType),
+          ).map((s) => {
             const v = target.settings[s.key] as SettingValue<number | string>
             return (
               <div key={s.key} className="setting-line">
                 <span className="setting-label">{s.label}</span>
                 <span className="mono">
-                  {String(v.effective)}
-                  {s.unit && <span className="unit">{s.unit}</span>}
+                  {/* An unset optional setting has no value to print; an empty
+                      cell would read as a blank the page failed to fill. */}
+                  {isUnset(v) ? '—' : String(v.effective)}
+                  {!isUnset(v) && s.unit && <span className="unit">{s.unit}</span>}
                 </span>
                 <span className="spacer" />
                 <span className={v.source === 'local' ? 'chip local' : 'chip'}>
-                  {v.source === 'local'
-                    ? 'set here'
-                    : v.source === 'outside'
-                      ? 'from outside your scope'
-                      : `inherited from ${v.source.path === '/' ? '/' : v.source.path}`}
+                  {isUnset(v)
+                    ? 'not set anywhere'
+                    : v.source === 'local'
+                      ? 'set here'
+                      : v.source === 'outside'
+                        ? 'from outside your scope'
+                        : `inherited from ${v.source.path === '/' ? '/' : v.source.path}`}
                 </span>
               </div>
             )

@@ -65,6 +65,11 @@ func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 				"Finalized measurements discarded because the writer fell behind. "+
 					"Any value above zero means data was lost.", metrics.Counter,
 				float64(st.Dropped)),
+			metrics.Simple("smokeng_probe_panics_total",
+				"Panics contained inside a single probe or target loop instead of "+
+					"ending the process. Any value above zero is a bug in smokeng, and "+
+					"the log holds the stack that goes with it.", metrics.Counter,
+				float64(st.Panics)),
 			metrics.Simple("smokeng_late_replies_total",
 				"Replies that arrived after their interval had been finalized.", metrics.Counter,
 				float64(st.LateReplies)),
