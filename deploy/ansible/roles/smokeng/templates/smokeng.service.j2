@@ -11,7 +11,9 @@ User={{ smokeng_user }}
 Group={{ smokeng_group }}
 ExecStart={{ smokeng_bin }} serve \
     --db {{ smokeng_db }} \
-    --listen {{ smokeng_listen }}{% if smokeng_allow_unauthenticated | bool %} \
+    --listen {{ smokeng_listen }}{% if smokeng_external_url | length > 0 %} \
+    --external-url {{ smokeng_external_url }}{% endif %}{% if smokeng_trusted_proxies | length > 0 %} \
+    --trusted-proxies {{ smokeng_trusted_proxies }}{% endif %}{% if smokeng_allow_unauthenticated | bool %} \
     --i-know-this-is-unauthenticated{% endif %}{% if smokeng_metrics_public | bool %} \
     --metrics-public{% endif %}{% if smokeng_alert_webhook | length > 0 %} \
     --alert-webhook {{ smokeng_alert_webhook }}{% endif %}{% if smokeng_oidc_issuer | length > 0 %} \

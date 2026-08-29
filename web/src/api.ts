@@ -1,6 +1,10 @@
 import { tableFromIPC } from '@uwdata/flechette'
 
 export interface Me {
+  /** The master's own version. */
+  version?: string
+  /** Where agents reach this instance, when a proxy sits in front. */
+  external_url?: string
   /** Only present for an admin: what an authenticated user with no grant may do. */
   default_role?: 'viewer' | 'none'
   authenticated: boolean
@@ -291,6 +295,8 @@ export async function fetchPathChanges(
 }
 
 export interface AgentInfo {
+  /** What the agent said it was running when it last reported. */
+  version?: string
   id: number
   name: string
   enabled: boolean

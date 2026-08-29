@@ -18,7 +18,15 @@ const TTL_OPTIONS: { seconds: number; label: string }[] = [
   { seconds: 86400, label: '24 hours' },
 ]
 
-export default function Agents({ readOnly = false }: { readOnly?: boolean }) {
+export default function Agents({
+  readOnly = false,
+  externalURL,
+}: {
+  readOnly?: boolean
+  /** Where agents should be told to connect, when that is not where this page
+   *  was loaded from — a reverse proxy in front, most often. */
+  externalURL?: string
+}) {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [tokens, setTokens] = useState<AgentToken[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -126,7 +134,9 @@ export default function Agents({ readOnly = false }: { readOnly?: boolean }) {
             </div>
           ))}
 
-        {minted && <TokenReveal token={minted} onDismiss={() => setMinted(null)} />}
+        {minted && (
+        <TokenReveal token={minted} externalURL={externalURL} onDismiss={() => setMinted(null)} />
+      )}
       </section>
 
       <section className="card section-card">
@@ -204,6 +214,10 @@ function AgentRow({
           last-seen of "never" there reads as a fault rather than as a
           category that does not apply. */}
       <td className="dim">{agent.is_local ? '—' : relativeTime(agent.last_seen)}</td>
+      {/* A fleet upgrades one host at a time, so which version each agent is
+          running is the difference between "measured" and "measured by a
+          version that predates the timestamp fix". */}
+      <td className="mono dim">{agent.is_local ? '—' : (agent.version ?? 'unknown')}</td>
       <td>{agent.enabled ? '' : <span className="badge">disabled</span>}</td>
       <td>
         {!agent.is_local && !readOnly && (
@@ -339,12 +353,25 @@ function AddAgentForm({
   )
 }
 
-function TokenReveal({ token, onDismiss }: { token: NewAgentToken; onDismiss: () => void }) {
+function TokenReveal({
+  token,
+  externalURL,
+  onDismiss,
+}: {
+  token: NewAgentToken
+  externalURL?: string
+  onDismiss: () => void
+}) {
   // The agent refuses a plain-HTTP master unless told otherwise, because this
   // request is the one carrying a usable credential. Show the command that
   // actually works here, and say why it needs the flag, rather than handing
   // over one that will be rejected.
-  const origin = window.location.origin
+  // Where the agent must connect, which is not necessarily where this page
+  // was loaded from: an admin reaching the master directly, past the proxy
+  // everyone else uses, would otherwise be handed a command naming an address
+  // no agent can resolve.
+  const origin = externalURL || window.location.origin
+  const viaProxy = Boolean(externalURL) && externalURL !== window.location.origin
   const overTLS = origin.startsWith('https://')
   const command =
     `smokeng agent run --master ${origin} --token ${token.token}` +
@@ -371,6 +398,12 @@ function TokenReveal({ token, onDismiss }: { token: NewAgentToken; onDismiss: ()
       <div className="command">
         <code>{command}</code>
       </div>
+      {viaProxy && (
+        <p className="hint small">
+          Addressed to <code>{origin}</code>, this instance's configured external address —
+          not <code>{window.location.origin}</code>, which is how you reached this page.
+        </p>
+      )}
       {!overTLS && (
         <p className="hint">
           This master is not on TLS, so the command carries{' '}

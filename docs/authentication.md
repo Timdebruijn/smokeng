@@ -32,7 +32,7 @@ smokeng serve \
 | `--oidc-issuer` | — | Issuer URL; setting it enables authentication |
 | `--oidc-client-id` | — | Client id registered with the provider |
 | `--oidc-client-secret` | — | Client secret |
-| `--oidc-redirect-url` | `http://{listen}/auth/callback` | Must match the provider's registration exactly |
+| `--oidc-redirect-url` | `{external-url}/auth/callback`, else `http://{listen}/auth/callback` | Must match the provider's registration exactly |
 | `--oidc-admin-claim` | `groups` | The ID-token claim listing the user's groups |
 | `--oidc-admin-value` | — | Membership in this group grants admin |
 

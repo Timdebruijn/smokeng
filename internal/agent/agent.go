@@ -36,6 +36,10 @@ type Config struct {
 	KeyPath  string
 	DBPath   string
 	Insecure bool // permit plain HTTP, for local development only
+	// Version is reported to the master so an operator can see which agents
+	// still predate a fix. It is sent unsigned, on a signed request: it says
+	// what this agent claims to be, not what it has proven.
+	Version string
 }
 
 // Agent is the remote node.
@@ -274,6 +278,9 @@ func (a *Agent) signedRequest(ctx context.Context, method, path string, body []b
 	}
 	if err := ingest.Sign(req, a.cfg.AgentID, a.key, body, time.Now()); err != nil {
 		return nil, err
+	}
+	if a.cfg.Version != "" {
+		req.Header.Set("X-Agent-Version", a.cfg.Version)
 	}
 	return req, nil
 }

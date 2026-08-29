@@ -212,6 +212,11 @@ CREATE INDEX alert_events_ts ON alert_events (ts DESC);
 	// grows. Partial, so it costs nothing on a master, where no row is ever
 	// pending.
 	`CREATE INDEX measurements_pending ON measurements (ts) WHERE submitted = 0`,
+	// v11: what each agent is running. A fleet upgrades one host at a time,
+	// and the version an agent reports is how you tell which of them still
+	// predates a fix to the measurement path — which is not a cosmetic
+	// question when the fix was to the timestamps themselves.
+	`ALTER TABLE agents ADD COLUMN version TEXT`,
 }
 
 func (s *SQLite) migrate() error {

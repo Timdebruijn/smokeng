@@ -110,7 +110,7 @@ export default function App() {
       ) : view === 'alerts' ? (
         <Alerts isAdmin={isAdmin} />
       ) : view === 'agents' ? (
-        <Agents readOnly={!isAdmin} />
+        <Agents readOnly={!isAdmin} externalURL={me?.external_url} />
       ) : (
         <Grants
             readOnly={!isAdmin}
@@ -173,6 +173,7 @@ function AppHeader({
         <button className="brand" onClick={() => onView('overview')}>
           <span className="brand-mark">s</span>
           <span className="brand-name">smokeng</span>
+          {me?.version && <span className="version-tag">{me.version}</span>}
         </button>
         <nav className="tabs">
           {views.map((v) => (
@@ -197,6 +198,7 @@ function AppHeader({
               <div className="popover">
                 <p className="popover-title">{me.email ?? me.subject}</p>
                 <p className="hint small">Signed in via OIDC · {me.role}</p>
+                {me.version && <p className="hint small">smokeng {me.version}</p>}
                 <button
                   className="popover-item"
                   onClick={() => void logout().then(() => location.reload())}

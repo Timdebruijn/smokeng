@@ -1,7 +1,7 @@
 ---
 # Which release to install. Pin it: an unattended "latest" turns every play
 # into an unreviewed upgrade.
-smokeng_version: v0.4.0
+smokeng_version: v0.5.1
 smokeng_repo: Timdebruijn/smokeng
 
 smokeng_user: smokeng
@@ -13,6 +13,15 @@ smokeng_db: "{{ smokeng_state_dir }}/smokeng.db"
 # Loopback by default. Binding anywhere else without authentication needs
 # smokeng_allow_unauthenticated, which is spelled out on purpose.
 smokeng_listen: 127.0.0.1:8080
+# The address others reach this master at, when that is not where it listens —
+# a TLS-terminating proxy in front, most often. The enrolment command the UI
+# shows has to name an address agents can reach, not the one whoever opened the
+# page happened to use. Also becomes the default OIDC redirect base.
+smokeng_external_url: ""
+# CIDRs whose X-Forwarded-For may be believed, e.g. "10.0.0.0/8". Log lines
+# only: nothing is authorised on a client address, so this makes the logs name
+# the real client behind a proxy and changes nothing else.
+smokeng_trusted_proxies: ""
 smokeng_allow_unauthenticated: false
 
 # Prometheus cannot present a session cookie, so /metrics needs this to be

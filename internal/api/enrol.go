@@ -129,7 +129,7 @@ func (s *server) handleEnrol(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrTokenInvalid):
 		// One answer for every reason a token does not work. Distinguishing
 		// "unknown" from "expired" tells a guesser which attempts were close.
-		log.Printf("enrol: refused a token from %s: %v", r.RemoteAddr, err)
+		log.Printf("enrol: refused a token from %s: %v", s.clientIP(r), err)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "rejected"})
 		return
 	case errors.Is(err, store.ErrNameTaken):
@@ -141,7 +141,7 @@ func (s *server) handleEnrol(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	log.Printf("enrol: agent %q enrolled from %s with id %d", agent.Name, r.RemoteAddr, agent.ID)
+	log.Printf("enrol: agent %q enrolled from %s with id %d", agent.Name, s.clientIP(r), agent.ID)
 	writeJSON(w, http.StatusCreated, map[string]any{"agent_id": agent.ID, "name": agent.Name})
 }
 

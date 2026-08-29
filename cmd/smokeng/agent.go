@@ -216,7 +216,7 @@ func agentRun(args []string) error {
 
 	a, err := agent.New(agent.Config{
 		Master: *master, AgentID: *agentID, KeyPath: *keyPath,
-		DBPath: *dbPath, Insecure: *insecure,
+		DBPath: *dbPath, Insecure: *insecure, Version: version,
 	}, key, st)
 	if err != nil {
 		return err

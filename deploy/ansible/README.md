@@ -43,8 +43,10 @@ The ones that matter:
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `smokeng_version` | `v0.4.0` | Pin it. An unattended "latest" is an unreviewed upgrade. |
+| `smokeng_version` | `v0.5.1` | Pin it. An unattended "latest" is an unreviewed upgrade. |
 | `smokeng_listen` | `127.0.0.1:8080` | |
+| `smokeng_external_url` | `""` | The address agents and browsers reach this master at, when a proxy sits in front. Set it or the enrolment command names the listen address. |
+| `smokeng_trusted_proxies` | `""` | CIDRs whose `X-Forwarded-For` may be believed. Log accuracy only. |
 | `smokeng_allow_unauthenticated` | `false` | Required to bind off loopback without OIDC. The role refuses otherwise. |
 | `smokeng_oidc_issuer` | `""` | Setting it enables authentication; see [../../docs/authentication.md](../../docs/authentication.md) |
 | `smokeng_metrics_public` | `false` | Prometheus cannot present a session cookie |

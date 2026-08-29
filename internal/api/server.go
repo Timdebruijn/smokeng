@@ -53,6 +53,8 @@ type server struct {
 	// setting rather than a consequence, so that adding the first grant does
 	// not silently lock out everyone who could already read (DESIGN.md §7.4).
 	defaultRole auth.Role
+	externalURL string
+	trusted     TrustedProxies
 	verifier    *ingest.Verifier
 	probe       ProbeStats
 	ingest      IngestStats
@@ -70,6 +72,16 @@ type Options struct {
 	// authentication is enabled, so Prometheus can scrape it. Off by default:
 	// an endpoint that bypasses login should be asked for, not assumed.
 	MetricsPublic bool
+	// ExternalURL is the address others reach this instance at, when that is
+	// not the address it listens on — a reverse proxy in front, most often.
+	// It is what the enrolment command in the UI must name: an agent has to
+	// be told where to connect, and that is not necessarily where the admin
+	// looking at the page happens to be connected.
+	ExternalURL string
+	// TrustedProxies are the peers whose X-Forwarded-For may be believed, so
+	// log lines can name the real client rather than the proxy. Nothing is
+	// authorised on a client address, so this affects logging only.
+	TrustedProxies TrustedProxies
 	// DefaultRole is what an authenticated caller holding no grant gets.
 	// Empty means viewer, which is what smokeng did before grants existed.
 	// Set it to "none" once grants describe who may see what.
@@ -101,6 +113,8 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	if cs, ok := st.(ConfigStore); ok {
 		s.config = cs
 	}
+	s.externalURL = opts.ExternalURL
+	s.trusted = opts.TrustedProxies
 	s.defaultRole = opts.DefaultRole
 	if s.defaultRole == "" {
 		s.defaultRole = auth.RoleViewer

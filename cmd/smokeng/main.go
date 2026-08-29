@@ -10,9 +10,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -175,6 +177,15 @@ func serve(args []string) error {
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	insecure := fs.Bool("i-know-this-is-unauthenticated", false,
 		"allow listening on a non-loopback address without authentication (DESIGN.md §7.1)")
+	externalURL := fs.String("external-url", "",
+		"the address others reach this master at, e.g. https://smokeng.example.org. "+
+			"Set it when a reverse proxy sits in front: the enrolment command shown in "+
+			"the UI has to name the address an agent can reach, not the one whoever is "+
+			"looking at the page happened to use")
+	trustedProxies := fs.String("trusted-proxies", "",
+		"comma-separated CIDRs whose X-Forwarded-For may be believed, e.g. 10.0.0.0/8. "+
+			"Affects log lines only: nothing here is authorised on a client address, so "+
+			"this buys accurate logs behind a proxy and nothing else")
 	defaultRole := fs.String("default-role", "viewer",
 		"what an authenticated user holding no grant may do: `viewer` or none. "+
 			"It is a setting rather than a consequence, so adding the first grant "+
@@ -207,6 +218,22 @@ func serve(args []string) error {
 	}
 	defer st.Close()
 
+	if *externalURL != "" {
+		u, err := url.Parse(*externalURL)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return fmt.Errorf("--external-url must be an absolute URL like https://smokeng.example.org, got %q", *externalURL)
+		}
+		if u.Path != "" && u.Path != "/" {
+			return fmt.Errorf("--external-url is a base address and takes no path, got %q", *externalURL)
+		}
+		*externalURL = strings.TrimSuffix(*externalURL, "/")
+	}
+
+	trusted, err := api.ParseTrustedProxies(*trustedProxies)
+	if err != nil {
+		return fmt.Errorf("--trusted-proxies: %w", err)
+	}
+
 	switch auth.Role(*defaultRole) {
 	case auth.RoleViewer, auth.RoleNone:
 	default:
@@ -224,7 +251,14 @@ func serve(args []string) error {
 		}
 		redirect := *oidcRedirect
 		if redirect == "" {
-			redirect = "http://" + *listen + "/auth/callback"
+			// Behind a proxy the browser is sent to the external address, not
+			// the listen address, so derive it from the one the operator has
+			// already told us about rather than making them repeat it.
+			if *externalURL != "" {
+				redirect = *externalURL + "/auth/callback"
+			} else {
+				redirect = "http://" + *listen + "/auth/callback"
+			}
 		}
 		authenticator, err = auth.New(ctx, auth.Config{
 			Issuer:       *oidcIssuer,
@@ -235,7 +269,14 @@ func serve(args []string) error {
 			AdminValue:   *oidcAdminValue,
 			// Cookies may only skip the Secure attribute where the browser
 			// would refuse them anyway: local development over plain HTTP.
-			Insecure: isLoopback(*listen),
+			//
+			// The listen address alone is not enough to decide that. A proxy
+			// terminating TLS on the same host leaves smokeng listening on
+			// loopback while the browser is on https, and dropping Secure
+			// there means the session cookie is one downgrade away from
+			// travelling in the clear. When the external address is known, it
+			// is what the browser actually used, so it decides.
+			Insecure: cookieInsecure(*externalURL, *listen),
 		}, key)
 		if err != nil {
 			return err
@@ -278,7 +319,8 @@ func serve(args []string) error {
 		Handler: api.New(st, api.Options{
 			Alerts: alertViewOrNil(alerts), Auth: authOrNil(authenticator),
 			Probe: eng, Version: version, MetricsPublic: *metricsPublic,
-			DefaultRole: auth.Role(*defaultRole),
+			DefaultRole: auth.Role(*defaultRole), ExternalURL: *externalURL,
+			TrustedProxies: trusted,
 		}, dist),
 	}
 
@@ -322,6 +364,16 @@ func authOrNil(a *auth.Authenticator) api.Authenticator {
 		return nil
 	}
 	return a
+}
+
+// cookieInsecure reports whether the session cookie may go out without the
+// Secure attribute: only when nothing suggests a browser will ever carry it
+// over TLS.
+func cookieInsecure(externalURL, listen string) bool {
+	if externalURL != "" {
+		return !strings.HasPrefix(externalURL, "https://")
+	}
+	return isLoopback(listen)
 }
 
 func isLoopback(addr string) bool {

@@ -17,6 +17,12 @@ shown again — together with the command to run on the agent host:
 smokeng agent run --master https://smokeng.example.org --token smk_...
 ```
 
+The address in that command is the master's own `--external-url` when one is
+set, and the address you opened the page on otherwise. Set it whenever a proxy
+sits in front: an admin reaching the master directly, past the proxy everyone
+else uses, would otherwise be handed a command naming an address no agent can
+resolve. The UI says which address it used when the two differ.
+
 The agent generates its keypair if it has none, enrols itself, and records the
 id it was given next to its key. A unit file may keep carrying `--token`: the
 recorded id wins, so a restart does not try to spend a token that is already
@@ -68,6 +74,13 @@ Agents poll for their assignments every 60 seconds, so a change to the tree reac
 without a restart.
 
 ## Managing agents
+
+Each agent reports what version it is running when it submits, and the Agents
+page shows it. A fleet upgrades one host at a time, and that column is how you
+see which agents still predate a fix to the measurement path — not a cosmetic
+question when the fix was to the timestamps themselves. The version travels in
+an unsigned header on a signed request: it says what an already-authenticated
+agent claims to be, and is not something to make a trust decision on.
 
 ```bash
 smokeng agent list --db smokeng.db

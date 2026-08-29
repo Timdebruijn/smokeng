@@ -52,6 +52,8 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 			"authenticated": false,
 			"auth_enabled":  false,
 			"role":          string(auth.RoleAdmin),
+			"version":       s.version,
+			"external_url":  s.externalURL,
 		})
 		return
 	}
@@ -66,6 +68,7 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 	body := map[string]any{
 		"authenticated": true,
 		"auth_enabled":  true,
+		"version":       s.version,
 		"subject":       sess.Subject,
 		"email":         sess.Email,
 		"name":          sess.Name,
@@ -77,6 +80,9 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 	// detail, so it is not told to anyone who cannot act on it.
 	if sess.Role == auth.RoleAdmin {
 		body["default_role"] = string(s.defaultRole)
+		if s.externalURL != "" {
+			body["external_url"] = s.externalURL
+		}
 	}
 	writeJSON(w, http.StatusOK, body)
 }

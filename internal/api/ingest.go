@@ -26,7 +26,7 @@ type PathStore interface {
 // AgentStore is the persistence the agent endpoints need.
 type AgentStore interface {
 	ListAgents(ctx context.Context) ([]store.AgentRecord, error)
-	TouchAgent(ctx context.Context, id, at int64) error
+	TouchAgent(ctx context.Context, id, at int64, version string) error
 }
 
 // agentAuth verifies a signed agent request and returns the agent it came
@@ -39,14 +39,14 @@ func (s *server) agentAuth(w http.ResponseWriter, r *http.Request) (ingest.Agent
 	}
 	parsed, err := ingest.Parse(r, maxIngestBody)
 	if err != nil {
-		log.Printf("ingest: rejected a request from %s: %v", r.RemoteAddr, err)
+		log.Printf("ingest: rejected a request from %s: %v", s.clientIP(r), err)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "rejected"})
 		return ingest.Agent{}, nil, false
 	}
 	agent, err := s.verifier.Check(parsed, time.Now())
 	if err != nil {
 		// The reason goes to the log, with the agent id, exactly as designed.
-		log.Printf("ingest: %v (from %s)", err, r.RemoteAddr)
+		log.Printf("ingest: %v (from %s)", err, s.clientIP(r))
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "rejected"})
 		return ingest.Agent{}, nil, false
 	}
@@ -105,7 +105,10 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	if err := s.agents.TouchAgent(r.Context(), agent.ID, time.Now().Unix()); err != nil {
+	// Unsigned, and only display metadata about an agent whose identity the
+	// signature has already established — see TouchAgent.
+	if err := s.agents.TouchAgent(r.Context(), agent.ID, time.Now().Unix(),
+		agentVersion(r)); err != nil {
 		log.Printf("ingest: recording last_seen for %q: %v", agent.Name, err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": len(measurements)})
@@ -244,6 +247,12 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		if a.LastSeen != 0 {
 			item["last_seen"] = a.LastSeen
 		}
+		// What the agent said it was running when it last reported. A fleet
+		// upgrades one host at a time, and this is how an operator sees which
+		// agents still predate a fix to the measurement path.
+		if a.Version != "" {
+			item["version"] = a.Version
+		}
 		// The public key is enrolment material, and belongs to whoever
 		// administers agents rather than to whoever reads their graphs.
 		if admin && len(a.PubKey) > 0 {
@@ -256,6 +265,23 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 
 func encodeKey(k ed25519.PublicKey) string {
 	return base64.StdEncoding.EncodeToString(k)
+}
+
+// agentVersion reads the version an agent claims to be running. Bounded and
+// stripped of anything that is not plainly a version, because it is written
+// to the database and shown in a UI.
+func agentVersion(r *http.Request) string {
+	v := strings.TrimSpace(r.Header.Get("X-Agent-Version"))
+	if len(v) > 64 {
+		v = v[:64]
+	}
+	for _, c := range v {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			c == '.' || c == '-' || c == '+' || c == '_' || c == '/' || c == ' ' || c == '(' || c == ')') {
+			return ""
+		}
+	}
+	return v
 }
 
 // uniqueIDs keeps a log line short when a whole batch names the same target.

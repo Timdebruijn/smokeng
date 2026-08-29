@@ -16,7 +16,8 @@ User=smokeng
 Group=smokeng
 ExecStart=/usr/local/bin/smokeng serve \
   --db /var/lib/smokeng/smokeng.db \
-  --listen 127.0.0.1:8080
+  --listen 127.0.0.1:8080 \
+  --external-url https://smokeng.example.org
 Restart=always
 RestartSec=5
 StateDirectory=smokeng
@@ -37,6 +38,33 @@ and add `AmbientCapabilities=CAP_NET_RAW`.
 
 Put a TLS-terminating reverse proxy in front of it if it is reachable by anyone but you,
 and configure [authentication](authentication.md).
+
+### Behind a proxy
+
+`--external-url` is the address everyone else reaches it at. smokeng cannot work that out
+for itself — it only sees the address it binds to — and it needs it for two things: the
+enrolment command shown in the UI has to name somewhere an agent can actually connect,
+and it becomes the default base for the OIDC redirect. Leave it unset only when the
+listen address really is the address people use.
+
+It also decides whether the session cookie carries `Secure`. That used to follow the
+listen address, which gets it wrong in the most ordinary arrangement there is: a proxy
+terminating TLS on the same host leaves smokeng on loopback while the browser is on
+https, and the cookie went out without `Secure` — one downgrade away from travelling in
+the clear.
+
+`--trusted-proxies` takes a comma-separated list of CIDRs whose `X-Forwarded-For` may be
+believed, so log lines name the real client instead of the proxy:
+
+```
+--trusted-proxies 10.0.0.0/8,192.168.1.1
+```
+
+The header is read right to left, and the first hop that is not on the list is the
+answer — everything before it was written by someone with no reason to be believed. It
+affects logging and nothing else: smokeng authorises agents by signature and browsers by
+session cookie, never by address, so a forged header cannot get past anything. It can
+only put a lie in your logs, which is precisely what this stops.
 
 ## Storage growth
 

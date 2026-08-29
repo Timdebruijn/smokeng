@@ -1440,3 +1440,13 @@ a.button {
 .palette-empty {
   padding: 8px 12px;
 }
+
+.version-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 5px;
+  margin-left: 2px;
+}

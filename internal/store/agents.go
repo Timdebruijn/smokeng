@@ -19,11 +19,15 @@ type AgentRecord struct {
 	PubKey   ed25519.PublicKey // nil for the built-in local agent
 	Enabled  bool
 	LastSeen int64 // unix seconds, 0 if it has never reported
+	// Version is what the agent said it was running, last time it reported.
+	// Empty for the local prober, and for an agent that has never been heard
+	// from or predates version reporting.
+	Version string
 }
 
 func (s *SQLite) ListAgents(ctx context.Context) ([]AgentRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, name, pubkey, enabled, last_seen FROM agents ORDER BY id")
+		"SELECT id, name, pubkey, enabled, last_seen, version FROM agents ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -33,9 +37,11 @@ func (s *SQLite) ListAgents(ctx context.Context) ([]AgentRecord, error) {
 		var a AgentRecord
 		var pub []byte
 		var lastSeen sql.NullInt64
-		if err := rows.Scan(&a.ID, &a.Name, &pub, &a.Enabled, &lastSeen); err != nil {
+		var version sql.NullString
+		if err := rows.Scan(&a.ID, &a.Name, &pub, &a.Enabled, &lastSeen, &version); err != nil {
 			return nil, err
 		}
+		a.Version = version.String
 		if len(pub) > 0 {
 			a.PubKey = ed25519.PublicKey(pub)
 		}
@@ -144,10 +150,21 @@ func (s *SQLite) RemoveAgent(ctx context.Context, id int64) error {
 // measurements would be orphaned. Disabling it is the reversible equivalent.
 var ErrAgentHasHistory = errors.New("store: agent has measurement history")
 
-// TouchAgent records that an agent was heard from, so an operator can tell a
-// silent agent from a busy one.
-func (s *SQLite) TouchAgent(ctx context.Context, id, at int64) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE agents SET last_seen = ? WHERE id = ?", at, id)
+// TouchAgent records that an agent was heard from — so an operator can tell a
+// silent agent from a busy one — and what it says it is running.
+//
+// The version arrives in an unsigned header. That is deliberate and worth
+// knowing: the request it rides on is signed, so nobody can inject
+// measurements this way, but the string itself is not covered by the
+// signature. It is display metadata about an agent that has already proven
+// who it is — not something to make a trust decision on.
+func (s *SQLite) TouchAgent(ctx context.Context, id, at int64, version string) error {
+	if version == "" {
+		_, err := s.db.ExecContext(ctx, "UPDATE agents SET last_seen = ? WHERE id = ?", at, id)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		"UPDATE agents SET last_seen = ?, version = ? WHERE id = ?", at, version, id)
 	return err
 }
 
