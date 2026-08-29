@@ -43,7 +43,7 @@ The ones that matter:
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `smokeng_version` | `v0.2.0` | Pin it. An unattended "latest" is an unreviewed upgrade. |
+| `smokeng_version` | `v0.3.0` | Pin it. An unattended "latest" is an unreviewed upgrade. |
 | `smokeng_listen` | `127.0.0.1:8080` | |
 | `smokeng_allow_unauthenticated` | `false` | Required to bind off loopback without OIDC. The role refuses otherwise. |
 | `smokeng_oidc_issuer` | `""` | Setting it enables authentication; see [../../docs/authentication.md](../../docs/authentication.md) |
