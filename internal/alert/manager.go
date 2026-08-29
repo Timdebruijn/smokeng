@@ -266,10 +266,16 @@ func (m *Manager) record(ctx context.Context, alerts []Alert) {
 	if !ok {
 		return
 	}
+	now := time.Now().Unix()
 	events := make([]Event, 0, len(alerts))
 	for _, a := range alerts {
+		// Since is when the condition started holding, and Evaluate clears it
+		// on the way out — so a resolved alert carries the zero time, whose
+		// Unix() is -62135596800. What the log wants is when the transition
+		// happened, which for a resolve is now and for a fire is when it
+		// started.
 		events = append(events, Event{
-			TS: a.Since.Unix(), RuleID: a.Rule.ID, TargetID: a.TargetID, AgentID: a.AgentID,
+			TS: transitionTS(a, now), RuleID: a.Rule.ID, TargetID: a.TargetID, AgentID: a.AgentID,
 			Firing: a.Firing, RuleName: a.Rule.Name, Describes: a.Rule.Describe(), Value: a.Value,
 		})
 	}
@@ -280,3 +286,13 @@ func (m *Manager) record(ctx context.Context, alerts []Alert) {
 
 // Delivering reports whether transitions go anywhere beyond the log.
 func (m *Manager) Delivering() bool { return m.notifier != nil }
+
+// transitionTS is when a transition happened. Since is when the condition
+// started holding and Evaluate clears it on the way out, so a resolved alert
+// carries the zero time — whose Unix() is -62135596800, the year 1.
+func transitionTS(a Alert, now int64) int64 {
+	if a.Firing && !a.Since.IsZero() {
+		return a.Since.Unix()
+	}
+	return now
+}

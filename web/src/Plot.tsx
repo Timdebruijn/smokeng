@@ -54,6 +54,12 @@ const FLAGS: { bit: number; label: string; title: string }[] = [
     title: 'The wall clock jumped during these intervals; affected RTTs are unreliable.',
   },
   {
+    bit: 1 << 7,
+    label: 'cut short',
+    title:
+      'This interval was finalized before its window closed — a restart or a settings change. Probes still in flight were abandoned rather than counted as lost, so its loss figure is not comparable with a whole interval.',
+  },
+  {
     bit: 1 << 6,
     label: 'send refused',
     title: 'The local stack would not transmit these probes — no route, or a local firewall rule.',

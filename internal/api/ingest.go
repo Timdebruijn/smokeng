@@ -73,16 +73,31 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	// Drop what this agent may not write, keep the rest.
+	//
+	// Refusing the whole batch was worse than it looked. An agent keeps a
+	// submission buffered until the master confirms it and retries oldest
+	// first, so a single measurement for a target that has since been
+	// unassigned — an ordinary consequence of editing the tree — put the same
+	// rejected batch on the wire forever and the agent never delivered
+	// anything again. Skipping the offending rows preserves the property that
+	// matters, which is that an agent cannot write a series it was not given,
+	// without letting one stale row wedge the outbox.
+	kept := measurements[:0]
+	var skipped []int64
 	for _, m := range measurements {
-		if !assigned[m.TargetID] {
-			log.Printf("ingest: agent %q submitted target %d, which is not assigned to it",
-				agent.Name, m.TargetID)
-			writeJSON(w, http.StatusForbidden, map[string]string{
-				"error": "batch contains targets not assigned to this agent",
-			})
-			return
+		if assigned[m.TargetID] {
+			kept = append(kept, m)
+			continue
 		}
+		skipped = append(skipped, m.TargetID)
 	}
+	if len(skipped) > 0 {
+		log.Printf("ingest: agent %q submitted %d measurement(s) for targets not assigned to it "+
+			"(%v); those were discarded and the rest of the batch accepted",
+			agent.Name, len(skipped), uniqueIDs(skipped))
+	}
+	measurements = kept
 
 	// Writes upsert on (target, agent, ts), so a replayed batch is a
 	// byte-identical no-op. That, not the nonce cache, is the replay defense.
@@ -241,4 +256,17 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 
 func encodeKey(k ed25519.PublicKey) string {
 	return base64.StdEncoding.EncodeToString(k)
+}
+
+// uniqueIDs keeps a log line short when a whole batch names the same target.
+func uniqueIDs(ids []int64) []int64 {
+	seen := map[int64]bool{}
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }

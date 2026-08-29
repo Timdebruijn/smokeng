@@ -310,8 +310,10 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 		go func(col *collector, bucket int64) {
 			defer e.targetWG.Done()
 			// On shutdown this returns early: the bucket finalizes with
-			// whatever was measured, and the writer still flushes it.
-			sleepUntil(ctx, finalizeAt)
+			// whatever was measured, and the writer still flushes it. What it
+			// must not do is call the probes that were still in flight lost,
+			// so the truncation is passed through and finalize excludes them.
+			full := sleepUntil(ctx, finalizeAt)
 			// Drops are counted per socket, not per target, so any target
 			// sharing this socket during the overflow is suspect: its loss
 			// may be ours rather than the network's.
@@ -319,7 +321,9 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			if dropped {
 				e.overflows.Add(1)
 			}
-			m := col.finalize(spec, bucket, conditions{rawSocket: c.raw, overflowed: dropped})
+			m := col.finalize(spec, bucket, conditions{
+				rawSocket: c.raw, overflowed: dropped, truncated: !full,
+			})
 			c.forget(col)
 			select {
 			case e.results <- m:

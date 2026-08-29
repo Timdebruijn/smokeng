@@ -260,3 +260,150 @@ func TestFinalizeFlagsClockStep(t *testing.T) {
 		t.Fatalf("expected FlagClockStep, flags = %08b", m.Flags)
 	}
 }
+
+// A kernel transmit stamp is trusted only if it sits between this ping's own
+// send and its reply. The kernel labels TX stamps with a counter it keeps
+// itself; userspace keeps a parallel one, and a send that fails before the
+// kernel assigns an id advances one and not the other. After that every stamp
+// lands on a neighbouring packet — frequently a different target, since one
+// socket serves every target of a (family, DSCP) pair — and produces an RTT
+// that is wrong without looking impossible.
+//
+// The bounds catch it whatever caused it, and the measurement degrades to
+// userspace timestamps with the flag that says so, rather than reporting a
+// confident wrong number.
+func TestKernelTXStampOutsideItsOwnPingIsRejected(t *testing.T) {
+	spec := TargetSpec{TargetID: 1, Host: "192.0.2.1", Pings: 3, TimeoutMS: 1000}
+	var late atomic.Int64
+
+	cases := []struct {
+		name    string
+		txKern  time.Duration // relative to txUser
+		wantFlg bool
+	}{
+		{"plausible", 50 * time.Microsecond, false},
+		{"before this ping was sent", -3 * time.Second, true},
+		{"after this ping's reply", 900 * time.Millisecond, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCollector(1, &late)
+			base := time.Now()
+			c.markSent(0, 1, base)
+			c.pings[0].txKern = base.Add(tc.txKern)
+			c.pings[0].rx = base.Add(5 * time.Millisecond)
+			c.pings[0].rxKernel = true
+
+			m := c.finalize(spec, base.Unix(), conditions{})
+			got := m.Flags&store.FlagUserspaceTX != 0
+			if got != tc.wantFlg {
+				t.Fatalf("FlagUserspaceTX = %v, want %v (flags %08b)", got, tc.wantFlg, m.Flags)
+			}
+			if len(m.Samples) != 1 {
+				t.Fatalf("got %d samples, want the reply to still count", len(m.Samples))
+			}
+			// Whichever stamp was used, the RTT must be the real one measured
+			// from this ping's own send.
+			if tc.wantFlg && m.Samples[0] != 5000 {
+				t.Errorf("RTT = %dµs, want 5000 from the userspace stamp", m.Samples[0])
+			}
+		})
+	}
+}
+
+// A negative RTT means the clock moved under us: the sample is not a
+// measurement and must not be stored. It used to be clamped to zero, which put
+// a fabricated 0 µs reading into the distribution, indistinguishable from a
+// real sub-microsecond one and counted as a received reply.
+func TestBackwardsClockDropsTheSampleRatherThanStoringZero(t *testing.T) {
+	spec := TargetSpec{TargetID: 1, Host: "192.0.2.1", Pings: 1, TimeoutMS: 1000}
+	var late atomic.Int64
+	c := newCollector(1, &late)
+
+	base := time.Now()
+	c.markSent(0, 1, base)
+	// The reply appears to arrive before it was sent.
+	c.pings[0].rx = base.Add(-2 * time.Second)
+	c.pings[0].rxKernel = true
+
+	m := c.finalize(spec, base.Unix(), conditions{})
+	if len(m.Samples) != 0 {
+		t.Fatalf("stored %v as a measurement; a negative RTT is not one", m.Samples)
+	}
+	if m.Received != 0 {
+		t.Errorf("Received = %d, want 0: nothing usable came back", m.Received)
+	}
+	if m.Flags&store.FlagClockStep == 0 {
+		t.Error("the sample was dropped without recording why")
+	}
+	if m.Sent != 1 {
+		t.Errorf("Sent = %d, want 1: the probe was still attempted", m.Sent)
+	}
+}
+
+// A bucket cut short by shutdown must not report the probes that were still in
+// flight as lost. They were abandoned, not answered for — and counting them
+// turned every restart into a loss spike that no network event caused, which
+// alert rules would then fire on.
+func TestTruncatedIntervalDoesNotInventLoss(t *testing.T) {
+	spec := TargetSpec{TargetID: 1, Host: "192.0.2.1", Pings: 3, TimeoutMS: 1000}
+	var late atomic.Int64
+	c := newCollector(3, &late)
+
+	base := time.Now()
+	// One answered, two sent moments ago and still well inside their timeout.
+	c.markSent(0, 1, base.Add(-500*time.Millisecond))
+	c.pings[0].rx = base.Add(-495 * time.Millisecond)
+	c.pings[0].rxKernel = true
+	c.markSent(1, 2, base)
+	c.markSent(2, 3, base)
+
+	cut := c.finalize(spec, base.Unix(), conditions{truncated: true})
+	if cut.Sent != 1 || cut.Received != 1 {
+		t.Errorf("truncated: Sent=%d Received=%d, want 1 and 1 — the two in flight were abandoned, not lost",
+			cut.Sent, cut.Received)
+	}
+	if cut.Flags&store.FlagTruncated == 0 {
+		t.Error("a truncated interval is not comparable with a whole one and must say so")
+	}
+
+	// The same bucket finalized normally does count them: there the timeout
+	// really did elapse without a reply.
+	c2 := newCollector(3, &late)
+	c2.markSent(0, 1, base.Add(-5*time.Second))
+	c2.pings[0].rx = base.Add(-4995 * time.Millisecond)
+	c2.pings[0].rxKernel = true
+	c2.markSent(1, 2, base.Add(-5*time.Second))
+	c2.markSent(2, 3, base.Add(-5*time.Second))
+
+	whole := c2.finalize(spec, base.Unix(), conditions{})
+	if whole.Sent != 3 || whole.Received != 1 {
+		t.Errorf("whole: Sent=%d Received=%d, want 3 and 1 — two really were lost", whole.Sent, whole.Received)
+	}
+	if whole.Flags&store.FlagTruncated != 0 {
+		t.Error("a complete interval was flagged as cut short")
+	}
+}
+
+// The tolerance is a rate, so it grows with the bucket. That is inherent to
+// comparing only the endpoints — over a long span a slow enough step and real
+// slew are the same observation — but the window should be no wider than slew
+// actually needs, and real slew must never be reported as a step.
+func TestClockStepToleranceTracksSlewAndNoMore(t *testing.T) {
+	// NTP slews at up to 500ppm. Nothing at or under that is a step, at any
+	// span.
+	for _, d := range []time.Duration{time.Second, time.Minute, time.Hour} {
+		slewed := d + time.Duration(int64(d)*500/1_000_000)
+		if clockStepped(slewed, d) {
+			t.Errorf("slew at NTP's maximum rate over %v was reported as a step", d)
+		}
+	}
+	// A jump well beyond any slew rate is a step, and the shorter the bucket
+	// the smaller the jump that can be told apart.
+	if !clockStepped(time.Minute+100*time.Millisecond, time.Minute) {
+		t.Error("a 100ms jump over a one-minute bucket was not flagged")
+	}
+	if !clockStepped(10*time.Second+50*time.Millisecond, 10*time.Second) {
+		t.Error("a 50ms jump over a ten-second bucket was not flagged")
+	}
+}

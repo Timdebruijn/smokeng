@@ -142,12 +142,22 @@ func TestIngestIsIdempotent(t *testing.T) {
 
 // An agent must not be able to write to a series it was not given. Without
 // this check any enrolled agent could overwrite any target's history.
-func TestIngestRefusesUnassignedTargets(t *testing.T) {
-	h, st, agentID, key, _, theirs := ingestFixture(t)
+//
+// The batch is still accepted, and the rest of it is written. Refusing the
+// whole submission wedged the agent's outbox: it keeps a batch buffered until
+// the master confirms it and retries oldest first, so one measurement for a
+// target that had since been unassigned stopped that agent delivering anything
+// ever again. What must hold is that the row is not written, not that the
+// request fails.
+func TestIngestDiscardsUnassignedTargetsButKeepsTheRest(t *testing.T) {
+	h, st, agentID, key, mine, theirs := ingestFixture(t)
 
-	rec := submit(t, h, agentID, key, []store.Measurement{measurement(theirs, 1_756_400_000)}, time.Now())
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("submitting an unassigned target = %d, want 403", rec.Code)
+	rec := submit(t, h, agentID, key, []store.Measurement{
+		measurement(theirs, 1_756_400_000),
+		measurement(mine, 1_756_400_060),
+	}, time.Now())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a batch with one unassigned target = %d, want it accepted: %s", rec.Code, rec.Body)
 	}
 	got, err := st.QueryRange(t.Context(), theirs, agentID, 0, 1<<40)
 	if err != nil {
@@ -155,6 +165,15 @@ func TestIngestRefusesUnassignedTargets(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("wrote %d rows for an unassigned target", len(got))
+	}
+	// …and the assigned one in the same batch still landed, which is the
+	// property that keeps the outbox draining.
+	got, err = st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("stored %d rows for the assigned target, want 1", len(got))
 	}
 }
 

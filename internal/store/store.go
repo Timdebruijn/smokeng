@@ -51,6 +51,13 @@ const (
 	// lost: a target we cannot reach is a failing target, not an unmeasured
 	// one, and must not render as an empty graph.
 	FlagSendFailed uint8 = 1 << 6
+
+	// FlagTruncated means the interval was finalized before its window
+	// closed — a shutdown or a settings change. Probes still inside their
+	// timeout were abandoned rather than lost, so they are not counted as
+	// attempted and the loss figure covers only what was actually answered
+	// for. The flag says the interval is not comparable with a whole one.
+	FlagTruncated uint8 = 1 << 7
 )
 
 // AlertInput narrows a measurement to what alerting reads, translating the

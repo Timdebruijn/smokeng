@@ -3,6 +3,7 @@ package probe
 import (
 	"crypto/rand"
 	"hash/fnv"
+	"log"
 	"math"
 	"slices"
 	"sync"
@@ -78,6 +79,12 @@ type collector struct {
 type conditions struct {
 	rawSocket  bool
 	overflowed bool // the socket's receive queue dropped replies
+	// truncated marks a bucket finalized before its window closed, which
+	// happens on shutdown and on a settings change. A probe that was never
+	// given its full timeout has not been shown to be lost, so it is not
+	// counted as attempted — otherwise every restart wrote a loss spike that
+	// no network event caused.
+	truncated bool
 }
 
 const (
@@ -87,9 +94,19 @@ const (
 	// is platform-dependent: Linux slews CLOCK_MONOTONIC along with
 	// CLOCK_REALTIME, so the two stay together, but macOS leaves
 	// mach_absolute_time untouched and the divergence lands squarely in this
-	// comparison. Tolerating 1000ppm is twice the maximum rate NTP
-	// implementations slew at, so only a genuine jump exceeds it.
-	clockSlewPPM = 1000
+	// comparison. NTP implementations slew at up to 500ppm; 600 leaves margin
+	// without widening the window further than it has to be.
+	//
+	// The tolerance is a rate, so it grows with the bucket — and that is a real
+	// limit, not an oversight. Comparing only the bucket's endpoints cannot
+	// separate a step from slew of the same magnitude, so on a five-minute
+	// interval a step under ~180ms is indistinguishable from legitimate slew
+	// and is not flagged here. Two things cover that gap: a backwards step
+	// makes the RTT negative, which finalize drops and flags on its own, and a
+	// forwards step inflates RTTs into a visible excursion rather than a
+	// plausible-looking wrong number. Closing it properly means sampling both
+	// clocks per ping rather than per bucket.
+	clockSlewPPM = 600
 )
 
 // clockStepped reports whether the wall clock moved differently from the
@@ -181,6 +198,9 @@ func (c *collector) onTXKernel(idx int, t time.Time) {
 // longer than the per-ping timeout counts as lost, matching the classic
 // semantics; replies after finalization are dropped and counted.
 func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) store.Measurement {
+	// Counted across the bucket so the log line is one per interval, not one
+	// per ping.
+	suspectTX := 0
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.done = true
@@ -205,9 +225,17 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	// most frequent one is stored: a single value has to represent the
 	// interval, and the common cause is the useful one.
 	errCounts := map[uint16]int{}
+	deadline := now.Add(-timeout)
 	for i := range c.pings {
 		p := &c.pings[i]
 		if !p.sent {
+			continue
+		}
+		// Cut short: a probe still within its timeout was abandoned, not
+		// lost. Counting it as attempted would report loss that never
+		// happened, and a service restart would look like an outage.
+		if cond.truncated && p.rx.IsZero() && !p.sendFailed && p.txUser.After(deadline) {
+			m.Flags |= store.FlagTruncated
 			continue
 		}
 		// A probe the kernel refused to transmit was still attempted, and is
@@ -225,6 +253,20 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 			continue
 		}
 		tx := p.txKern
+		// A kernel transmit stamp that is not between this ping's own send and
+		// its reply did not belong to this ping. The kernel labels TX stamps
+		// with a counter it increments per queued packet; userspace keeps its
+		// own count, and the two can drift apart — a send that fails before
+		// the kernel reaches skb construction advances one and not the other.
+		// After that every stamp lands on a neighbouring packet, often on a
+		// different target sharing the socket, and the RTT it produces is
+		// wrong without being impossible-looking. Checking the stamp against
+		// the bounds this ping already knows catches the drift whatever caused
+		// it, and costs a comparison.
+		if !tx.IsZero() && (tx.Before(p.txUser) || tx.After(p.rx)) {
+			tx = time.Time{}
+			suspectTX++
+		}
 		if tx.IsZero() {
 			tx = p.txUser
 			m.Flags |= store.FlagUserspaceTX
@@ -234,7 +276,13 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 		}
 		rtt := p.rx.Sub(tx)
 		if rtt < 0 {
-			rtt = 0
+			// Even the userspace stamps disagree, so the clock moved under us.
+			// This used to be clamped to zero and stored, which put a
+			// fabricated 0 µs reading into the distribution and left it
+			// indistinguishable from a real sub-microsecond one. Drop the
+			// sample and say why instead.
+			m.Flags |= store.FlagClockStep
+			continue
 		}
 		if rtt > timeout {
 			continue // too late = lost
@@ -247,6 +295,15 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	}
 	slices.Sort(m.Samples)
 	m.Received = len(m.Samples)
+
+	// One line, once per interval that saw it: a desynchronised counter is a
+	// property of the socket, not of this bucket, and it will keep happening
+	// until the process restarts.
+	if suspectTX > 0 {
+		log.Printf("probe: target %d (%s): discarded %d kernel transmit stamp(s) that did not fit "+
+			"the ping they were attributed to; using userspace timestamps for those",
+			spec.TargetID, spec.Host, suspectTX)
+	}
 
 	if len(errCounts) > 0 {
 		m.Flags |= store.FlagICMPError

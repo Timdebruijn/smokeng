@@ -206,6 +206,10 @@ func (c *conn) send(col *collector, idx int, dst netip.Addr, packetSize int) err
 		}
 	}
 	seq := c.seq
+	// The counter must track the kernel's sk_tskey, which it increments per
+	// packet it actually queues. Anything that fails before the kernel is
+	// reached must not advance it, or every later stamp lands on the wrong
+	// ping — see the marshal path below, which rolls it back.
 	p := &pendingPing{col: col, idx: idx, counter: c.txCount}
 	c.pending[seq] = p
 	if c.caps.KernelTX {
@@ -224,7 +228,9 @@ func (c *conn) send(col *collector, idx int, dst netip.Addr, packetSize int) err
 	}
 	wire, err := msg.Marshal(nil)
 	if err != nil {
-		c.forgetSeq(seq)
+		// The socket was never touched, so the kernel's counter did not move
+		// and ours must not either.
+		c.forgetSeqAndCounter(seq)
 		return err
 	}
 
@@ -236,6 +242,13 @@ func (c *conn) send(col *collector, idx int, dst netip.Addr, packetSize int) err
 	}
 	col.markSent(idx, seq, time.Now())
 	if err := unix.Sendto(c.fd, wire, 0, sa); err != nil {
+		// Deliberately does not wind the counter back. Some errors are
+		// returned before the kernel assigns a timestamp id and some after —
+		// ENOBUFS at the queue has already consumed one — so guessing would be
+		// wrong half the time. finalize() checks each kernel stamp against the
+		// ping it is attributed to instead, which catches a drift from any
+		// cause and degrades to userspace timestamps, flagged, rather than
+		// reporting a confident wrong number.
 		c.forgetSeq(seq)
 		col.markSendFailed(idx)
 		return err
@@ -400,6 +413,23 @@ func (c *conn) handleICMPError(e *timestamp.ICMPError) {
 	}
 	c.icmpErrors.Add(1)
 	p.col.onICMPError(p.idx, e.Type, e.Code)
+}
+
+// forgetSeqAndCounter drops a ping that never reached the kernel, winding the
+// transmit counter back so it keeps step with sk_tskey. Safe only while no
+// other send has been allocated since — which holds here, because the caller
+// is still inside the same send and the counter is only advanced under the
+// lock this takes.
+func (c *conn) forgetSeqAndCounter(seq uint16) {
+	c.mu.Lock()
+	if p, ok := c.pending[seq]; ok {
+		delete(c.pending, seq)
+		delete(c.byCounter, p.counter)
+		if p.counter == c.txCount-1 {
+			c.txCount--
+		}
+	}
+	c.mu.Unlock()
 }
 
 func (c *conn) forgetSeq(seq uint16) {
