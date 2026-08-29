@@ -222,6 +222,15 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 	return specs, nil
 }
 
+// connFor returns the socket for a (family, DSCP) pair, opening one the first
+// time it is asked for.
+//
+// Sockets are never closed. That is deliberate rather than overlooked: DSCP is
+// six bits and there are two families, so the set is bounded at 128 sockets
+// however often the tree is edited, and closing one safely would mean tracking
+// its lifetime against every finalize goroutine still holding it — those call
+// back into the conn after their bucket ends. A bounded 128 is cheaper than
+// that machinery and cannot grow into a problem.
 func (e *Engine) connFor(family string, dscp int) (*conn, error) {
 	key := connKey{family, dscp}
 	e.mu.Lock()
@@ -348,15 +357,20 @@ func (e *Engine) writer(stop <-chan struct{}) {
 			return
 		}
 		wctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		stored := true
 		if err := e.st.WriteMeasurements(wctx, batch); err != nil {
-			log.Printf("probe: write %d measurements: %v", len(batch), err)
+			log.Printf("probe: write %d measurements: %v; they are dropped and not alerted on",
+				len(batch), err)
 			e.writeErrs.Add(1)
+			e.dropped.Add(int64(len(batch)))
+			stored = false
 		} else {
 			e.written.Add(int64(len(batch)))
 		}
 		// Evaluate only what was stored, and only after storing it: an alert
-		// that outlives its evidence would be unexplainable.
-		if e.alerter != nil {
+		// that outlives its evidence would be unexplainable. The comment said
+		// so before the code did — Observe ran on the failure branch too.
+		if e.alerter != nil && stored {
 			inputs := make([]alert.Input, len(batch))
 			for i := range batch {
 				inputs[i] = batch[i].AlertInput()

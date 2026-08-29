@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -32,6 +33,16 @@ var measurementsSchema = arrow.NewSchema([]arrow.Field{
 
 // handleMeasurements streams one series over [from, to) as Arrow IPC.
 // Defaults: agent_id 0 (local), to now, from one hour before to.
+const (
+	// minIntervalS is the shortest interval a target can be configured with,
+	// and so the densest a series can be. Used only to turn a time range into
+	// a worst-case row count.
+	minIntervalS = 1
+	// maxRowsPerRequest is generous for any window a plot asks for — a day of
+	// one-second data is 86 400 — and far below what exhausts memory.
+	maxRowsPerRequest = 200_000
+)
+
 func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	targetID, err := strconv.ParseInt(q.Get("target_id"), 10, 64)
@@ -53,6 +64,16 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.requireVisible(w, r, targetID) {
+		return
+	}
+	// QueryRange materialises every row, samples decoded, before a byte is
+	// written. The range comes from the caller, so without a bound one request
+	// for a year of a 10-second series is hundreds of megabytes and an OOM
+	// kill takes the prober with it. Refuse the range rather than die trying.
+	if rows := (to - from) / int64(minIntervalS); rows > maxRowsPerRequest {
+		badRequestMsg(w, fmt.Sprintf(
+			"that range could hold about %d intervals, more than the %d one request returns; ask for a shorter window",
+			rows, maxRowsPerRequest))
 		return
 	}
 	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, from, to)

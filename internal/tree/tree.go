@@ -96,8 +96,11 @@ func (t *Target) Validate() error {
 	if s.IntervalS != nil && *s.IntervalS <= 0 {
 		return fmt.Errorf("tree: interval_s must be positive")
 	}
-	if s.PingsPerInterval != nil && *s.PingsPerInterval <= 0 {
-		return fmt.Errorf("tree: pings_per_interval must be positive")
+	// Bounded above because the measurement wire format carries sent and
+	// received as UInt16 (DESIGN.md §7.2). Without this a target could be
+	// configured past 65535 and report a count that had silently wrapped.
+	if s.PingsPerInterval != nil && (*s.PingsPerInterval <= 0 || *s.PingsPerInterval > 65535) {
+		return fmt.Errorf("tree: pings_per_interval must be between 1 and 65535")
 	}
 	if s.BurstGapMS != nil && *s.BurstGapMS < 0 {
 		return fmt.Errorf("tree: burst_gap_ms must not be negative")

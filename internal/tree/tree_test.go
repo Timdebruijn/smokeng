@@ -90,3 +90,23 @@ func TestValidation(t *testing.T) {
 		}
 	}
 }
+
+// The wire format carries sent and received as UInt16, so a configuration that
+// could exceed that would report a count which had silently wrapped — 70000
+// pings arriving as 4464.
+func TestPingsPerIntervalIsBoundedByTheWireFormat(t *testing.T) {
+	for _, n := range []int{0, -1, 65536, 1 << 20} {
+		n := n
+		tg := Target{Name: "t", Settings: Settings{PingsPerInterval: &n}}
+		if err := tg.Validate(); err == nil {
+			t.Errorf("pings_per_interval = %d was accepted", n)
+		}
+	}
+	for _, n := range []int{1, 20, 65535} {
+		n := n
+		tg := Target{Name: "t", Settings: Settings{PingsPerInterval: &n}}
+		if err := tg.Validate(); err != nil {
+			t.Errorf("pings_per_interval = %d was refused: %v", n, err)
+		}
+	}
+}

@@ -255,7 +255,7 @@ func (a *Agent) push(ctx context.Context) {
 			return
 		}
 		// Only now is it safe to forget them.
-		if err := a.st.MarkSubmitted(ctx, batch); err != nil {
+		if err := a.st.DropSubmitted(ctx, batch); err != nil {
 			log.Printf("agent: clearing the buffer: %v", err)
 			return
 		}

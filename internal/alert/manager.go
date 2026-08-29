@@ -137,6 +137,18 @@ func (m *Manager) Reload(ctx context.Context) error {
 	}
 
 	m.mu.Lock()
+	// The states read from the database are a snapshot from before this
+	// function started, and Observe has been advancing hysteresis in memory
+	// the whole time. Overwriting wholesale rolled that progress back, so a
+	// tree edit — or the periodic reload — silently reset the streak of every
+	// rule that was part-way to firing or clearing. Keep what is already in
+	// memory; the stored copy exists to survive a restart, not to win a race
+	// against the live one.
+	for key, live := range m.states {
+		if _, ok := byID[key.ruleID]; ok {
+			kept[key] = live
+		}
+	}
 	m.byTarget, m.rules, m.states = resolved, byID, kept
 	m.mu.Unlock()
 	return nil

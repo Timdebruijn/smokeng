@@ -164,10 +164,15 @@ func (s *SQLite) PendingMeasurements(ctx context.Context, limit int) ([]Measurem
 	return out, rows.Err()
 }
 
-// MarkSubmitted records that the master has accepted these measurements. It
-// runs only after a confirmed response: forgetting them any earlier would
-// lose data whenever a push failed halfway.
-func (s *SQLite) MarkSubmitted(ctx context.Context, ms []Measurement) error {
+// DropSubmitted forgets measurements the master has confirmed. It runs only
+// after a confirmed response: forgetting them any earlier would lose data
+// whenever a push failed halfway.
+//
+// They are deleted rather than marked. This database is an outbox, not an
+// archive — the master holds the history — and keeping every row forever left
+// a long-running agent scanning an ever-growing table every fifteen seconds to
+// find the handful that were still pending.
+func (s *SQLite) DropSubmitted(ctx context.Context, ms []Measurement) error {
 	if len(ms) == 0 {
 		return nil
 	}
@@ -177,7 +182,7 @@ func (s *SQLite) MarkSubmitted(ctx context.Context, ms []Measurement) error {
 	}
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(ctx,
-		"UPDATE measurements SET submitted = 1 WHERE target_id = ? AND agent_id = ? AND ts = ?")
+		"DELETE FROM measurements WHERE target_id = ? AND agent_id = ? AND ts = ?")
 	if err != nil {
 		return err
 	}

@@ -72,6 +72,13 @@ func Decode(blob []byte) ([]uint32, error) {
 		if i == 0 {
 			cur = v
 		} else {
+			// Check before adding. Testing the sum afterwards missed a delta
+			// big enough to wrap the accumulator, which lands back in range as
+			// a small number that passes every later check — a corrupt blob
+			// decoding to plausible, wrong, unsorted samples.
+			if v > math.MaxUint32-cur {
+				return nil, fmt.Errorf("enc: delta at sample %d overflows uint32 microseconds", i)
+			}
 			cur += v
 		}
 		if cur > math.MaxUint32 {

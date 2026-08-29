@@ -207,6 +207,11 @@ CREATE TABLE alert_events (
 );
 CREATE INDEX alert_events_ts ON alert_events (ts DESC);
 `,
+	// v10: an agent drains its outbox oldest-first every fifteen seconds, and
+	// without this the query was a full scan plus a sort of a table that only
+	// grows. Partial, so it costs nothing on a master, where no row is ever
+	// pending.
+	`CREATE INDEX measurements_pending ON measurements (ts) WHERE submitted = 0`,
 }
 
 func (s *SQLite) migrate() error {

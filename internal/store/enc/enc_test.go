@@ -2,6 +2,8 @@ package enc
 
 import (
 	"bytes"
+	"encoding/binary"
+	"math"
 	"slices"
 	"testing"
 )
@@ -58,5 +60,23 @@ func TestDecodeErrors(t *testing.T) {
 		if _, err := Decode(blob); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+// A delta large enough to wrap the accumulator used to land back inside uint32
+// as a small, plausible value: the blob decoded without error into samples that
+// were wrong and no longer sorted. Checking the sum after the addition cannot
+// see that; checking the delta before it can.
+func TestDecodeRejectsDeltaThatWrapsTheAccumulator(t *testing.T) {
+	var blob []byte
+	blob = append(blob, 1) // version
+	var buf [binary.MaxVarintLen64]byte
+	// First sample near the top of the range, then a delta that wraps.
+	blob = append(blob, buf[:binary.PutUvarint(buf[:], math.MaxUint32-1)]...)
+	blob = append(blob, buf[:binary.PutUvarint(buf[:], math.MaxUint64-10)]...)
+
+	got, err := Decode(blob)
+	if err == nil {
+		t.Fatalf("decoded a wrapped delta into %v instead of refusing it", got)
 	}
 }
