@@ -59,7 +59,7 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 
 	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, from, to)
 	if err != nil {
-		internalError(w, r.Context(), err)
+		internalError(w, err)
 		return
 	}
 

@@ -66,6 +66,67 @@ type Resolved struct {
 	Agents           Value[string]
 }
 
+// Validate checks one node's field-level invariants — the rules that hold
+// regardless of where the node sits in the tree. Structural rules (a single
+// complete root, no cycles, unique sibling names) are New's job. Both the
+// HTTP API and the TOML importer run this, so a target cannot enter the
+// database through one door under rules the other would reject.
+func (t *Target) Validate() error {
+	if strings.TrimSpace(t.Name) == "" && t.ParentID != nil {
+		return fmt.Errorf("tree: name is required")
+	}
+	if strings.Contains(t.Name, "/") {
+		return fmt.Errorf("tree: name %q must not contain a slash", t.Name)
+	}
+	if (t.Host == nil) != (t.AddressFamily == nil) {
+		return fmt.Errorf("tree: host and address_family must be set together (a node with neither is a group)")
+	}
+	if t.AddressFamily != nil && *t.AddressFamily != "v4" && *t.AddressFamily != "v6" {
+		return fmt.Errorf("tree: address_family must be v4 or v6, got %q", *t.AddressFamily)
+	}
+	s := &t.Settings
+	if s.ProbeMode != nil && *s.ProbeMode != "burst" && *s.ProbeMode != "spread" {
+		return fmt.Errorf("tree: probe_mode must be burst or spread, got %q", *s.ProbeMode)
+	}
+	if s.IntervalS != nil && *s.IntervalS <= 0 {
+		return fmt.Errorf("tree: interval_s must be positive")
+	}
+	if s.PingsPerInterval != nil && *s.PingsPerInterval <= 0 {
+		return fmt.Errorf("tree: pings_per_interval must be positive")
+	}
+	if s.BurstGapMS != nil && *s.BurstGapMS < 0 {
+		return fmt.Errorf("tree: burst_gap_ms must not be negative")
+	}
+	if s.TimeoutMS != nil && *s.TimeoutMS <= 0 {
+		return fmt.Errorf("tree: timeout_ms must be positive")
+	}
+	// The ICMP payload carries a 4-byte magic and an 8-byte token.
+	if s.PacketSize != nil && (*s.PacketSize < 12 || *s.PacketSize > 65_000) {
+		return fmt.Errorf("tree: packet_size must be between 12 and 65000 bytes")
+	}
+	if s.DSCP != nil && (*s.DSCP < 0 || *s.DSCP > 63) {
+		return fmt.Errorf("tree: dscp must be between 0 and 63")
+	}
+	if s.Agents != nil && strings.TrimSpace(*s.Agents) == "" {
+		return fmt.Errorf("tree: agents must name at least one agent, or be unset to inherit")
+	}
+	return nil
+}
+
+// A burst must fit inside its interval, or bursts overlap the next bucket.
+// This needs resolved values, so it is checked after inheritance.
+func (r *Resolved) validateTiming() error {
+	if r.ProbeMode.Effective == "burst" {
+		burstMS := r.PingsPerInterval.Effective * r.BurstGapMS.Effective
+		if burstMS >= r.IntervalS.Effective*1000 {
+			return fmt.Errorf("tree: %d pings %dms apart (%.1fs) does not fit in a %ds interval",
+				r.PingsPerInterval.Effective, r.BurstGapMS.Effective,
+				float64(burstMS)/1000, r.IntervalS.Effective)
+		}
+	}
+	return nil
+}
+
 // Tree is a validated, indexed snapshot of all targets.
 type Tree struct {
 	nodes map[int64]*Target
@@ -102,6 +163,35 @@ func New(targets []Target) (*Tree, error) {
 	for _, n := range t.nodes {
 		if _, err := t.ancestryOf(n); err != nil {
 			return nil, err
+		}
+		if err := n.Validate(); err != nil {
+			return nil, fmt.Errorf("target %d (%s): %w", n.ID, n.Name, err)
+		}
+	}
+	// Sibling names must be unique: the path is the identity used by TOML
+	// import/export and by the UI.
+	seen := map[string]bool{}
+	for _, n := range t.nodes {
+		if n.ParentID == nil {
+			continue
+		}
+		key := fmt.Sprintf("%d/%s", *n.ParentID, n.Name)
+		if seen[key] {
+			return nil, fmt.Errorf("tree: duplicate sibling name %q under target %d", n.Name, *n.ParentID)
+		}
+		seen[key] = true
+	}
+	// Timing has to hold for every leaf, using resolved values.
+	for _, n := range t.nodes {
+		if n.Host == nil {
+			continue
+		}
+		res, err := t.Resolve(n.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := res.validateTiming(); err != nil {
+			return nil, fmt.Errorf("target %d (%s): %w", n.ID, n.Name, err)
 		}
 	}
 	return t, nil

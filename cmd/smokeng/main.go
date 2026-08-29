@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"smokeng/internal/api"
 	"smokeng/internal/config"
 	"smokeng/internal/probe"
@@ -52,10 +54,11 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage: smokeng <command>
 
 commands:
-  serve                          run the master: prober, API and web UI
-  config import [--prune] FILE   sync the target tree from a TOML file
-  config export                  write the target tree as TOML to stdout
-  version                        print version`)
+  serve                                  run the master: prober, API and web UI
+  config import [--prune] FILE           sync the target tree from a TOML file
+  config import-smokeping FILE           import a SmokePing Targets file
+  config export                          write the target tree as TOML to stdout
+  version                                print version`)
 }
 
 func configCmd(args []string) error {
@@ -67,6 +70,9 @@ func configCmd(args []string) error {
 	fs := flag.NewFlagSet("config "+sub, flag.ExitOnError)
 	dbPath := fs.String("db", "smokeng.db", "path to the SQLite database")
 	prune := fs.Bool("prune", false, "delete targets absent from the file instead of disabling them")
+	alsoIPv6 := fs.Bool("also-ipv6", false,
+		"import-smokeping: also create a v6 target for every hostname (address families are separate targets)")
+	dryRun := fs.Bool("dry-run", false, "import-smokeping: print the translated config instead of writing it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -87,6 +93,37 @@ func configCmd(args []string) error {
 			return err
 		}
 		sum, err := config.Import(ctx, st, data, *prune)
+		if err != nil {
+			return err
+		}
+		fmt.Println(sum)
+		return nil
+	case "import-smokeping":
+		if fs.NArg() != 1 {
+			return errors.New("usage: smokeng config import-smokeping [--db path] [--also-ipv6] [--dry-run] TARGETS-FILE")
+		}
+		data, err := os.ReadFile(fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		f, warnings, err := config.ParseSmokePing(data, *alsoIPv6)
+		// Warnings name what SmokePing expressed that smokeng will not, so
+		// they go to stderr even when the import itself fails.
+		for _, w := range warnings {
+			fmt.Fprintln(os.Stderr, "warning:", w)
+		}
+		if err != nil {
+			return err
+		}
+		if *dryRun {
+			out, err := toml.Marshal(f)
+			if err != nil {
+				return err
+			}
+			_, err = os.Stdout.Write(out)
+			return err
+		}
+		sum, err := config.Apply(ctx, st, f, *prune)
 		if err != nil {
 			return err
 		}

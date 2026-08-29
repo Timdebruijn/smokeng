@@ -73,11 +73,18 @@ func (s Summary) String() string {
 // Import applies a TOML file to the store as a declarative sync. The
 // resulting tree is fully validated before anything is written.
 func Import(ctx context.Context, st store.Store, data []byte, prune bool) (Summary, error) {
-	var sum Summary
 	var f File
 	if err := toml.Unmarshal(data, &f); err != nil {
-		return sum, fmt.Errorf("config: parse: %w", err)
+		return Summary{}, fmt.Errorf("config: parse: %w", err)
 	}
+	return Apply(ctx, st, f, prune)
+}
+
+// Apply syncs an already-parsed configuration into the store. Both the TOML
+// importer and the SmokePing importer land here, so they cannot drift apart
+// in how absence, inheritance or validation are handled.
+func Apply(ctx context.Context, st store.Store, f File, prune bool) (Summary, error) {
+	var sum Summary
 	for p, e := range f.Targets {
 		if err := validatePath(p); err != nil {
 			return sum, err
@@ -354,24 +361,28 @@ func validatePath(p string) error {
 	return nil
 }
 
+// validateEntry runs the same field rules the HTTP API applies, so a target
+// cannot enter the database through the file that the API would reject.
 func validateEntry(p string, e Entry) error {
-	if (e.Host == nil) != (e.AddressFamily == nil) {
-		return fmt.Errorf("config: %q: host and address_family must be set together", p)
+	dummyParent := int64(1)
+	t := tree.Target{
+		ParentID:      &dummyParent,
+		Name:          p[strings.LastIndex(p, "/")+1:],
+		Host:          e.Host,
+		AddressFamily: e.AddressFamily,
+		Settings: tree.Settings{
+			IntervalS:        e.IntervalS,
+			PingsPerInterval: e.PingsPerInterval,
+			ProbeMode:        e.ProbeMode,
+			BurstGapMS:       e.BurstGapMS,
+			TimeoutMS:        e.TimeoutMS,
+			PacketSize:       e.PacketSize,
+			DSCP:             e.DSCP,
+			Agents:           e.Agents,
+		},
 	}
-	if e.AddressFamily != nil && *e.AddressFamily != "v4" && *e.AddressFamily != "v6" {
-		return fmt.Errorf("config: %q: address_family must be v4 or v6", p)
-	}
-	if e.ProbeMode != nil && *e.ProbeMode != "burst" && *e.ProbeMode != "spread" {
-		return fmt.Errorf("config: %q: probe_mode must be burst or spread", p)
-	}
-	if e.IntervalS != nil && *e.IntervalS <= 0 {
-		return fmt.Errorf("config: %q: interval_s must be positive", p)
-	}
-	if e.PingsPerInterval != nil && *e.PingsPerInterval <= 0 {
-		return fmt.Errorf("config: %q: pings_per_interval must be positive", p)
-	}
-	if e.DSCP != nil && (*e.DSCP < 0 || *e.DSCP > 63) {
-		return fmt.Errorf("config: %q: dscp must be 0..63", p)
+	if err := t.Validate(); err != nil {
+		return fmt.Errorf("config: %q: %w", p, err)
 	}
 	return nil
 }
