@@ -20,6 +20,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -207,8 +208,14 @@ func Apply(ctx context.Context, st Store, f File, prune bool) (Summary, error) {
 		}
 		e := f.Targets[p]
 		n := ensure(p)
-		if !created[p] {
-			sum.Updated++
+		// Snapshot before mutating: an import that changes nothing must say so,
+		// or it cannot be run from CI or a config-management tool without
+		// reporting a change on every single run. The fields below are all
+		// replaced wholesale, so the copy keeps pointing at the old values.
+		existed := !created[p]
+		var before tree.Target
+		if existed {
+			before = *n
 		}
 		n.Host = e.Host
 		n.AddressFamily = e.AddressFamily
@@ -226,6 +233,9 @@ func Apply(ctx context.Context, st Store, f File, prune bool) (Summary, error) {
 			PacketSize:       e.PacketSize,
 			DSCP:             e.DSCP,
 			Agents:           e.Agents,
+		}
+		if existed && !reflect.DeepEqual(before, *n) {
+			sum.Updated++
 		}
 	}
 	sum.Created = len(created)
@@ -381,7 +391,9 @@ func applyRules(ctx context.Context, st Store, f File, nodes map[string]*tree.Ta
 		}
 		if prev, ok := current[key]; ok {
 			rule.ID = prev.ID
-			sum.RulesUpdated++
+			if rule != *prev {
+				sum.RulesUpdated++
+			}
 		} else {
 			sum.RulesCreated++
 		}

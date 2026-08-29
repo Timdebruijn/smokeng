@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/pelletier/go-toml/v2"
@@ -341,5 +342,54 @@ func TestAlertRuleValidationRejects(t *testing.T) {
 		if _, err := Import(ctx, s, []byte(body), false); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+}
+
+// An import that changes nothing must report that it changed nothing.
+// Anything driving this from CI or config management — Ansible, a GitOps
+// pipeline — decides whether it made a change from these counters, and a
+// summary that claims six updates on every run makes the whole play a lie.
+func TestReimportReportsNoChange(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+
+	first, err := Import(ctx, s, []byte(sample), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Created == 0 {
+		t.Fatalf("the first import created nothing: %s", first)
+	}
+
+	again, err := Import(ctx, s, []byte(sample), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Created != 0 || again.Updated != 0 || again.Disabled != 0 || again.Deleted != 0 ||
+		again.RulesCreated != 0 || again.RulesUpdated != 0 ||
+		again.RulesDisabled != 0 || again.RulesDeleted != 0 {
+		t.Fatalf("re-importing an unchanged file reported work:\n%s", again)
+	}
+}
+
+// …but a real edit must still be reported, or the counters would be useless
+// in the other direction.
+func TestReimportReportsAnActualChange(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	if _, err := Import(ctx, s, []byte(sample), false); err != nil {
+		t.Fatal(err)
+	}
+
+	edited := strings.Replace(sample, "pings_per_interval = 40", "pings_per_interval = 41", 1)
+	if edited == sample {
+		t.Fatal("the fixture no longer contains the value this test edits")
+	}
+	got, err := Import(ctx, s, []byte(edited), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Updated != 1 {
+		t.Fatalf("changing one target reported %d updates:\n%s", got.Updated, got)
 	}
 }
