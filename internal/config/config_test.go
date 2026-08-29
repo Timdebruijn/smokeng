@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"crypto/ed25519"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -391,5 +392,103 @@ func TestReimportReportsAnActualChange(t *testing.T) {
 	}
 	if got.Updated != 1 {
 		t.Fatalf("changing one target reported %d updates:\n%s", got.Updated, got)
+	}
+}
+
+const agentSample = `
+[targets."Edge"]
+agents = ["local", "ams-01"]
+
+[targets."Edge/cf-v4"]
+host = "1.1.1.1"
+address_family = "v4"
+`
+
+// An `agents` entry that names nothing must be refused. The failure it would
+// otherwise cause is silent — nobody measures the target, and the empty graph
+// is indistinguishable from one that is measured and never answers.
+func TestImportRejectsUnknownAgent(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+
+	_, err := Import(ctx, s, []byte(agentSample), false)
+	if err == nil {
+		t.Fatal("an agents list naming an unenrolled agent was accepted")
+	}
+	// The rejection has to be actionable: which name, and what does exist.
+	for _, want := range []string{"ams-01", "enrolled agents are", "local"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q:\n%v", want, err)
+		}
+	}
+}
+
+func TestImportAcceptsEnrolledAgent(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddAgent(ctx, "ams-01", pub); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Import(ctx, s, []byte(agentSample), false); err != nil {
+		t.Fatalf("an enrolled agent was refused: %v", err)
+	}
+}
+
+// The bootstrap case: the tree lands before the agents that will serve it.
+func TestAllowUnknownAgentsDowngradesToAWarning(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	sum, err := Import(ctx, s, []byte(agentSample), false, AllowUnknownAgents())
+	if err != nil {
+		t.Fatalf("with AllowUnknownAgents: %v", err)
+	}
+	if len(sum.Warnings) == 0 {
+		t.Fatal("the unknown agent passed without even a warning")
+	}
+	if !strings.Contains(strings.Join(sum.Warnings, "\n"), "ams-01") {
+		t.Errorf("warning does not name the agent: %v", sum.Warnings)
+	}
+}
+
+// Both spellings must mean the same thing: configurations written before the
+// array form existed are still out there.
+func TestAgentListAcceptsBothSpellings(t *testing.T) {
+	ctx := context.Background()
+	arrayForm := `
+[defaults]
+agents = ["local"]
+
+[targets."a"]
+host = "1.1.1.1"
+address_family = "v4"
+`
+	stringForm := strings.Replace(arrayForm, `agents = ["local"]`, `agents = "local"`, 1)
+
+	s1, s2 := open(t), open(t)
+	if _, err := Import(ctx, s1, []byte(arrayForm), false); err != nil {
+		t.Fatalf("array form: %v", err)
+	}
+	if _, err := Import(ctx, s2, []byte(stringForm), false); err != nil {
+		t.Fatalf("string form: %v", err)
+	}
+	e1, err := Export(ctx, s1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2, err := Export(ctx, s2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(e1) != string(e2) {
+		t.Errorf("the two spellings exported differently:\n--- array ---\n%s\n--- string ---\n%s", e1, e2)
+	}
+	// And an export writes the array form, which is what the format wants.
+	// The quoting style is go-toml's business; the brackets are the point.
+	if !strings.Contains(string(e1), "agents = [") {
+		t.Errorf("export did not use the array form:\n%s", e1)
 	}
 }

@@ -40,7 +40,7 @@ type Values struct {
 	TimeoutMS        *int    `toml:"timeout_ms,omitempty"`
 	PacketSize       *int    `toml:"packet_size,omitempty"`
 	DSCP             *int    `toml:"dscp,omitempty"`
-	Agents           *string `toml:"agents,omitempty"`
+	Agents           any     `toml:"agents,omitempty"`
 	TraceIntervalS   *int    `toml:"trace_interval_s,omitempty"`
 }
 
@@ -100,6 +100,8 @@ type Summary struct {
 	// is the difference between noticing and discovering it during an
 	// incident.
 	RulesCreated, RulesUpdated, RulesDisabled, RulesDeleted int
+	// Warnings are problems the import chose to carry rather than refuse.
+	Warnings []string
 }
 
 func (s Summary) String() string {
@@ -114,19 +116,39 @@ func (s Summary) String() string {
 
 // Import applies a TOML file to the store as a declarative sync. The
 // resulting tree is fully validated before anything is written.
-func Import(ctx context.Context, st Store, data []byte, prune bool) (Summary, error) {
+// Option adjusts how an import behaves. Options are variadic so the common
+// call stays a call and does not need an options struct built for it.
+type Option func(*options)
+
+type options struct{ allowUnknownAgents bool }
+
+// AllowUnknownAgents downgrades an `agents` entry that names no enrolled agent
+// from an error to a warning, for the case where the tree is meant to land
+// before the agents that will serve it. It is opt-in because the common cause
+// of an unknown name is a typo, and a typo means nobody measures that target
+// (DESIGN.md §4.4).
+func AllowUnknownAgents() Option { return func(o *options) { o.allowUnknownAgents = true } }
+
+func Import(ctx context.Context, st Store, data []byte, prune bool, opts ...Option) (Summary, error) {
 	var f File
 	if err := toml.Unmarshal(data, &f); err != nil {
 		return Summary{}, fmt.Errorf("config: parse: %w", err)
 	}
-	return Apply(ctx, st, f, prune)
+	return Apply(ctx, st, f, prune, opts...)
 }
 
 // Apply syncs an already-parsed configuration into the store. Both the TOML
 // importer and the SmokePing importer land here, so they cannot drift apart
 // in how absence, inheritance or validation are handled.
-func Apply(ctx context.Context, st Store, f File, prune bool) (Summary, error) {
+func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (Summary, error) {
+	var o options
+	for _, fn := range opts {
+		fn(&o)
+	}
 	var sum Summary
+	if err := f.normaliseAgentLists(); err != nil {
+		return sum, err
+	}
 	for p, e := range f.Targets {
 		if err := validatePath(p); err != nil {
 			return sum, err
@@ -232,12 +254,33 @@ func Apply(ctx context.Context, st Store, f File, prune bool) (Summary, error) {
 			TimeoutMS:        e.TimeoutMS,
 			PacketSize:       e.PacketSize,
 			DSCP:             e.DSCP,
-			Agents:           e.Agents,
+			Agents:           agentStringFrom(e.Agents),
 		}
 		if existed && !reflect.DeepEqual(before, *n) {
 			sum.Updated++
 		}
 	}
+	// Every `agents` entry must name something. A name that matches no enrolled
+	// agent is not a smaller mistake than a bad hostname: the target is
+	// measured by nobody, and the empty graph that results looks exactly like a
+	// target that is measured and never answers.
+	known, err := knownAgents(ctx, st)
+	if err != nil {
+		return sum, err
+	}
+	declared := map[string]bool{"": true}
+	for p := range f.Targets {
+		declared[p] = true
+	}
+	if problems := checkAgentRefs(nodes, declared, known); len(problems) > 0 {
+		if !o.allowUnknownAgents {
+			return sum, agentRefError(problems, known)
+		}
+		for _, p := range problems {
+			sum.Warnings = append(sum.Warnings, p)
+		}
+	}
+
 	sum.Created = len(created)
 
 	// 3. Absence: a pre-existing target neither in the file nor an ancestor
@@ -511,7 +554,7 @@ func valuesFrom(s tree.Settings) Values {
 		TimeoutMS:        s.TimeoutMS,
 		PacketSize:       s.PacketSize,
 		DSCP:             s.DSCP,
-		Agents:           s.Agents,
+		Agents:           agentListFrom(s.Agents),
 		TraceIntervalS:   s.TraceIntervalS,
 	}
 }
@@ -539,7 +582,7 @@ func overlayValues(dst *tree.Settings, v Values) {
 		dst.DSCP = v.DSCP
 	}
 	if v.Agents != nil {
-		dst.Agents = v.Agents
+		dst.Agents = agentStringFrom(v.Agents)
 	}
 	if v.TraceIntervalS != nil {
 		dst.TraceIntervalS = v.TraceIntervalS
@@ -571,7 +614,7 @@ func validateEntry(p string, e Entry) error {
 			TimeoutMS:        e.TimeoutMS,
 			PacketSize:       e.PacketSize,
 			DSCP:             e.DSCP,
-			Agents:           e.Agents,
+			Agents:           agentStringFrom(e.Agents),
 			TraceIntervalS:   e.TraceIntervalS,
 		},
 	}

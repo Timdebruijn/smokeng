@@ -98,7 +98,7 @@ func TestParseSmokePing(t *testing.T) {
 	if fam := f.Targets["Internet/google"].AddressFamily; fam == nil || *fam != "v4" {
 		t.Errorf("google family = %v", fam)
 	}
-	if ag := f.Targets["Internet/remote"].Agents; ag == nil || *ag != "local ams rtm" {
+	if ag := agentStringFrom(f.Targets["Internet/remote"].Agents); ag == nil || *ag != "local ams rtm" {
 		t.Errorf("remote agents = %v", ag)
 	}
 
@@ -144,7 +144,7 @@ func TestSmokePingImportApplies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum, err := Apply(ctx, st, f, false)
+	sum, err := Apply(ctx, st, f, false, AllowUnknownAgents())
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}

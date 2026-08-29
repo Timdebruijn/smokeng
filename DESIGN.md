@@ -260,6 +260,35 @@ does not count towards a loss rule, and one taken across a clock step does not c
 towards a latency rule. Alerting on those would page someone about smokeng rather than
 about the network.
 
+### 4.4 Agent assignment (revised v0.6)
+
+`agents` names the vantage points that measure a node and its subtree. It was a
+space-separated string matched by exact equality against agent names, validated
+nowhere. A typo produced a target that no agent measured, with no error, no badge and no
+metric — an empty graph indistinguishable from a target that is measured and answering
+nothing. That is the one place smokeng hid something it knew, and it contradicts the rest
+of the design.
+
+It becomes referential:
+
+- The TOML form is an array: `agents = ["local", "ams-01"]`. A space-separated string is
+  still accepted and means the same thing, because existing configs use it.
+- `local` stays reserved for the master's own prober and cannot be an agent's name.
+- Every name is checked against the enrolled agents at import and on every API write. An
+  unknown name is an error that names the offender and lists what does exist.
+- `config import --allow-unknown-agents` downgrades that to a warning, for the case where
+  the tree is applied before the agents that will serve it are enrolled. It is a flag
+  rather than the default because the common case is a typo, not a bootstrap.
+- A target whose effective agent set resolves to nothing measurable is a config error, and
+  `smokeng_targets_unmeasured` counts any that slip through anyway.
+
+Inheritance stays replace-not-accumulate, for the reason §4.3 gives: a node's effective
+set should be readable in one place instead of reconstructed from four ancestors. No
+`agents_add`/`agents_remove`. The ergonomic problem that would solve — "everything from
+local, and this subtree also from ams-01" — is a UI problem, and is solved in the UI: the
+field is a multi-select pre-filled with the inherited set, so adding one vantage point is
+one click that writes the whole list.
+
 ## 5. Probing engine
 
 ### 5.1 Sockets
@@ -598,6 +627,43 @@ per measurement interval.
 **Rendering.** Path changes are vertical marks on the time axis and the path is named in
 the crosshair readout. That places "the path changed at 14:02" next to "the smoke
 widened at 14:03" without needing a second view, which is the whole point.
+
+## 9b. Enrolment tokens (v0.6)
+
+Enrolling an agent meant copying an Ed25519 public key from the agent host to the master
+by hand and running a CLI command there. That is fine for two agents and hostile for
+twenty, and it cannot be done from the UI at all.
+
+A token flow replaces it, without weakening what the keypair guarantees:
+
+1. An admin mints a token **for a chosen name**: `POST /api/v1/agent-tokens {name}`. The
+   master returns the plaintext once and stores only `sha256(token)`. The token is
+   `smk_` + 32 random bytes, base64url — recognisable in a log or a secret scanner.
+2. On the agent: `smokeng agent run --master https://… --token smk_…`. It generates its
+   keypair if absent and calls `POST /api/v1/agent/enrol {token, pubkey}`.
+3. The master verifies the hash, creates the agent under the name the token carries, marks
+   the token spent in the same transaction, and returns the agent id. The agent persists
+   the id and proceeds exactly as before.
+
+Decisions worth stating, because they are not the only defensible ones:
+
+- **The token carries the name, the agent does not choose it.** An agent that named itself
+  could claim a name a target is already assigned to. Naming is an administrative act.
+- **Single use, and short-lived** (default one hour, set at mint time). A reusable
+  enrolment token is precisely the credential that ends up in a wiki. Provisioning twenty
+  agents means minting twenty tokens through the API, which a loop does fine.
+- **Spending is atomic with agent creation.** A token that half-enrolled an agent would be
+  worse than no token.
+- **A name collision rejects and does not spend the token**, so the admin can retry with a
+  different name rather than mint again.
+- The endpoint is unauthenticated by design — the token *is* the authentication — so it is
+  the one place a plain-HTTP master leaks a usable credential. The agent already refuses a
+  non-HTTPS master without `--insecure-allow-http`; that refusal now matters more than it
+  did, and the flag's help says so.
+
+Nothing about the steady-state protocol changes: after enrolment an agent is the same
+signed-request client §9 describes, and the paste-the-public-key path (`smokeng agent add`)
+stays for anyone who would rather not have a token in flight at all.
 
 ## 10. Package layout
 

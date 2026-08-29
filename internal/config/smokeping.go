@@ -197,10 +197,11 @@ func ParseSmokePing(data []byte, alsoIPv6 bool) (File, []string, error) {
 			if !isYes(n.keys["nomasterpoll"]) {
 				agents = append([]string{"local"}, agents...)
 			}
-			joined := strings.Join(agents, " ")
-			entry.Agents = &joined
-			warn("%s: assigned to agents %q — enrol them with 'smokeng agent add' before they report",
-				n.path, joined)
+			list := AgentList(agents)
+			entry.Agents = list
+			warn("%s: assigned to agents %q — enrol them before they report, "+
+				"or the import that follows will refuse the unknown names",
+				n.path, list.String())
 		} else if isYes(n.keys["nomasterpoll"]) {
 			warn("%s: nomasterpoll is set but no slaves are listed; the target would never be measured, "+
 				"so it stays assigned to the local agent", n.path)

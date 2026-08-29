@@ -159,6 +159,20 @@ CREATE TABLE paths (
 ALTER TABLE targets ADD COLUMN trace_interval_s INTEGER;
 UPDATE targets SET trace_interval_s = 300 WHERE parent_id IS NULL;
 `,
+	// v7: enrolment tokens (DESIGN.md §9b). Only the hash is stored: a stolen
+	// database must not yield a usable credential. The name is fixed when the
+	// token is minted, so an agent cannot choose what to call itself.
+	`
+CREATE TABLE enrolment_tokens (
+  id         INTEGER PRIMARY KEY,
+  token_hash BLOB NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at    INTEGER,
+  agent_id   INTEGER REFERENCES agents(id)
+);
+`,
 }
 
 func (s *SQLite) migrate() error {

@@ -86,6 +86,8 @@ func configCmd(args []string) error {
 	fs := flag.NewFlagSet("config "+sub, flag.ExitOnError)
 	dbPath := fs.String("db", "smokeng.db", "path to the SQLite database")
 	prune := fs.Bool("prune", false, "delete targets absent from the file instead of disabling them")
+	allowUnknownAgents := fs.Bool("allow-unknown-agents", false,
+		"accept `agents` entries that name no enrolled agent, reporting them as warnings")
 	alsoIPv6 := fs.Bool("also-ipv6", false,
 		"import-smokeping: also create a v6 target for every hostname (address families are separate targets)")
 	dryRun := fs.Bool("dry-run", false, "import-smokeping: print the translated config instead of writing it")
@@ -102,15 +104,22 @@ func configCmd(args []string) error {
 	switch sub {
 	case "import":
 		if fs.NArg() != 1 {
-			return errors.New("usage: smokeng config import [--db path] [--prune] FILE")
+			return errors.New("usage: smokeng config import [--db path] [--prune] [--allow-unknown-agents] FILE")
 		}
 		data, err := os.ReadFile(fs.Arg(0))
 		if err != nil {
 			return err
 		}
-		sum, err := config.Import(ctx, st, data, *prune)
+		var opts []config.Option
+		if *allowUnknownAgents {
+			opts = append(opts, config.AllowUnknownAgents())
+		}
+		sum, err := config.Import(ctx, st, data, *prune, opts...)
 		if err != nil {
 			return err
+		}
+		for _, w := range sum.Warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 		}
 		fmt.Println(sum)
 		return nil
@@ -139,7 +148,10 @@ func configCmd(args []string) error {
 			_, err = os.Stdout.Write(out)
 			return err
 		}
-		sum, err := config.Apply(ctx, st, f, *prune)
+		// Slaves named in a SmokePing file are by definition not enrolled here
+		// yet — the importer warns about each one — so the unknown-agent check
+		// would refuse every migration it is meant to enable.
+		sum, err := config.Apply(ctx, st, f, *prune, config.AllowUnknownAgents())
 		if err != nil {
 			return err
 		}
