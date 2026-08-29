@@ -77,8 +77,17 @@ table.
 | `timeout_ms` | int | `1000` | > 0 | How long a reply may take before it counts as lost |
 | `packet_size` | int | `56` | 12–65000 | ICMP payload bytes |
 | `dscp` | int | `0` | 0–63 | DSCP marking, for measuring a specific traffic class |
-| `agents` | string | `"local"` | non-empty | Space-separated agent names that probe this target |
+| `agents` | array | `["local"]` | every name must be enrolled | Which vantage points measure this target |
 | `trace_interval_s` | int | `300` | ≥ 0 | Seconds between traceroutes; `0` disables path discovery |
+
+`agents` is checked against the agents you have actually enrolled. A name that
+matches none of them is refused, with the offending name and the list of what
+exists — because the alternative is a target measured by nobody, drawing exactly
+like one that is measured and never answers. Pass `--allow-unknown-agents` when
+the tree is deliberately applied before the agents that will serve it.
+
+A space-separated string (`agents = "local ams-01"`) is still accepted and means
+the same thing; an export always writes the array form.
 
 In burst mode the pings go out back to back, `burst_gap_ms` apart, and the distribution
 describes the network *at one moment*. In spread mode they are distributed evenly across
@@ -153,7 +162,7 @@ address_family = "v6"
 [targets."Customer"]
 title = "Customer sites"
 interval_s = 30
-agents = "local ams-01 rtd-01"
+agents = ["local", "ams-01", "rtd-01"]
 
 [targets."Customer/gemeente-gw"]
 host = "198.51.100.10"

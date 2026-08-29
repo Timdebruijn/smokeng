@@ -1,12 +1,15 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/timdebruijn/smokeng/internal/metrics"
 	"github.com/timdebruijn/smokeng/internal/probe"
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // ProbeStats exposes the prober's own health.
@@ -36,6 +39,15 @@ func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			{Labels: map[string]string{"version": s.version}, Value: 1},
 		},
 	})
+
+	// A target whose agent list names nobody is measured by nobody. The config
+	// path refuses to create one, but an agent can be removed after the fact,
+	// and the resulting silence must not be silent (DESIGN.md §4.4).
+	if n, err := s.unmeasuredTargets(r.Context()); err == nil {
+		out = append(out, metrics.Simple("smokeng_targets_unmeasured",
+			"Enabled targets whose agent list names no enrolled agent, and which "+
+				"are therefore measured by nobody.", metrics.Gauge, float64(n)))
+	}
 
 	if s.probe != nil {
 		st := s.probe.Stats()
@@ -117,4 +129,49 @@ func boolValue(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// unmeasuredTargets counts enabled targets whose resolved agent list contains
+// no agent that exists. This is the failure that used to be invisible.
+func (s *server) unmeasuredTargets(ctx context.Context) (int, error) {
+	targets, err := s.st.ListTargets(ctx)
+	if err != nil {
+		return 0, err
+	}
+	records, err := s.agents.ListAgents(ctx)
+	if err != nil {
+		return 0, err
+	}
+	known := map[string]bool{store.LocalAgentName: true}
+	for _, a := range records {
+		if a.Enabled {
+			known[a.Name] = true
+		}
+	}
+	tr, err := tree.New(targets)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	for i := range targets {
+		t := &targets[i]
+		if t.Host == nil || !t.Enabled {
+			continue
+		}
+		res, err := tr.Resolve(t.ID)
+		if err != nil {
+			return 0, err
+		}
+		measured := false
+		for _, name := range strings.Fields(res.Agents.Effective) {
+			if known[name] {
+				measured = true
+				break
+			}
+		}
+		if !measured {
+			n++
+		}
+	}
+	return n, nil
 }

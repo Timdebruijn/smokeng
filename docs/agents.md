@@ -9,47 +9,59 @@ places gives you three plots, not one blended average.
 
 ## Enrolling an agent
 
-**1. On the agent host**, generate a key. The first run creates one if the file is absent
-and prints its public half:
+The short way, from the UI. Under **Agents**, choose a name and mint an
+enrolment token. It is shown once — it is stored only as a hash, so it cannot be
+shown again — together with the command to run on the agent host:
+
+```bash
+smokeng agent run --master https://smokeng.example.org --token smk_...
+```
+
+The agent generates its keypair if it has none, enrols itself, and records the
+id it was given next to its key. A unit file may keep carrying `--token`: the
+recorded id wins, so a restart does not try to spend a token that is already
+spent.
+
+Tokens are single use and short lived — one hour by default, 24 hours at most. A
+reusable enrolment token is precisely the credential that ends up in a wiki.
+Provisioning twenty agents means minting twenty tokens, which a loop does fine.
+The token carries the name, so an agent cannot decide what to call itself:
+naming is an administrative act, and an agent that named itself could claim a
+name your targets are already assigned to.
+
+The token is the only credential on that request, which is why the agent refuses
+a plain-HTTP master unless you pass `--insecure-allow-http`. That refusal is not
+a preference about transports.
+
+### Without a token
+
+If you would rather not have a token in flight at all, the key can be carried by
+hand. On the agent host, run it once with no token to print the public key:
 
 ```bash
 smokeng agent run --master https://smokeng.example.org --agent-id 0
 ```
 
-It will print the public key and exit, because agent id `0` is not enrolled yet. The
-private key is written to `probe.key` (mode 0600) unless you pass `--key`.
-
-**2. On the master**, enrol that public key under a name:
+Then, on the master:
 
 ```bash
-smokeng agent add --db smokeng.db --name ams-01 --pubkey <base64 from step 1>
+smokeng agent add --db smokeng.db --name ams-01 --pubkey <base64 from above>
 ```
 
-This prints the agent id.
-
-**3. Back on the agent**, run it for real with that id:
-
-```bash
-smokeng agent run \
-  --master https://smokeng.example.org \
-  --agent-id 3 \
-  --key /etc/smokeng/probe.key \
-  --db /var/lib/smokeng/agent.db
-```
-
-The name you chose in step 2 is what you use in a target's `agents` setting.
+and rerun the agent with the id that prints.
 
 ## Assigning targets
 
-`agents` is an inheritable setting holding a space-separated list of agent names. The
-default is `local`, which means the master's own prober.
+`agents` is an inheritable setting listing the vantage points that measure a node and its
+subtree. The default is `["local"]`, the master's own prober. Every name must belong to an
+enrolled agent; one that does not is refused rather than quietly measured by nobody.
 
 ```toml
 [targets."Customer"]
-agents = "local ams-01 rtd-01"      # everything below is probed from three places
+agents = ["local", "ams-01", "rtd-01"]   # everything below is probed from three places
 
 [targets."Customer/only-from-ams"]
-agents = "ams-01"                    # …except this one
+agents = ["ams-01"]                      # …except this one
 ```
 
 Agents poll for their assignments every 60 seconds, so a change to the tree reaches them
@@ -64,8 +76,18 @@ smokeng agent enable  --db smokeng.db 3
 smokeng agent remove  --db smokeng.db 3
 ```
 
+All of this is also in the UI under **Agents**, which is the easier place to do it: it
+shows when each agent last reported, and which targets it measures.
+
 A disabled agent is refused at the door: its requests fail verification, and it keeps
 buffering locally rather than losing measurements.
+
+An agent that has reported **cannot be removed** — its measurements are labelled by agent,
+and deleting it would leave a series nothing can name. Disable it instead: probing stops,
+the history stays. This is the same reason targets are disabled rather than deleted.
+
+Renaming an agent rewrites every `agents` list that referred to it, in one transaction. A
+rename that left them behind would turn each of those targets into one measured by nobody.
 
 ## How the protocol works
 

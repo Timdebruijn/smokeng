@@ -89,6 +89,7 @@ reducing it to summary statistics, which is the thing smokeng refuses to do.
 | --- | --- | --- | --- |
 | `smokeng_build_info` | gauge | `version` | Always 1; the label carries the version |
 | `smokeng_targets_active` | gauge | | Targets this instance is probing |
+| `smokeng_targets_unmeasured` | gauge | | Enabled targets whose agent list names no enrolled agent — **measured by nobody** |
 | `smokeng_measurements_written_total` | counter | | Measurements written to the store |
 | `smokeng_measurement_write_errors_total` | counter | | Failed write batches |
 | `smokeng_measurements_dropped_total` | counter | | Finalised measurements discarded — **data loss** |
@@ -101,7 +102,7 @@ reducing it to summary statistics, which is the thing smokeng refuses to do.
 | `smokeng_agent_last_seen_seconds` | gauge | `agent`, `id` | Unix time of the agent's last submission; absent if never |
 | `smokeng_alerts_firing` | gauge | | Alert rules currently firing |
 
-Three of these are worth an alert of their own:
+Four of these are worth an alert of their own:
 
 - `smokeng_measurements_dropped_total` increasing means smokeng is throwing away
   measurements it took. Nothing else should be able to cause a gap in the data.
@@ -109,6 +110,9 @@ Three of these are worth an alert of their own:
   smokeng's rather than the network's. Those intervals are flagged in the UI too.
 - `time() - smokeng_agent_last_seen_seconds` exceeding a few minutes means an agent is
   gone, and the absence of its graph is not the absence of a problem.
+- `smokeng_targets_unmeasured` above zero means a target is assigned only to agents that
+  do not exist — usually because one was removed after the assignment was written. Its
+  graph is empty and looks exactly like a target that is measured and never answers.
 
 Scraping needs `--metrics-public`, since a scraper cannot present a session cookie.
 
