@@ -66,7 +66,9 @@ smokeng config import --db smokeng.db targets.toml
 
 The import is declarative and idempotent: run it as often as you like. Targets that are
 in the database but absent from the file are *disabled*, not deleted, unless you pass
-`--prune`.
+`--prune`. That flag exists only on the command line: importing the same file from the
+web UI (**Targets → Import TOML**) goes through `PUT /api/v1/config`, which never
+prunes — absence always disables there.
 
 ## 4. Run it
 

@@ -2,6 +2,7 @@ package alert
 
 import (
 	"context"
+	"fmt"
 	stdlog "log"
 	"sync"
 	"time"
@@ -15,6 +16,10 @@ type Store interface {
 	ListAlertStates(ctx context.Context) ([]State, error)
 	SaveAlertStates(ctx context.Context, states []State) error
 	ListTargets(ctx context.Context) ([]tree.Target, error)
+	// AgentNames names every enrolled agent by id, local (0) included, so a
+	// notification can say which agent an alert came from instead of
+	// assuming it was always the local one.
+	AgentNames(ctx context.Context) (map[int64]string, error)
 }
 
 // EventLog records transitions. It is optional so a store that cannot keep
@@ -43,10 +48,11 @@ type Manager struct {
 	st       Store
 	notifier Notifier
 
-	mu       sync.Mutex
-	byTarget map[int64]applicable
-	states   map[stateKey]*State
-	rules    map[int64]*Rule
+	mu         sync.Mutex
+	byTarget   map[int64]applicable
+	states     map[stateKey]*State
+	rules      map[int64]*Rule
+	agentNames map[int64]string
 }
 
 // NewManager evaluates rules and, when notifier is non-nil, delivers the
@@ -54,11 +60,12 @@ type Manager struct {
 // and the transition log are worth having on their own.
 func NewManager(st Store, notifier Notifier) *Manager {
 	return &Manager{
-		st:       st,
-		notifier: notifier,
-		byTarget: map[int64]applicable{},
-		states:   map[stateKey]*State{},
-		rules:    map[int64]*Rule{},
+		st:         st,
+		notifier:   notifier,
+		byTarget:   map[int64]applicable{},
+		states:     map[stateKey]*State{},
+		rules:      map[int64]*Rule{},
+		agentNames: map[int64]string{},
 	}
 }
 
@@ -81,6 +88,10 @@ func (m *Manager) Reload(ctx context.Context) error {
 		return err
 	}
 	states, err := m.st.ListAlertStates(ctx)
+	if err != nil {
+		return err
+	}
+	agentNames, err := m.st.AgentNames(ctx)
 	if err != nil {
 		return err
 	}
@@ -149,7 +160,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 			kept[key] = live
 		}
 	}
-	m.byTarget, m.rules, m.states = resolved, byID, kept
+	m.byTarget, m.rules, m.states, m.agentNames = resolved, byID, kept, agentNames
 	m.mu.Unlock()
 	return nil
 }
@@ -246,10 +257,17 @@ func (m *Manager) Firing() []Alert {
 
 // alertLocked builds a notification; the caller holds m.mu.
 func (m *Manager) alertLocked(r *Rule, st *State, app applicable, firing bool) Alert {
+	agentName := m.agentNames[st.AgentID]
+	if agentName == "" {
+		// Reload runs periodically, so a just-enrolled or just-removed agent
+		// can be briefly missing from the cache. Naming it by id, rather than
+		// silently mislabeling it "local", keeps the notification honest.
+		agentName = fmt.Sprintf("agent %d", st.AgentID)
+	}
 	a := Alert{
 		Rule: r, TargetID: st.TargetID, AgentID: st.AgentID,
 		TargetPath: app.path, TargetHost: app.host,
-		AgentName: "local", Firing: firing, Value: st.Value,
+		AgentName: agentName, Firing: firing, Value: st.Value,
 	}
 	if st.Since != 0 {
 		a.Since = time.Unix(st.Since, 0)

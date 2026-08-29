@@ -79,7 +79,7 @@ type Options struct {
 // New builds the HTTP handler: API routes plus the embedded frontend.
 // authenticator may be nil, in which case every request is treated as an
 // admin — permitted only on loopback, which serve enforces.
-// /metrics (Prometheus self-observability, §7.1) is still to come.
+// /metrics (Prometheus self-observability, §7.1) is registered below.
 func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	authenticator := opts.Auth
 	s := &server{

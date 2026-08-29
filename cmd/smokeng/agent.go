@@ -43,9 +43,10 @@ func agentCmd(args []string) error {
 	}
 }
 
-// agentAdd enrols an agent on the master. Enrolment is manual by design:
-// there is no bootstrap-token flow, because each agent is added once and the
-// token machinery would be more to get wrong than it saves.
+// agentAdd enrols an agent on the master by pasting in its public key. This
+// is the manual path, for anyone who would rather not have a token in
+// flight at all; `smokeng agent run --token` (see agentRun) is the shorter
+// route for provisioning more than a couple of agents.
 func agentAdd(args []string) error {
 	fs := flag.NewFlagSet("agent add", flag.ExitOnError)
 	dbPath := fs.String("db", "smokeng.db", "path to the SQLite database")

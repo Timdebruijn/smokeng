@@ -293,10 +293,14 @@ one click that writes the whole list.
 
 ### 5.1 Sockets
 
-- One ICMP datagram socket per address family (`SOCK_DGRAM` + `IPPROTO_ICMP` /
-  `IPPROTO_ICMPV6`). Unprivileged via `net.ipv4.ping_group_range` (documented in README).
+- One ICMP datagram socket per **(address family, DSCP)** pair (`SOCK_DGRAM` +
+  `IPPROTO_ICMP` / `IPPROTO_ICMPV6`), not one per family: a DSCP marking is set with
+  `setsockopt` on the whole socket, so two targets that want different traffic classes
+  cannot share one. Unprivileged via `net.ipv4.ping_group_range` (documented in README).
   In datagram mode the kernel owns the echo ID; demux is by sequence number, with a
-  random per-ping token in the payload as a validity check.
+  random per-ping token in the payload as a validity check. DSCP is six bits and there
+  are two families, so the set is bounded at 128 sockets regardless of how the tree is
+  edited; sockets are opened lazily and never closed.
 - Fallback: raw socket with a clear error message explaining the sysctl, and flags bit 2
   set on all measurements (§3.4).
 - Sequence allocation: single 16-bit counter per socket, pending-map `seq → (target, tx
@@ -413,11 +417,12 @@ The server decodes sample blobs and serves real Arrow — the varint encoding is
 detail that never crosses the API boundary:
 
 ```
-ts        Timestamp(second, UTC)
-sent      UInt16
-received  UInt16
-flags     UInt8
-samples   List<UInt32>        -- RTTs in µs, sorted ascending
+ts          Timestamp(second, UTC)
+sent        UInt16
+received    UInt16
+flags       UInt8
+samples     List<UInt32>        -- RTTs in µs, sorted ascending
+icmp_error  UInt16, nullable    -- type<<8|code; null when nothing was refused (§3.4)
 ```
 
 Content type `application/vnd.apache.arrow.stream`, record batches of ~8k rows streamed
@@ -563,13 +568,14 @@ neither a constant interval nor a constant sample count within a range; pooling 
 column and count-aware alpha normalization (§8.2) already provide that. Changing a
 target's interval or ping count preserves all history by construction.
 
-Density→alpha mapping is the one aesthetic unknown; both modes ship behind a dev toggle
-and the default is chosen by eye (§13):
+Density→alpha mapping was the one aesthetic unknown; it is decided and there is no
+runtime toggle between the two options (§13):
 
 - (a) per-column max normalization — smoke equally visible everywhere, columns not
-  comparable over time;
-- (b) sample-count normalization with a fixed curve `alpha = 1 − exp(−k·density)` —
-  comparable over time, k needs tuning. Recommended default.
+  comparable over time. Not built.
+- (b) sample-count normalization with a fixed curve `alpha = 1 − exp(−k·density)`,
+  `k = 14` — comparable over time. **Shipped**, the only mode the renderer implements
+  (`web/src/render.worker.ts`).
 
 Budget check: 1600×400 px, month view ≈ 900k samples → deposit ~1M ops + blur ~6M ops,
 well under a frame in a worker. Measure before reaching for WASM; the expectation is
@@ -587,9 +593,10 @@ touches the median line's color channel. Hover shows exact sent/received via cro
   each plot draws its own overlay line + value readout. O(1) per mousemove (binary
   search into the column index), zero density re-renders.
 - **Brush-zoom** on the overlay; on commit: refetch `[from, to)` at full resolution and
-  re-render. Debounced; an in-worker cache of already-fetched ranges avoids refetching
-  on zoom-out. No LOD tiers, no server aggregation — full resolution at every zoom
-  level, by premise.
+  re-render. There is no in-worker cache of previously fetched ranges — every zoom and
+  pan issues a fresh `fetch(..., { cache: 'no-store' })`, including zooming back out to
+  a range already seen. No LOD tiers, no server aggregation — full resolution at every
+  zoom level, by premise. Simple over clever until refetching measurably hurts.
 - **Log y-axis** toggle per plot group (falls out of step 2 above).
 - Free time ranges; no fixed day/week/month presets as the *mechanism* (quick-select
   buttons may exist as UI sugar over the free range).
@@ -730,17 +737,22 @@ stays for anyone who would rather not have a token in flight at all.
 ## 10. Package layout
 
 ```
-cmd/smokeng/            main; subcommands: serve, config, agent (v0.4)
+cmd/smokeng/            main; subcommands: serve, config, agent
 internal/
   tree/                 target tree, inheritance resolution, provenance
   probe/                scheduler, ICMP engine, seq/pending tracking
   probe/timestamp/      SO_TIMESTAMPING (linux) + userspace fallback, one interface
   probe/dnscache/       TTL-respecting resolver (miekg/dns)
+  probe/trace/          TTL-limited path discovery, ICMP time-exceeded on the error queue
   store/                Store interface + SQLite implementation, migrations
   store/enc/            samples blob codec (encode/decode, versioned)
   api/                  HTTP handlers, Arrow serialization
-  config/               TOML import/export; smokeping importer (v0.2)
-  ingest/               signed ingest: canonical string, verification (v0.4)
+  auth/                 OIDC login flow, session cookies
+  alert/                rule evaluation, hysteresis, webhook notification
+  agent/                remote agent mode: pull assignments, probe, push measurements
+  metrics/              /metrics Prometheus exposition (smokeng's own health, never data)
+  config/               TOML import/export; smokeping importer
+  ingest/               signed ingest: canonical string, verification
 web/                    Vite + React app; dist/ embedded via embed
 ```
 
@@ -780,40 +792,43 @@ Non-issue in practice — Vite bundles worker code into a single classic-compati
 runtime, enforced by config, documented here so nobody "modernizes" it into a Firefox
 breakage.
 
-## 12. Roadmap and the v0.1 cut line
+## 12. Roadmap — where this stands
 
-The original two-weekend v0.1 has grown by explicit choice (config in DB from day one,
-both probe modes, full TX+RX timestamping, full interaction set). Honest estimate:
-**three to four weekends**. If it must shrink, the cut line inside v0.1 is, in order:
-shared crosshair → log axis → spread mode — each is additive and none changes the schema
-or wire format. Nothing else in v0.1 is cuttable without violating the premise.
+The original two-weekend v0.1 grew by explicit choice (config in DB from day one, both
+probe modes, full TX+RX timestamping, full interaction set), and the project has kept
+growing since. Releases through **v0.4.0** have shipped (`git tag --list`); the sections
+below describe what each cut delivered, and what has landed on top of it.
 
 - **v0.1 — core**: prober (burst + spread, full kernel timestamping with observable
   fallback), SQLite store, targets in DB + TOML import/export, Arrow API, frontend with
   density smoke, median, loss rail, stacked plots, shared crosshair, brush-zoom, log axis.
 - **v0.2 — admin**: target tree editor with provenance/override UI, target CRUD API,
-  SmokePing `Targets` importer.
-- **v0.3 — access & alerting**: OIDC (viewer/admin), webhook alerting
-  (Alertmanager-compatible payload), alert-rule inheritance decision (§4.3). Scope note:
-  rules must be edge-triggered and evaluated over a window of consecutive intervals with
-  hold-down/hysteresis — SmokePing's alert patterns and matchers are the reference bar; a
-  naive instantaneous threshold is explicitly not enough and would flap on every blip.
-  Having full distributions also allows rules on percentiles/spread, which SmokePing
-  cannot do; design then, not now.
-- **v0.4 — distributed**: `smokeng agent`, signed ingest, enrolment, per-agent series in UI.
-- **v0.5 — traceroute correlation.**
+  SmokePing `Targets` importer, referential agent assignment (§4.4), and manual agent
+  enrolment (`smokeng agent add`).
+- **v0.3 — access & alerting**: OIDC (viewer/admin), scoped authorisation — grants,
+  viewer/editor roles on a subtree, total isolation (§7.4) — and webhook alerting
+  (Alertmanager-compatible payload, edge-triggered with hysteresis per §4.3). Full
+  distributions make rules on percentiles/spread possible, which SmokePing cannot do.
+- **v0.4 — distributed, and the current UI**: `smokeng agent`, signed ingest, per-agent
+  series; one-time enrolment tokens (§9b) alongside manual enrolment; a persisted alert
+  transition log (`GET /api/v1/alert-events`) on top of the live firing state; and a
+  reworked frontend — overview and per-target detail screens, a command palette, TOML
+  import/export from the UI — replacing the original v0.1 layout.
+- **Path correlation** (§9a): TTL-limited traceroute, recorded on change and marked on
+  the time axis, has also shipped.
 
-Explicit non-goals, updated 2026-08-29: additional *latency* probe types are now planned
-(§3.2) and the narrow agent-assignment pull is allowed (§9); unchanged from the brief
-remain — no non-latency checks or status probes, no notification matrix, no user
-management, no RRD import, no config distribution beyond §9, no multi-tenancy.
+What is not built: additional latency probe types beyond ICMP (§3.2 designs the seam;
+TCP-connect is not implemented), and NIC hardware timestamping (§5.2). Unchanged from
+the original brief: no non-latency checks or status probes, no notification matrix, no
+user management, no RRD import, no config distribution beyond the narrow agent-target
+pull (§9), no multi-tenancy.
 
 ## 13. Open trade-offs
 
 | # | Decision | Options | Recommendation |
 |---|----------|---------|----------------|
 | 1 | "probe" naming | brief's probe-as-node vs probe-mode + **agent** | agent (§2) — rename is free now, breaking later |
-| 2 | Density→alpha default | per-column max vs count-normalized `1−exp(−k·d)` | count-normalized, dev toggle ships, decide by eye |
+| 2 | Density→alpha default | per-column max vs count-normalized `1−exp(−k·d)` | **decided**: count-normalized, `k = 14`, the only mode built — no runtime toggle |
 | 3 | SQLite driver | modernc.org/sqlite (pure Go) vs mattn (CGO) | modernc; benchmark escape hatch (§6) |
 | 4 | Arrow JS reader | apache-arrow (large) vs flechette (small, read-only) | **resolved**: flechette 2.5 — verified maintained (§11); we only read |
 | 5 | Sample unit | 1 µs vs 1 ns | µs — below timestamping noise; version byte keeps ns possible |

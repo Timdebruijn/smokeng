@@ -33,7 +33,7 @@ dropped in silence. You will typically see some of these:
 | `host = a b c` (overlay graphs) | Not imported. Multi-host overlays are a rendering feature; add the hosts as separate targets. |
 | `parents = …` | Not imported. smokeng has one target tree, not alternative hierarchies. |
 | `alerts = …` | Not imported. Alert rules are expressed differently — see [Alerting](alerting.md). |
-| `slaves = …` | Imported as an `agents` list, but the agents must be enrolled separately with `smokeng agent add`. See [Remote agents](agents.md). |
+| `slaves = …` | Imported as an `agents` list, but the agents must be enrolled separately first — with a one-time enrolment token or with `smokeng agent add` — or the import refuses the unknown names. See [Remote agents](agents.md). |
 | `nomasterpoll` with no slaves | Warned about — the target would never be measured. |
 
 Probe types other than ICMP are not imported: smokeng measures ICMP today. A TCP-connect

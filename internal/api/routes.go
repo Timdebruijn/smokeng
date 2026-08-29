@@ -18,8 +18,11 @@ import (
 type routeClass string
 
 const (
-	// classPublic needs no session: the health check, the login routes, and
-	// the UI shell, which holds no data of its own.
+	// classPublic needs no session: the health check and the UI shell, which
+	// holds no data of its own. The OIDC login routes (/auth/login,
+	// /auth/callback, /auth/logout) are not registered through this router at
+	// all — the Authenticator wires them onto the mux directly in New(), since
+	// they exist to establish the session this router's other classes assume.
 	classPublic routeClass = "public"
 	// classGlobalAdmin is for what a grant never confers — agents, enrolment
 	// tokens, grants themselves, /metrics, and TOML import and export, which

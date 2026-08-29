@@ -317,10 +317,6 @@ func (s *server) respondTarget(w http.ResponseWriter, r *http.Request, id int64,
 	internalError(w, fmt.Errorf("api: target %d vanished after write", id))
 }
 
-// applyPatch mutates n with the fields present in body. A key that is absent
-// leaves the field alone; a key explicitly set to null clears it. That
-// distinction is the whole point of the override UI, so the payload is
-// decoded key-by-key rather than into a struct.
 // checkAgentNames refuses an `agents` list that names an agent nobody enrolled.
 // The UI offers a picker so it cannot happen there, but the API is the API, and
 // the failure it prevents is a target measured by nobody (DESIGN.md §4.4).
@@ -356,6 +352,10 @@ func (s *server) checkAgentNames(ctx context.Context, agents *string) error {
 	return nil
 }
 
+// applyPatch mutates n with the fields present in body. A key that is absent
+// leaves the field alone; a key explicitly set to null clears it. That
+// distinction is the whole point of the override UI, so the payload is
+// decoded key-by-key rather than into a struct.
 func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 	if raw, ok := body["parent_id"]; ok {
 		if isNull(raw) {

@@ -11,7 +11,10 @@ smokeng config export --db smokeng.db > targets.toml # write the tree back out
 
 `import` is declarative and idempotent. Anything present in the file is created or
 updated; anything missing from it is **disabled**, so a mistake in the file never silently
-destroys history. Add `--prune` to delete instead of disable.
+destroys history. Add `--prune` to delete instead of disable — a command-line-only
+option. The same operation is available in the web UI under **Targets** ("Import TOML"),
+which calls `PUT /api/v1/config`; it never prunes, so from the UI absence always means
+disabled, never deleted.
 
 `export` writes only *local* values — settings a node sets itself, not the ones it
 inherits — so an export can be re-imported without flattening the tree.

@@ -8,7 +8,7 @@ actual density — no rollup, no consolidation, no single-value-per-check.
 ![Three targets in the smokeng UI: the density smoke, the pooled median line and the loss
 rail, stacked on a shared time axis](docs/images/smokeng.png)
 
-**Status: released, [v0.2.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.2.0).**
+**Status: released, [v0.4.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.4.0).**
 The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the ICMP prober (burst and spread, kernel
 timestamping with observable fallback), the SQLite store, TOML import/export of the
@@ -112,8 +112,11 @@ for_intervals = 5                  # omitted hysteresis defaults to 3, never to 
 `config export` writes the whole thing back out, round-tripping exactly, so the file is a
 complete description of the configuration rather than half of one. Import is declarative
 in both: anything absent from the file is disabled, and `config import --prune` deletes
-it instead. The summary reports targets and rules separately, because noticing "2 alert
-rules disabled" at import time is better than discovering it during an incident.
+it instead — `--prune` is a command-line-only flag. The same file can be applied from the
+web UI under **Targets → Import TOML**, which goes through `PUT /api/v1/config` and never
+prunes, so from there absence always disables. The summary reports targets and rules
+separately, because noticing "2 alert rules disabled" at import time is better than
+discovering it during an incident.
 
 Coming from SmokePing, import its `Targets` file directly:
 
@@ -203,9 +206,11 @@ smokeng serve --db smokeng.db --alert-webhook http://alertmanager:9093/api/v2/al
 
 Firing alerts are repeated once a minute, because Alertmanager expires an alert it stops
 hearing about. Grouping, silencing, escalation and notification channels are
-Alertmanager's job; smokeng does not reimplement them. Without `--alert-webhook`, rules
-are stored but never evaluated, which the UI says plainly rather than pretending to
-watch.
+Alertmanager's job; smokeng does not reimplement them. Rules are evaluated whether or
+not `--alert-webhook` is set — firing state and the transition history are live either
+way; a missing webhook only means a transition is never posted anywhere.
+`GET /api/v1/alerts` reports `enabled` (evaluated) and `delivering` (posted) separately,
+rather than conflating the two.
 
 ## Path correlation
 
@@ -235,7 +240,17 @@ series, drawn as its own plot. They are never averaged: two views of a path that
 are the finding, and averaging them destroys it.
 
 Agents push to the master, so only the master needs to be reachable and an agent works
-behind NAT with no inbound rules. Enrolment is manual, and takes one round trip:
+behind NAT with no inbound rules. The short way to enrol one is a one-time token, minted
+in the UI under **Agents** (or `POST /api/v1/agent-tokens`), single-use and short-lived:
+
+```bash
+smokeng agent run --master https://smokeng.example.org --token smk_...
+```
+
+The agent generates its keypair if it has none, enrols itself, and records the id it was
+given — a unit file may keep carrying `--token`, since the recorded id wins and a
+restart does not try to spend a token that is already spent. Without a token, the key can
+still be carried by hand, exactly as before:
 
 ```bash
 # On the agent: generates a key on first run and prints its public half.
@@ -249,8 +264,10 @@ smokeng agent run --master https://smokeng.example.org --agent-id 1 \
   --key /etc/smokeng/probe.key --db /var/lib/smokeng/agent.db
 ```
 
-`smokeng agent list`, `enable`, `disable` and `remove` manage them afterwards. Removing
-an agent keeps the measurements it submitted, as removing a target does.
+`smokeng agent list`, `enable`, `disable` and `remove` manage them afterwards. An agent
+that has already reported **cannot be removed** — its measurements are labelled by agent
+and deleting it would leave a series nothing can name — so disable it instead: probing
+stops, the history stays. See [Remote agents](docs/agents.md) for the full protocol.
 
 Every request carries an Ed25519 signature over a canonical string that binds the method,
 path, agent, timestamp, nonce and a hash of the body — so a captured signature cannot be

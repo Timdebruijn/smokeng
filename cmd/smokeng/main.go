@@ -1,5 +1,5 @@
 // Command smokeng is the single binary: master server (serve), config
-// import/export, and later the remote agent mode (DESIGN.md §2).
+// import/export, and the remote agent mode (DESIGN.md §2).
 package main
 
 import (

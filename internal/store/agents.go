@@ -45,9 +45,27 @@ func (s *SQLite) ListAgents(ctx context.Context) ([]AgentRecord, error) {
 	return out, rows.Err()
 }
 
-// AddAgent enrols an agent by name and public key. Enrolment is deliberately
-// manual: a bootstrap-token flow is more moving parts than a handful of
-// agents warrants, and each one is added once.
+// AgentNames returns every enrolled agent's name keyed by id, including the
+// built-in local agent (id 0). It exists for callers, like the alert
+// manager, that only need the name and must not import AgentRecord's package
+// to get it (internal/alert cannot import internal/store: store already
+// imports alert for the rule types it persists).
+func (s *SQLite) AgentNames(ctx context.Context) (map[int64]string, error) {
+	records, err := s.ListAgents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]string, len(records))
+	for _, a := range records {
+		out[a.ID] = a.Name
+	}
+	return out, nil
+}
+
+// AddAgent enrols an agent by name and public key directly. This is the
+// manual path used by `smokeng agent add`; the token flow
+// (RedeemEnrolmentToken, in enrol.go) inserts the agent itself, in the same
+// transaction as spending the token, rather than calling this.
 func (s *SQLite) AddAgent(ctx context.Context, name string, pub ed25519.PublicKey) (AgentRecord, error) {
 	if name == "" || name == LocalAgentName {
 		return AgentRecord{}, fmt.Errorf("store: %q is not a usable agent name", name)

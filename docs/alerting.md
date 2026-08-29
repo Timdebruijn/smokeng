@@ -92,8 +92,11 @@ Resolved alerts are sent as well, so receivers that track state stay in sync, an
 alerts are repeated once a minute because Alertmanager expires an alert it stops hearing
 about.
 
-**Without `--alert-webhook`, rules are stored but never evaluated.** The UI says so
-plainly rather than displaying a rule set that is quietly watching nothing.
+**Rules are evaluated whether or not `--alert-webhook` is set.** Firing state and the
+transition history are live either way; a missing webhook only means a transition is
+never posted anywhere. `GET /api/v1/alerts` reports `enabled` (rules are being
+evaluated) and `delivering` (transitions are being posted) as separate facts, so the UI
+never has to guess which one is true.
 
 Currently firing alerts are also visible in the UI under **Alerts**, and the count is
 exported to Prometheus as `smokeng_alerts_firing`. If you would rather alert from

@@ -5,10 +5,13 @@ smokeng has three roles and one way of scoping them.
 | Role | Where it comes from | What it permits |
 | --- | --- | --- |
 | `admin` | The identity provider, via `--oidc-admin-value` | Everything, everywhere |
-| `editor` | A grant | Read and write inside one subtree |
+| `editor` | A grant | Read and write inside one subtree — except agents, enrolment tokens, grants, `/metrics` and config import/export, which stay global admin regardless of any grant (see below) |
 | `viewer` | A grant, or `--default-role` | Read inside one subtree, or everywhere |
 
-`admin` is global and is not grantable. Everything else is a **grant**.
+`admin` is global and is not grantable. Everything else is a **grant**, and a grant's
+`editor` role only ever reaches the target tree, alert rules and their own subtree — it
+never reaches the global-admin-only routes listed under "What a grant never confers"
+below.
 
 ## Grants
 
