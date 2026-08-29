@@ -8,6 +8,7 @@ import {
   type SettingValue,
   type Target,
 } from './api'
+import { fmtLoss, fmtUs } from './format'
 
 const RANGES: { label: string; seconds: number }[] = [
   { label: '15m', seconds: 900 },
@@ -117,7 +118,7 @@ export default function Detail({
         />
         <Stat
           label="Loss"
-          value={stats ? `${stats.loss.toFixed(1)}%` : '—'}
+          value={stats ? fmtLoss(stats.loss) : '—'}
           tone={stats && stats.loss > 0 ? 'bad' : undefined}
         />
       </div>
@@ -285,8 +286,3 @@ function summarise(s: { values: Uint32Array; sent: Float64Array; received: Float
   }
 }
 
-function fmtUs(us: number): string {
-  if (us < 1000) return `${Math.round(us)}µs`
-  if (us < 1_000_000) return `${(us / 1000).toFixed(us < 10_000 ? 1 : 0)}ms`
-  return `${(us / 1_000_000).toFixed(1)}s`
-}

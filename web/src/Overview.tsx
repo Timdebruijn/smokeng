@@ -10,6 +10,7 @@ import {
   type FiringAlert,
   type Target,
 } from './api'
+import { fmtLoss, fmtUs } from './format'
 
 const WINDOW_S = 3600
 // Matches the Graphs screen's REFRESH_MS (App.tsx) — the same "live" claim
@@ -172,6 +173,8 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
         <div className="card">
           <div className="panel-head">
             <h2>Targets</h2>
+            {/* Said once, here, rather than implied differently per column. */}
+            <span className="hint small">every figure over the last hour</span>
           </div>
           {rows === null ? (
             <p className="hint panel-pad">Measuring…</p>
@@ -223,15 +226,18 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
                     <span className="mono">{noData || noReplies ? '—' : fmtUs(r.median)}</span>
                     <span className="mono dimmed">{noData || noReplies ? '—' : fmtUs(r.p95)}</span>
                     <span className={!noData && r.loss > 0 ? 'mono bad' : 'mono dimmed'}>
-                      {noData ? '—' : `${r.loss.toFixed(1)}%`}
+                      {noData ? '—' : fmtLoss(r.loss)}
                     </span>
                   </button>
                 )
               })}
+              {/* Every column on this row covers the same hour, so only the
+                  shape column needs saying what it plots — labelling one of
+                  them "1h" implied the others were something else. */}
               <p className="health-legend">
                 <span />
                 <span>target</span>
-                <span>1h median</span>
+                <span>median over time</span>
                 <span>median</span>
                 <span>p95</span>
                 <span>loss</span>
@@ -405,8 +411,3 @@ function rel(ts: number): string {
   return `${Math.round(h / 24)}d ago`
 }
 
-function fmtUs(us: number): string {
-  if (us < 1000) return `${Math.round(us)}µs`
-  if (us < 1_000_000) return `${(us / 1000).toFixed(us < 10_000 ? 1 : 0)}ms`
-  return `${(us / 1_000_000).toFixed(1)}s`
-}
