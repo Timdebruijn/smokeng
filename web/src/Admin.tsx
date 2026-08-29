@@ -5,24 +5,48 @@ import {
   fetchTargets,
   updateTarget,
   type SettingKey,
+  type AgentInfo,
+  fetchAgents,
   type SettingValue,
   type Target,
 } from './api'
 
-const SETTINGS: { key: SettingKey; label: string; unit?: string; kind: 'number' | 'text' }[] = [
-  { key: 'interval_s', label: 'Interval', unit: 's', kind: 'number' },
-  { key: 'pings_per_interval', label: 'Pings per interval', kind: 'number' },
-  { key: 'probe_mode', label: 'Probe mode', kind: 'text' },
-  { key: 'burst_gap_ms', label: 'Burst gap', unit: 'ms', kind: 'number' },
-  { key: 'timeout_ms', label: 'Timeout', unit: 'ms', kind: 'number' },
-  { key: 'packet_size', label: 'Packet size', unit: 'bytes', kind: 'number' },
-  { key: 'dscp', label: 'DSCP', kind: 'number' },
-  { key: 'agents', label: 'Agents', kind: 'text' },
-  { key: 'trace_interval_s', label: 'Path discovery', unit: 's (0 = off)', kind: 'number' },
+interface SettingDef {
+  key: SettingKey
+  label: string
+  unit?: string
+  kind: 'number' | 'text' | 'choice' | 'agents'
+  min?: number
+  max?: number
+  choices?: { value: string; label: string }[]
+}
+
+// The bounds and choices here are the ones the server enforces. Stating them
+// twice is deliberate: a value the server will refuse should be refused while
+// the operator is still looking at the field, not after a round trip.
+const SETTINGS: SettingDef[] = [
+  { key: 'interval_s', label: 'Interval', unit: 's', kind: 'number', min: 1 },
+  { key: 'pings_per_interval', label: 'Pings per interval', kind: 'number', min: 1 },
+  {
+    key: 'probe_mode',
+    label: 'Probe mode',
+    kind: 'choice',
+    choices: [
+      { value: 'burst', label: 'burst — back to back, one moment in time' },
+      { value: 'spread', label: 'spread — evenly across the interval' },
+    ],
+  },
+  { key: 'burst_gap_ms', label: 'Burst gap', unit: 'ms', kind: 'number', min: 0 },
+  { key: 'timeout_ms', label: 'Timeout', unit: 'ms', kind: 'number', min: 1 },
+  { key: 'packet_size', label: 'Packet size', unit: 'bytes', kind: 'number', min: 12, max: 65000 },
+  { key: 'dscp', label: 'DSCP', kind: 'number', min: 0, max: 63 },
+  { key: 'agents', label: 'Agents', kind: 'agents' },
+  { key: 'trace_interval_s', label: 'Path discovery', unit: 's (0 = off)', kind: 'number', min: 0 },
 ]
 
 export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
   const [targets, setTargets] = useState<Target[]>([])
+  const [agents, setAgents] = useState<AgentInfo[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -32,8 +56,9 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
 
   const reload = useCallback(async () => {
     try {
-      const list = await fetchTargets()
+      const [list, enrolled] = await Promise.all([fetchTargets(), fetchAgents()])
       setTargets(list)
+      setAgents(enrolled)
       setSelectedId((cur) => (cur !== null && list.some((t) => t.id === cur) ? cur : (list[0]?.id ?? null)))
     } catch (e) {
       setError((e as Error).message)
@@ -113,6 +138,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
           <TargetDetail
             key={selected.id}
             target={selected}
+            agents={agents}
             busy={busy}
             onPatch={(body) => run(() => updateTarget(selected.id, body))}
             onDelete={(recursive) =>
@@ -131,15 +157,45 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
   )
 }
 
+// validateSetting catches what a single field cannot see on its own. The burst
+// rule is a relationship between three settings, and the server rejects the
+// combination rather than any one of them — so without this the operator gets
+// a refusal on a field that is not the one they would need to change.
+function validateSetting(target: Target, def: SettingDef, next: number | string | null): string | null {
+  if (next === null) return null
+  if (def.kind === 'number') {
+    const v = Number(next)
+    if (!Number.isFinite(v)) return 'must be a number'
+    if (def.min !== undefined && v < def.min) return `must be at least ${def.min}`
+    if (def.max !== undefined && v > def.max) return `must be at most ${def.max}`
+  }
+  if (def.key === 'agents' && String(next).trim() === '') {
+    return 'a target measured by nobody is not a configuration; disable it instead'
+  }
+
+  const eff = (k: SettingKey) => Number(target.settings[k].effective)
+  const proposed = (k: SettingKey) => (k === def.key ? Number(next) : eff(k))
+  const mode = def.key === 'probe_mode' ? String(next) : String(target.settings.probe_mode.effective)
+  if (mode === 'burst' && ['interval_s', 'pings_per_interval', 'burst_gap_ms', 'probe_mode'].includes(def.key)) {
+    const span = proposed('pings_per_interval') * proposed('burst_gap_ms')
+    const interval = proposed('interval_s') * 1000
+    if (span >= interval) {
+      return `${proposed('pings_per_interval')} pings ${proposed('burst_gap_ms')}ms apart take ${span / 1000}s, which does not fit in a ${proposed('interval_s')}s interval`
+    }
+  }
+  return null
+}
+
 interface DetailProps {
   target: Target
+  agents: AgentInfo[]
   busy: boolean
   onPatch: (body: Parameters<typeof updateTarget>[1]) => Promise<boolean>
   onDelete: (recursive: boolean) => Promise<boolean>
   onAddChild: (body: { name: string; host?: string; address_family?: string }) => Promise<boolean>
 }
 
-function TargetDetail({ target, busy, onPatch, onDelete, onAddChild }: DetailProps) {
+function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: DetailProps) {
   const isRoot = target.parent_id === null
   const [adding, setAdding] = useState(false)
 
@@ -224,7 +280,9 @@ function TargetDetail({ target, busy, onPatch, onDelete, onAddChild }: DetailPro
               key={s.key}
               def={s}
               value={target.settings[s.key] as SettingValue<number | string>}
+              agents={agents}
               busy={busy}
+              validate={(v) => validateSetting(target, s, v)}
               onSet={(v) => onPatch({ settings: { [s.key]: v } })}
             />
           ))}
@@ -265,38 +323,79 @@ function TargetDetail({ target, busy, onPatch, onDelete, onAddChild }: DetailPro
 function SettingRow({
   def,
   value,
+  agents,
   busy,
+  validate,
   onSet,
 }: {
-  def: (typeof SETTINGS)[number]
+  def: SettingDef
   value: SettingValue<number | string>
+  agents: AgentInfo[]
   busy: boolean
+  validate: (v: number | string | null) => string | null
   onSet: (v: number | string | null) => Promise<boolean>
 }) {
   const isLocal = value.local !== null
   const [draft, setDraft] = useState(String(value.effective))
-  useEffect(() => setDraft(String(value.effective)), [value.effective])
+  const [problem, setProblem] = useState<string | null>(null)
+  useEffect(() => {
+    setDraft(String(value.effective))
+    setProblem(null)
+  }, [value.effective])
+
+  const set = (next: number | string | null) => {
+    const bad = validate(next)
+    setProblem(bad)
+    if (bad !== null) return
+    void onSet(next)
+  }
 
   const commit = () => {
     const next = def.kind === 'number' ? Number(draft) : draft
-    if (def.kind === 'number' && Number.isNaN(next)) return
     if (next === value.local) return
-    void onSet(next)
+    set(next)
   }
 
   return (
     <tr>
       <th>{def.label}</th>
       <td>
-        <input
-          value={draft}
-          disabled={busy || !isLocal}
-          size={10}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-        />
-        {def.unit && <span className="unit">{def.unit}</span>}
+        {def.kind === 'agents' ? (
+          <AgentPicker
+            selected={String(value.effective)}
+            agents={agents}
+            disabled={busy || !isLocal}
+            onChange={set}
+          />
+        ) : def.kind === 'choice' ? (
+          <select
+            value={String(value.effective)}
+            disabled={busy || !isLocal}
+            onChange={(e) => set(e.target.value)}
+          >
+            {def.choices?.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <>
+            <input
+              value={draft}
+              disabled={busy || !isLocal}
+              size={10}
+              type={def.kind === 'number' ? 'number' : 'text'}
+              min={def.min}
+              max={def.max}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+            />
+            {def.unit && <span className="unit">{def.unit}</span>}
+          </>
+        )}
+        {problem && <p className="field-error">{problem}</p>}
       </td>
       <td className="provenance">
         {value.source === 'local' ? (
@@ -319,6 +418,59 @@ function SettingRow({
         )}
       </td>
     </tr>
+  )
+}
+
+// AgentPicker replaces what used to be a free-text field. A name typed here
+// that matched no enrolled agent meant the target was measured by nobody, with
+// no error anywhere — an empty graph indistinguishable from one that is
+// measured and never answers (DESIGN.md §4.4). Offering the enrolled names
+// makes that unspellable.
+//
+// It is also why inheritance stays replace-not-accumulate: overriding
+// pre-fills with the inherited set, so "everything from local, and this
+// subtree also from ams-01" is one checkbox rather than a second inheritance
+// mechanism to reason about.
+function AgentPicker({
+  selected,
+  agents,
+  disabled,
+  onChange,
+}: {
+  selected: string
+  agents: AgentInfo[]
+  disabled: boolean
+  onChange: (v: string) => void
+}) {
+  const chosen = selected.trim().split(/\s+/).filter(Boolean)
+  const known = ['local', ...agents.filter((a) => !a.is_local).map((a) => a.name)]
+  // A name assigned before the agent was removed would otherwise vanish from
+  // the list silently, and unchecking is not what happened to it.
+  const orphaned = chosen.filter((n) => !known.includes(n))
+
+  const toggle = (name: string, on: boolean) => {
+    const next = on ? [...chosen, name] : chosen.filter((n) => n !== name)
+    onChange(next.join(' '))
+  }
+
+  return (
+    <div className="agent-picker">
+      {[...known, ...orphaned].map((name) => (
+        <label key={name} className="agent-option">
+          <input
+            type="checkbox"
+            checked={chosen.includes(name)}
+            disabled={disabled}
+            onChange={(e) => toggle(name, e.target.checked)}
+          />
+          <span>
+            {name}
+            {name === 'local' && <span className="unit">the master itself</span>}
+            {orphaned.includes(name) && <span className="unit">not enrolled</span>}
+          </span>
+        </label>
+      ))}
+    </div>
   )
 }
 

@@ -419,3 +419,71 @@ a.button {
   color: var(--accent);
   text-decoration: none;
 }
+
+.alerts input {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+}
+
+/* Agents: the minted token is shown once, so this box is deliberately louder
+   than the rest of the page — accent border, not just another bordered card. */
+.token-reveal {
+  margin: 0.75rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  max-width: 44rem;
+}
+
+.token-reveal h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+}
+
+.token-reveal .command {
+  margin: 0.5rem 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  overflow-x: auto;
+}
+
+.token-reveal .command code {
+  white-space: pre;
+  font-size: 0.8rem;
+}
+
+/* The agent assignment field. A free-text box here used to let a typo mean
+   "measured by nobody", so the enrolled names are offered instead. */
+.agent-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.agent-option {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.agent-option input {
+  margin: 0;
+}
+
+/* A value the server would refuse, refused while it is still on screen. */
+.field-error {
+  margin: 0.25rem 0 0;
+  font-size: 0.78rem;
+  color: #c0392b;
+  white-space: normal;
+  max-width: 22rem;
+}

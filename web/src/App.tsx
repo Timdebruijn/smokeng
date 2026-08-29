@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Admin from './Admin'
+import Agents from './Agents'
 import Alerts from './Alerts'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
@@ -12,7 +13,7 @@ const RANGES: { label: string; seconds: number }[] = [
 ]
 const REFRESH_MS = 10_000
 
-type View = 'graphs' | 'targets' | 'alerts'
+type View = 'graphs' | 'targets' | 'alerts' | 'agents'
 
 export default function App() {
   const [view, setView] = useState<View>('graphs')
@@ -34,7 +35,7 @@ export default function App() {
       <header>
         <h1>smokeng</h1>
         <nav className="controls">
-          {(['graphs', 'targets', 'alerts'] as View[]).map((v) => (
+          {(['graphs', 'targets', 'alerts', 'agents'] as View[]).map((v) => (
             <button key={v} className={view === v ? 'active' : ''} onClick={() => setView(v)}>
               {v[0].toUpperCase() + v.slice(1)}
             </button>
@@ -62,8 +63,10 @@ export default function App() {
         <Graphs />
       ) : view === 'targets' ? (
         <Admin readOnly={!isAdmin} />
-      ) : (
+      ) : view === 'alerts' ? (
         <Alerts isAdmin={isAdmin} />
+      ) : (
+        <Agents readOnly={!isAdmin} />
       )}
     </main>
   )

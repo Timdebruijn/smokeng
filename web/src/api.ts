@@ -233,6 +233,51 @@ export async function fetchAgents(): Promise<AgentInfo[]> {
   return ((await r.json()) as { agents: AgentInfo[] }).agents ?? []
 }
 
+/** The local prober (id 0) refuses both fields — the UI should not offer them for it. */
+export function updateAgent(id: number, body: { name?: string; enabled?: boolean }): Promise<unknown> {
+  return mutate(`/api/v1/agents/${id}`, 'PATCH', body)
+}
+
+/** Refused, with an explanatory error, if the agent has ever reported a measurement. */
+export function deleteAgent(id: number): Promise<unknown> {
+  return mutate(`/api/v1/agents/${id}`, 'DELETE')
+}
+
+export interface AgentToken {
+  id: number
+  name: string
+  created_at: number
+  expires_at: number
+  used: boolean
+  expired: boolean
+  used_at?: number
+  agent_id?: number
+}
+
+export async function fetchAgentTokens(): Promise<AgentToken[]> {
+  const r = await fetch('/api/v1/agent-tokens', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`agent tokens: HTTP ${r.status}`)
+  return ((await r.json()) as { tokens: AgentToken[] }).tokens ?? []
+}
+
+/** The plaintext `token` is returned only in this response — it is never shown again. */
+export interface NewAgentToken {
+  id: number
+  name: string
+  token: string
+  created_at: number
+  expires_at: number
+}
+
+export function createAgentToken(name: string, ttlS?: number): Promise<NewAgentToken> {
+  return mutate('/api/v1/agent-tokens', 'POST', ttlS ? { name, ttl_s: ttlS } : { name }) as Promise<NewAgentToken>
+}
+
+/** Only an unspent token can be revoked. */
+export function deleteAgentToken(id: number): Promise<unknown> {
+  return mutate(`/api/v1/agent-tokens/${id}`, 'DELETE')
+}
+
 export async function fetchSeries(
   targetId: number,
   agentId: number,
