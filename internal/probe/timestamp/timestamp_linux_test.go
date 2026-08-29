@@ -70,14 +70,19 @@ func TestKernelTimestampingRoundTrip(t *testing.T) {
 		}
 
 		// TX timestamp: the kernel queues it on the error queue, so poll.
+		// The queue also carries ICMP errors, so take only the stamps.
 		var tx []TXStamp
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
-			stamps, err := ReadErrQueue(fd)
+			entries, err := ReadErrQueue(fd)
 			if err != nil {
 				t.Fatalf("ReadErrQueue: %v", err)
 			}
-			tx = append(tx, stamps...)
+			for _, e := range entries {
+				if e.TXStamp != nil {
+					tx = append(tx, *e.TXStamp)
+				}
+			}
 			if len(tx) > 0 {
 				break
 			}

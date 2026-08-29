@@ -21,9 +21,18 @@ test:
 	go test ./...
 
 # What CI runs, and what is worth running before a commit.
+#
+# The cross-platform vet is not redundant with the build: `go build` skips
+# _test.go files, so a Linux-only test can stop compiling and neither the
+# host vet nor a cross-compile will notice. That is exactly how a broken
+# timestamp test reached CI once.
 check:
 	gofmt -l cmd internal web/embed.go
 	go vet ./...
+	@for a in amd64 arm64 386 arm; do \
+		echo "vet linux/$$a"; \
+		GOOS=linux GOARCH=$$a go vet ./... || exit 1; \
+	done
 	go test ./...
 	cd web && npm run typecheck
 
