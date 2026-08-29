@@ -737,7 +737,7 @@ stays for anyone who would rather not have a token in flight at all.
 ## 10. Package layout
 
 ```
-cmd/smokeng/            main; subcommands: serve, config, agent
+cmd/smokeng/            main; subcommands: serve, config, agent, version
 internal/
   tree/                 target tree, inheritance resolution, provenance
   probe/                scheduler, ICMP engine, seq/pending tracking
