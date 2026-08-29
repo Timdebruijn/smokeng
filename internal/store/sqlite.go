@@ -173,6 +173,19 @@ CREATE TABLE enrolment_tokens (
   agent_id   INTEGER REFERENCES agents(id)
 );
 `,
+	// v8: scoped authorisation (DESIGN.md §7.4). A grant is (OIDC group, node,
+	// role) and applies to that node and its whole subtree, the way every other
+	// setting on this tree inherits. Keyed on group, never on a person: one
+	// person is a group of one in the provider.
+	`
+CREATE TABLE grants (
+  id         INTEGER PRIMARY KEY,
+  group_name TEXT NOT NULL,
+  target_id  INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+  role       TEXT NOT NULL CHECK (role IN ('viewer','editor')),
+  UNIQUE (group_name, target_id)
+);
+`,
 }
 
 func (s *SQLite) migrate() error {

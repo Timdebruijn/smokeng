@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -8,8 +9,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/auth"
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // fakeAuth stands in for the OIDC flow: the flow itself is the provider's to
@@ -29,13 +32,44 @@ func (f *fakeAuth) Routes(*http.ServeMux) {}
 
 func authedServer(t *testing.T, sess *auth.Session) http.Handler {
 	t.Helper()
+	st := seededStore(t)
+	return New(st, Options{Auth: &fakeAuth{session: sess}}, fstest.MapFS{})
+}
+
+// seededStore has a target and a rule to act on. A refusal only proves
+// anything against a row that exists: against a missing one, "not found" and
+// "not allowed" are indistinguishable, and the test would still pass with the
+// authorisation removed.
+func seededStore(t *testing.T) *store.SQLite {
+	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "auth.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return New(st, Options{Auth: &fakeAuth{session: sess}}, fstest.MapFS{})
+	ctx := context.Background()
+	root := int64(1)
+	n := tree.Target{
+		ParentID: &root, Name: "t", Enabled: true,
+		Host: ptr("1.1.1.1"), AddressFamily: ptr("v4"),
+	}
+	if err := st.UpsertTarget(ctx, &n); err != nil {
+		t.Fatal(err)
+	}
+	rule := alert.Rule{
+		TargetID: n.ID, Name: "loss", Metric: alert.MetricLoss, Op: alert.OpGreater,
+		Threshold: 20, For: 3, ClearFor: 3, Enabled: true,
+	}
+	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	if rule.ID != 1 || n.ID != 2 {
+		t.Fatalf("fixture ids moved: target %d, rule %d", n.ID, rule.ID)
+	}
+	return st
 }
+
+func ptr[T any](v T) *T { return &v }
 
 // Every route that changes state must require an admin, and every route that
 // reads must require at least a viewer. Checking the whole table rather than
@@ -48,47 +82,58 @@ func TestRolesAreEnforcedOnEveryRoute(t *testing.T) {
 		{"GET", "/api/v1/alert-rules"},
 		{"GET", "/api/v1/alerts"},
 	}
-	writes := []struct{ method, path string }{
-		{"POST", "/api/v1/targets"},
-		{"PATCH", "/api/v1/targets/1"},
-		{"DELETE", "/api/v1/targets/1"},
-		{"POST", "/api/v1/alert-rules"},
-		{"PATCH", "/api/v1/alert-rules/1"},
-		{"DELETE", "/api/v1/alert-rules/1"},
+	// Bodies are valid on purpose: a create that fails validation never
+	// reaches the authorisation check, so an empty body would prove nothing.
+	writes := []struct{ method, path, body string }{
+		{"POST", "/api/v1/targets", `{"parent_id":1,"name":"new"}`},
+		{"PATCH", "/api/v1/targets/2", `{"title":"x"}`},
+		{"DELETE", "/api/v1/targets/2", "{}"},
+		{"POST", "/api/v1/alert-rules",
+			`{"target_id":2,"name":"extra","metric":"loss","op":">","threshold":10}`},
+		{"PATCH", "/api/v1/alert-rules/1", `{"threshold":40}`},
+		{"DELETE", "/api/v1/alert-rules/1", "{}"},
 	}
 
 	viewer := &auth.Session{Subject: "v", Role: auth.RoleViewer, Expires: 1 << 40}
 	admin := &auth.Session{Subject: "a", Role: auth.RoleAdmin, Expires: 1 << 40}
 
-	call := func(h http.Handler, method, path string) int {
-		req := httptest.NewRequest(method, path, strings.NewReader("{}"))
+	call := func(h http.Handler, method, path, body string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec.Code
 	}
 
 	anon := authedServer(t, nil)
-	for _, r := range append(append([]struct{ method, path string }{}, reads...), writes...) {
-		if code := call(anon, r.method, r.path); code != http.StatusUnauthorized {
+	for _, r := range reads {
+		if code := call(anon, r.method, r.path, "{}"); code != http.StatusUnauthorized {
+			t.Errorf("anonymous %s %s = %d, want 401", r.method, r.path, code)
+		}
+	}
+	for _, r := range writes {
+		if code := call(anon, r.method, r.path, r.body); code != http.StatusUnauthorized {
 			t.Errorf("anonymous %s %s = %d, want 401", r.method, r.path, code)
 		}
 	}
 
 	viewerSrv := authedServer(t, viewer)
 	for _, r := range reads {
-		if code := call(viewerSrv, r.method, r.path); code == http.StatusUnauthorized || code == http.StatusForbidden {
+		if code := call(viewerSrv, r.method, r.path, "{}"); code == http.StatusUnauthorized || code == http.StatusForbidden {
 			t.Errorf("viewer %s %s = %d, want to be allowed to read", r.method, r.path, code)
 		}
 	}
 	for _, r := range writes {
-		if code := call(viewerSrv, r.method, r.path); code != http.StatusForbidden {
-			t.Errorf("viewer %s %s = %d, want 403", r.method, r.path, code)
+		// 403 for something they can see, 404 for something they cannot —
+		// what matters is that the write did not happen.
+		code := call(viewerSrv, r.method, r.path, r.body)
+		if code != http.StatusForbidden && code != http.StatusNotFound {
+			t.Errorf("viewer %s %s = %d, want the write refused", r.method, r.path, code)
 		}
 	}
 
 	adminSrv := authedServer(t, admin)
 	for _, r := range writes {
-		if code := call(adminSrv, r.method, r.path); code == http.StatusUnauthorized || code == http.StatusForbidden {
+		if code := call(adminSrv, r.method, r.path, r.body); code == http.StatusUnauthorized || code == http.StatusForbidden {
 			t.Errorf("admin %s %s = %d, want to be allowed to write", r.method, r.path, code)
 		}
 	}

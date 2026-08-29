@@ -175,6 +175,10 @@ func serve(args []string) error {
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	insecure := fs.Bool("i-know-this-is-unauthenticated", false,
 		"allow listening on a non-loopback address without authentication (DESIGN.md §7.1)")
+	defaultRole := fs.String("default-role", "viewer",
+		"what an authenticated user holding no grant may do: `viewer` or none. "+
+			"It is a setting rather than a consequence, so adding the first grant "+
+			"does not silently lock out everyone who could already read")
 	metricsPublic := fs.Bool("metrics-public", false,
 		"serve /metrics without a session so Prometheus can scrape it")
 	webhook := fs.String("alert-webhook", "",
@@ -202,6 +206,12 @@ func serve(args []string) error {
 		return err
 	}
 	defer st.Close()
+
+	switch auth.Role(*defaultRole) {
+	case auth.RoleViewer, auth.RoleNone:
+	default:
+		return fmt.Errorf("--default-role must be viewer or none, got %q", *defaultRole)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -262,6 +272,7 @@ func serve(args []string) error {
 		Handler: api.New(st, api.Options{
 			Alerts: alertViewOrNil(alerts), Auth: authOrNil(authenticator),
 			Probe: eng, Version: version, MetricsPublic: *metricsPublic,
+			DefaultRole: auth.Role(*defaultRole),
 		}, dist),
 	}
 

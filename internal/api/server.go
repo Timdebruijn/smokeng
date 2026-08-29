@@ -37,15 +37,21 @@ type Store interface {
 }
 
 type server struct {
-	st       Store
-	alerts   AlertView
-	auth     Authenticator
-	agents   AgentStore
-	enrol    EnrolStore
-	verifier *ingest.Verifier
-	probe    ProbeStats
-	ingest   IngestStats
-	version  string
+	st     Store
+	alerts AlertView
+	auth   Authenticator
+	agents AgentStore
+	enrol  EnrolStore
+	grants GrantStore
+	routes *router
+	// defaultRole is what an authenticated caller with no grant gets. It is a
+	// setting rather than a consequence, so that adding the first grant does
+	// not silently lock out everyone who could already read (DESIGN.md §7.4).
+	defaultRole auth.Role
+	verifier    *ingest.Verifier
+	probe       ProbeStats
+	ingest      IngestStats
+	version     string
 }
 
 // Options are the parts of the server that are optional or supplied later.
@@ -59,6 +65,10 @@ type Options struct {
 	// authentication is enabled, so Prometheus can scrape it. Off by default:
 	// an endpoint that bypasses login should be asked for, not assumed.
 	MetricsPublic bool
+	// DefaultRole is what an authenticated caller holding no grant gets.
+	// Empty means viewer, which is what smokeng did before grants existed.
+	// Set it to "none" once grants describe who may see what.
+	DefaultRole auth.Role
 }
 
 // New builds the HTTP handler: API routes plus the embedded frontend.
@@ -76,6 +86,13 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	// every implementation of Store to grow seven methods it may not want.
 	if es, ok := st.(EnrolStore); ok {
 		s.enrol = es
+	}
+	if gs, ok := st.(GrantStore); ok {
+		s.grants = gs
+	}
+	s.defaultRole = opts.DefaultRole
+	if s.defaultRole == "" {
+		s.defaultRole = auth.RoleViewer
 	}
 	if s.version == "" {
 		s.version = "unknown"
@@ -97,56 +114,61 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 		return ingest.Agent{}, false
 	}}
 	s.ingest = s.verifier
-	viewer := func(h http.HandlerFunc) http.HandlerFunc { return s.requireRole(auth.RoleViewer, h) }
-	admin := func(h http.HandlerFunc) http.HandlerFunc { return s.requireRole(auth.RoleAdmin, h) }
+	rt := newRouter(s)
+	mux := rt.mux
 
-	mux := http.NewServeMux()
 	// Unauthenticated: a health check that needs a login is not a health
 	// check, and the UI shell holds no data of its own.
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	rt.handle(classPublic, "GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok\n"))
 	})
-	mux.HandleFunc("GET /api/v1/me", s.handleMe)
+	rt.handle(classPublic, "GET /api/v1/me", s.handleMe)
 	if authenticator != nil {
 		authenticator.Routes(mux)
 	}
-	// /metrics carries no measurement data, but it does name agents and count
-	// targets, so it stays behind the session unless explicitly opened for a
-	// scraper.
+	// /metrics counts and names things across the whole installation, so a
+	// grant never reaches it: global admin, or explicitly opened for a scraper
+	// that cannot present a session cookie.
 	if opts.MetricsPublic {
-		mux.HandleFunc("GET /metrics", s.handleMetrics)
+		rt.handle(classMetricsPublic, "GET /metrics", s.handleMetrics)
 	} else {
-		mux.HandleFunc("GET /metrics", viewer(s.handleMetrics))
+		rt.handle(classGlobalAdmin, "GET /metrics", s.handleMetrics)
 	}
 
-	mux.HandleFunc("GET /api/v1/targets", viewer(s.handleTargets))
-	mux.HandleFunc("POST /api/v1/targets", admin(s.handleCreateTarget))
-	mux.HandleFunc("PATCH /api/v1/targets/{id}", admin(s.handleUpdateTarget))
-	mux.HandleFunc("DELETE /api/v1/targets/{id}", admin(s.handleDeleteTarget))
-	mux.HandleFunc("GET /api/v1/measurements", viewer(s.handleMeasurements))
-	mux.HandleFunc("GET /api/v1/alert-rules", viewer(s.handleAlertRules))
-	mux.HandleFunc("POST /api/v1/alert-rules", admin(s.handleCreateAlertRule))
-	mux.HandleFunc("PATCH /api/v1/alert-rules/{id}", admin(s.handleUpdateAlertRule))
-	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", admin(s.handleDeleteAlertRule))
-	mux.HandleFunc("GET /api/v1/alerts", viewer(s.handleFiringAlerts))
-	mux.HandleFunc("GET /api/v1/agents", viewer(s.handleAgents))
+	rt.handle(classScopedRead, "GET /api/v1/targets", s.handleTargets)
+	rt.handle(classScopedWrite, "POST /api/v1/targets", s.handleCreateTarget)
+	rt.handle(classScopedWrite, "PATCH /api/v1/targets/{id}", s.handleUpdateTarget)
+	rt.handle(classScopedWrite, "DELETE /api/v1/targets/{id}", s.handleDeleteTarget)
+	rt.handle(classScopedRead, "GET /api/v1/measurements", s.handleMeasurements)
+	rt.handle(classScopedRead, "GET /api/v1/alert-rules", s.handleAlertRules)
+	rt.handle(classScopedWrite, "POST /api/v1/alert-rules", s.handleCreateAlertRule)
+	rt.handle(classScopedWrite, "PATCH /api/v1/alert-rules/{id}", s.handleUpdateAlertRule)
+	rt.handle(classScopedWrite, "DELETE /api/v1/alert-rules/{id}", s.handleDeleteAlertRule)
+	rt.handle(classScopedRead, "GET /api/v1/alerts", s.handleFiringAlerts)
+	rt.handle(classScopedRead, "GET /api/v1/agents", s.handleAgents)
+	rt.handle(classScopedRead, "GET /api/v1/paths", s.handlePaths)
 	if s.enrol != nil {
-		mux.HandleFunc("PATCH /api/v1/agents/{id}", admin(s.handleUpdateAgent))
-		mux.HandleFunc("DELETE /api/v1/agents/{id}", admin(s.handleDeleteAgent))
-		mux.HandleFunc("GET /api/v1/agent-tokens", admin(s.handleListEnrolTokens))
-		mux.HandleFunc("POST /api/v1/agent-tokens", admin(s.handleMintEnrolToken))
-		mux.HandleFunc("DELETE /api/v1/agent-tokens/{id}", admin(s.handleRevokeEnrolToken))
+		rt.handle(classGlobalAdmin, "PATCH /api/v1/agents/{id}", s.handleUpdateAgent)
+		rt.handle(classGlobalAdmin, "DELETE /api/v1/agents/{id}", s.handleDeleteAgent)
+		rt.handle(classGlobalAdmin, "GET /api/v1/agent-tokens", s.handleListEnrolTokens)
+		rt.handle(classGlobalAdmin, "POST /api/v1/agent-tokens", s.handleMintEnrolToken)
+		rt.handle(classGlobalAdmin, "DELETE /api/v1/agent-tokens/{id}", s.handleRevokeEnrolToken)
 		// Enrolment carries its own credential, so like the signed agent
 		// endpoints it sits outside the session middleware.
-		mux.HandleFunc("POST /api/v1/agent/enrol", s.handleEnrol)
+		rt.handle(classAgentSigned, "POST /api/v1/agent/enrol", s.handleEnrol)
 	}
-	mux.HandleFunc("GET /api/v1/paths", viewer(s.handlePaths))
+	if s.grants != nil {
+		rt.handle(classGlobalAdmin, "GET /api/v1/grants", s.handleGrants)
+		rt.handle(classGlobalAdmin, "POST /api/v1/grants", s.handleUpsertGrant)
+		rt.handle(classGlobalAdmin, "DELETE /api/v1/grants/{id}", s.handleDeleteGrant)
+	}
 	// Signed agent endpoints (§9). These carry their own authentication, so
 	// they are deliberately outside the session middleware.
-	mux.HandleFunc("POST /api/v1/ingest", s.handleIngest)
-	mux.HandleFunc("GET /api/v1/agent/targets", s.handleAgentTargets)
+	rt.handle(classAgentSigned, "POST /api/v1/ingest", s.handleIngest)
+	rt.handle(classAgentSigned, "GET /api/v1/agent/targets", s.handleAgentTargets)
+	s.routes = rt
 	mux.Handle("/", http.FileServerFS(webFS))
-	return mux
+	return &handler{Handler: mux, srv: s}
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

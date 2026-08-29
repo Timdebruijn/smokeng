@@ -156,6 +156,7 @@ func (a *Authenticator) handleCallback(w http.ResponseWriter, r *http.Request) {
 		Email:   claims.Email,
 		Name:    claims.Name,
 		Role:    a.roleFor(idToken),
+		Groups:  a.groupsFor(idToken),
 		Expires: time.Now().Add(sessionTTL).Unix(),
 	}
 	value, err := a.signer.encode(sess)
@@ -179,6 +180,34 @@ func (a *Authenticator) roleFor(idToken *oidc.IDToken) Role {
 		return RoleViewer
 	}
 	return roleFromClaims(all, a.cfg.AdminClaim, a.cfg.AdminValue)
+}
+
+// groupsFor reads the same claim the admin check uses. The claim that says
+// which groups someone is in is the claim that grants are keyed on; asking an
+// operator to configure a second one for the same fact would be a way to get
+// them out of step.
+func (a *Authenticator) groupsFor(idToken *oidc.IDToken) []string {
+	var all map[string]any
+	if err := idToken.Claims(&all); err != nil {
+		return nil
+	}
+	return groupsFromClaims(all, a.cfg.AdminClaim)
+}
+
+func groupsFromClaims(claims map[string]any, claimName string) []string {
+	switch v := claims[claimName].(type) {
+	case string:
+		return strings.FieldsFunc(v, func(r rune) bool { return r == ' ' || r == ',' })
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // roleFromClaims decides the role. Anything not recognised as an admin is a

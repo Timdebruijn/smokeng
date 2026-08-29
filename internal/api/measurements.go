@@ -52,6 +52,9 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.requireVisible(w, r, targetID) {
+		return
+	}
 	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, from, to)
 	if err != nil {
 		internalError(w, err)

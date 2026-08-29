@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +13,8 @@ func TestSessionRoundTrip(t *testing.T) {
 	s := testSigner()
 	want := Session{
 		Subject: "user-1", Email: "tim@example.org", Name: "Tim",
-		Role: RoleAdmin, Expires: time.Now().Add(time.Hour).Unix(),
+		Role: RoleAdmin, Groups: []string{"ops", "gemeente-x"},
+		Expires: time.Now().Add(time.Hour).Unix(),
 	}
 	token, err := s.encode(want)
 	if err != nil {
@@ -22,7 +24,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("decode = %+v, want %+v", got, want)
 	}
 }

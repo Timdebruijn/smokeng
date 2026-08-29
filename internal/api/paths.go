@@ -32,6 +32,9 @@ func (s *server) handlePaths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.requireVisible(w, r, targetID) {
+		return
+	}
 	changes, err := s.st.PathChanges(r.Context(), targetID, agentID, from, to)
 	if err != nil {
 		internalError(w, err)

@@ -18,19 +18,16 @@ import (
 // {local, effective, source} object (DESIGN.md §4.2) — never a flat value, so
 // the UI can say "20 pings, inherited from Production" and offer an override.
 func (s *server) handleTargets(w http.ResponseWriter, r *http.Request) {
-	targets, err := s.st.ListTargets(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	tr, err := tree.New(targets)
-	if err != nil {
-		internalError(w, err)
+	sc, targets, ok := s.withScope(w, r)
+	if !ok {
 		return
 	}
 	out := make([]map[string]any, 0, len(targets))
 	for i := range targets {
-		body, err := targetJSON(tr, &targets[i])
+		if !sc.Visible(targets[i].ID) {
+			continue
+		}
+		body, err := targetJSON(sc, &targets[i])
 		if err != nil {
 			internalError(w, err)
 			return
@@ -40,18 +37,27 @@ func (s *server) handleTargets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"targets": out})
 }
 
-func targetJSON(tr *tree.Tree, n *tree.Target) (map[string]any, error) {
-	res, err := tr.Resolve(n.ID)
+func targetJSON(sc *Scope, n *tree.Target) (map[string]any, error) {
+	res, err := sc.tr.Resolve(n.ID)
 	if err != nil {
 		return nil, err
 	}
-	path, err := tr.Path(n.ID)
+	// Rendered relative to the caller's scope root, so a scoped caller sees
+	// their subtree as though it were the whole installation.
+	path, err := sc.PathIn(n.ID)
 	if err != nil {
 		return nil, err
+	}
+	// A parent the caller cannot see must not be named, or the tree they are
+	// shown would hang off an id they can learn nothing else about — and that
+	// id is itself a fact about what exists.
+	parent := n.ParentID
+	if parent != nil && !sc.Visible(*parent) {
+		parent = nil
 	}
 	return map[string]any{
 		"id":             n.ID,
-		"parent_id":      n.ParentID,
+		"parent_id":      parent,
 		"name":           n.Name,
 		"path":           path,
 		"host":           n.Host,
@@ -63,24 +69,33 @@ func targetJSON(tr *tree.Tree, n *tree.Target) (map[string]any, error) {
 		"sort_order":     n.SortOrder,
 		"is_group":       n.Host == nil,
 		"settings": map[string]any{
-			"interval_s":         settingJSON(n.ID, res.IntervalS),
-			"pings_per_interval": settingJSON(n.ID, res.PingsPerInterval),
-			"probe_mode":         settingJSON(n.ID, res.ProbeMode),
-			"burst_gap_ms":       settingJSON(n.ID, res.BurstGapMS),
-			"timeout_ms":         settingJSON(n.ID, res.TimeoutMS),
-			"packet_size":        settingJSON(n.ID, res.PacketSize),
-			"dscp":               settingJSON(n.ID, res.DSCP),
-			"agents":             settingJSON(n.ID, res.Agents),
-			"trace_interval_s":   settingJSON(n.ID, res.TraceIntervalS),
+			"interval_s":         settingJSON(sc, n.ID, res.IntervalS),
+			"pings_per_interval": settingJSON(sc, n.ID, res.PingsPerInterval),
+			"probe_mode":         settingJSON(sc, n.ID, res.ProbeMode),
+			"burst_gap_ms":       settingJSON(sc, n.ID, res.BurstGapMS),
+			"timeout_ms":         settingJSON(sc, n.ID, res.TimeoutMS),
+			"packet_size":        settingJSON(sc, n.ID, res.PacketSize),
+			"dscp":               settingJSON(sc, n.ID, res.DSCP),
+			"agents":             settingJSON(sc, n.ID, res.Agents),
+			"trace_interval_s":   settingJSON(sc, n.ID, res.TraceIntervalS),
 		},
 	}, nil
 }
 
 // settingJSON renders one resolved setting: source is the literal string
 // "local" when the node sets the value itself, else the providing ancestor.
-func settingJSON[T any](nodeID int64, v tree.Value[T]) map[string]any {
+//
+// When that ancestor is above the caller's scope it becomes the literal string
+// "outside" — the effective value, honestly labelled, with no path. Naming the
+// ancestor would disclose a node they may not know exists; withholding the
+// value instead would show them a number they cannot account for.
+func settingJSON[T any](sc *Scope, nodeID int64, v tree.Value[T]) map[string]any {
 	src := any("local")
-	if v.Source.ID != nodeID {
+	switch {
+	case v.Source.ID == nodeID:
+	case !sc.Visible(v.Source.ID):
+		src = "outside"
+	default:
 		src = v.Source
 	}
 	return map[string]any{"local": v.Local, "effective": v.Effective, "source": src}
@@ -103,6 +118,15 @@ func (s *server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 	n := tree.Target{Enabled: true}
 	if err := applyPatch(&n, body); err != nil {
 		badRequest(w, err)
+		return
+	}
+	// Creation is a write to the parent: the new node does not exist yet, so
+	// there is nothing else to hold a role on.
+	if n.ParentID == nil {
+		badRequestMsg(w, "a new target needs a parent")
+		return
+	}
+	if _, ok := s.requireWrite(w, r, *n.ParentID); !ok {
 		return
 	}
 	if err := s.checkAgentNames(r.Context(), n.Settings.Agents); err != nil {
@@ -142,6 +166,24 @@ func (s *server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		badRequest(w, err)
 		return
+	}
+	sc, ok := s.requireWrite(w, r, id)
+	if !ok {
+		return
+	}
+	// A move is checked at both ends. Checking only the node would make
+	// "change your parent" a way to carry a target across a boundary, in
+	// either direction.
+	if raw, moving := body["parent_id"]; moving && !isNull(raw) {
+		var dest int64
+		if err := json.Unmarshal(raw, &dest); err != nil {
+			badRequest(w, err)
+			return
+		}
+		if !sc.CanWrite(dest) {
+			sc.deny(w, dest)
+			return
+		}
 	}
 	targets, err := s.st.ListTargets(r.Context())
 	if err != nil {
@@ -197,10 +239,22 @@ func (s *server) handleDeleteTarget(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("bad target id"))
 		return
 	}
+	sc, ok := s.requireWrite(w, r, id)
+	if !ok {
+		return
+	}
 	targets, err := s.st.ListTargets(r.Context())
 	if err != nil {
 		internalError(w, err)
 		return
+	}
+	// A recursive delete is a write to every node it removes, and a scope can
+	// end part-way down a subtree.
+	for i := range targets {
+		if !sc.CanWrite(targets[i].ID) && isDescendantOf(targets, targets[i].ID, id) {
+			sc.deny(w, targets[i].ID)
+			return
+		}
 	}
 	byID := map[int64]*tree.Target{}
 	children := map[int64][]int64{}
@@ -245,19 +299,13 @@ func (s *server) handleDeleteTarget(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) respondTarget(w http.ResponseWriter, r *http.Request, id int64, status int) {
-	targets, err := s.st.ListTargets(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	tr, err := tree.New(targets)
-	if err != nil {
-		internalError(w, err)
+	sc, targets, ok := s.withScope(w, r)
+	if !ok {
 		return
 	}
 	for i := range targets {
 		if targets[i].ID == id {
-			body, err := targetJSON(tr, &targets[i])
+			body, err := targetJSON(sc, &targets[i])
 			if err != nil {
 				internalError(w, err)
 				return
@@ -453,4 +501,22 @@ func synthID(targets []tree.Target) int64 {
 		maxID = max(maxID, t.ID)
 	}
 	return maxID + 1
+}
+
+// isDescendantOf reports whether id sits under root.
+func isDescendantOf(targets []tree.Target, id, root int64) bool {
+	parent := map[int64]*int64{}
+	for i := range targets {
+		parent[targets[i].ID] = targets[i].ParentID
+	}
+	for cur := id; ; {
+		p, ok := parent[cur]
+		if !ok || p == nil {
+			return false
+		}
+		if *p == root {
+			return true
+		}
+		cur = *p
+	}
 }

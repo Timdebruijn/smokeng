@@ -14,14 +14,45 @@ import (
 	"time"
 )
 
-// Role is what a session is permitted to do. Two roles, deliberately: viewer
-// reads, admin also writes.
+// Role is what a session is permitted to do. Viewer reads and admin writes,
+// both globally; editor sits between them and exists only inside a grant,
+// where it means "write, but only in this subtree" (DESIGN.md §7.4).
 type Role string
 
 const (
+	// RoleNone is no access at all. It is spelled rather than left as the
+	// zero value because an operator has to be able to write it down.
+	RoleNone   Role = "none"
 	RoleViewer Role = "viewer"
+	RoleEditor Role = "editor"
 	RoleAdmin  Role = "admin"
 )
+
+// rank orders the ladder so two claims on the same node can be compared.
+func (r Role) rank() int {
+	switch r {
+	case RoleAdmin:
+		return 3
+	case RoleEditor:
+		return 2
+	case RoleViewer:
+		return 1
+	}
+	// RoleNone and the zero value both mean no access.
+	return 0
+}
+
+// AtLeast reports whether r permits everything want permits.
+func (r Role) AtLeast(want Role) bool { return r.rank() >= want.rank() }
+
+// Max returns the more permissive of two roles, for a user who holds a grant
+// on a node and another on one of its ancestors.
+func Max(a, b Role) Role {
+	if a.rank() >= b.rank() {
+		return a
+	}
+	return b
+}
 
 // Session is the authenticated identity carried in a cookie.
 type Session struct {
@@ -29,7 +60,11 @@ type Session struct {
 	Email   string `json:"email,omitempty"`
 	Name    string `json:"name,omitempty"`
 	Role    Role   `json:"role"`
-	Expires int64  `json:"exp"`
+	// Groups are the provider's group claim, verbatim. Grants are keyed on
+	// them, so they have to travel with the session; there is no user
+	// directory here to look them up in later.
+	Groups  []string `json:"groups,omitempty"`
+	Expires int64    `json:"exp"`
 }
 
 // Sessions are held in a signed cookie rather than server-side, so that a

@@ -184,14 +184,44 @@ func assignedTo(list, name string) bool {
 }
 
 // handleAgents lists enrolled agents for the UI.
+//
+// Agents are global infrastructure and grants never confer anything over them
+// (DESIGN.md §7.4). A scoped caller still needs their names, or "from ams-01"
+// on their own graph is unreadable — so they get the agents that measure
+// something they can see, and nothing else: no public keys, and no evidence
+// that other agents exist.
 func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
+	sc, targets, ok := s.withScope(w, r)
+	if !ok {
+		return
+	}
 	agents, err := s.agents.ListAgents(r.Context())
 	if err != nil {
 		internalError(w, err)
 		return
 	}
+	admin := sc.IsGlobalAdmin()
+	relevant := map[string]bool{}
+	if !admin {
+		for i := range targets {
+			if targets[i].Host == nil || !sc.Visible(targets[i].ID) {
+				continue
+			}
+			res, err := sc.tr.Resolve(targets[i].ID)
+			if err != nil {
+				internalError(w, err)
+				return
+			}
+			for _, name := range strings.Fields(res.Agents.Effective) {
+				relevant[name] = true
+			}
+		}
+	}
 	out := make([]map[string]any, 0, len(agents))
 	for _, a := range agents {
+		if !admin && !relevant[a.Name] {
+			continue
+		}
 		item := map[string]any{
 			"id": a.ID, "name": a.Name, "enabled": a.Enabled,
 			"is_local": a.ID == store.LocalAgentID,
@@ -199,7 +229,9 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		if a.LastSeen != 0 {
 			item["last_seen"] = a.LastSeen
 		}
-		if len(a.PubKey) > 0 {
+		// The public key is enrolment material, and belongs to whoever
+		// administers agents rather than to whoever reads their graphs.
+		if admin && len(a.PubKey) > 0 {
 			item["pubkey"] = encodeKey(a.PubKey)
 		}
 		out = append(out, item)

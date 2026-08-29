@@ -13,6 +13,10 @@ import (
 // rules apply to a given target is inheritance, resolved server-side by the
 // alert manager; the list here is the definitions themselves.
 func (s *server) handleAlertRules(w http.ResponseWriter, r *http.Request) {
+	sc, _, ok := s.withScope(w, r)
+	if !ok {
+		return
+	}
 	rules, err := s.st.ListAlertRules(r.Context())
 	if err != nil {
 		internalError(w, err)
@@ -20,6 +24,11 @@ func (s *server) handleAlertRules(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(rules))
 	for i := range rules {
+		// A rule names the node it is defined on, so an unfiltered list would
+		// enumerate the tree for anyone allowed to read any of it.
+		if !sc.Visible(rules[i].TargetID) {
+			continue
+		}
 		out = append(out, ruleJSON(&rules[i]))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rules": out})
@@ -97,6 +106,10 @@ func (s *server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
+	// A rule is defined on a tree node, so writing one is a write to that node.
+	if _, ok := s.requireWrite(w, r, rule.TargetID); !ok {
+		return
+	}
 	if err := s.st.UpsertAlertRule(r.Context(), &rule); err != nil {
 		badRequest(w, err)
 		return
@@ -125,6 +138,10 @@ func (s *server) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 		notFound(w)
 		return
 	}
+	sc, ok := s.requireWrite(w, r, rule.TargetID)
+	if !ok {
+		return
+	}
 	var p rulePayload
 	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20)).Decode(&p); err != nil {
 		badRequest(w, err)
@@ -133,6 +150,11 @@ func (s *server) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 	p.applyTo(rule)
 	if err := rule.Validate(); err != nil {
 		badRequest(w, err)
+		return
+	}
+	// Moving a rule to another node is a write to that node too.
+	if !sc.CanWrite(rule.TargetID) {
+		sc.deny(w, rule.TargetID)
 		return
 	}
 	if err := s.st.UpsertAlertRule(r.Context(), rule); err != nil {
@@ -146,6 +168,24 @@ func (s *server) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		badRequest(w, errors.New("bad rule id"))
+		return
+	}
+	rules, err := s.st.ListAlertRules(r.Context())
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	var target int64 = -1
+	for i := range rules {
+		if rules[i].ID == id {
+			target = rules[i].TargetID
+		}
+	}
+	if target < 0 {
+		notFound(w)
+		return
+	}
+	if _, ok := s.requireWrite(w, r, target); !ok {
 		return
 	}
 	if err := s.st.DeleteAlertRule(r.Context(), id); err != nil {
@@ -162,9 +202,16 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"alerts": []any{}, "enabled": false})
 		return
 	}
+	sc, _, ok := s.withScope(w, r)
+	if !ok {
+		return
+	}
 	firing := s.alerts.Firing()
 	out := make([]map[string]any, 0, len(firing))
 	for _, a := range firing {
+		if !sc.Visible(a.Rule.TargetID) {
+			continue
+		}
 		item := map[string]any{
 			"rule":      a.Rule.Name,
 			"metric":    string(a.Rule.Metric),

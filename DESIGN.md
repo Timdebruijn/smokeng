@@ -455,6 +455,68 @@ The SmokePing `Targets` importer (`+`/`++`/`+++` hierarchy → this tree) is v0.
 the admin UI. Import detail: a SmokePing host entry with a literal IP maps to that
 family; a hostname maps to a v4 target, `--also-ipv6` duplicates to v6.
 
+### 7.4 Scoped authorisation (v0.3)
+
+Until v0.3 there were two roles, `viewer` and `admin`, and both were global: a viewer read
+everything, an admin wrote everything. That is right for one team and wrong the moment a
+customer should see their own targets and nothing else.
+
+**Grants.** A grant is (OIDC group, target node, role). It applies to that node and its
+whole subtree, the same way every other setting on this tree inherits. Roles within a
+grant are `viewer` (read) and `editor` (read plus write inside the subtree). The global
+`admin` role, from the existing admin claim, is unchanged and unscoped.
+
+Grants live in smokeng's own table, are edited in the UI, and round-trip through TOML like
+the target tree. The identity provider supplies group membership and nothing else. The
+alternative — paths carried in an ID-token claim — was rejected: it puts authorisation in
+a second place, in a provider-specific format, where it cannot be read next to the tree it
+applies to, which is exactly the question one does not want to be answering during an
+incident.
+
+Grants are keyed on group, never on an individual. A single person is a group of one in
+the provider. One concept.
+
+**Isolation is total.** A scoped user's subtree is presented as though it were the whole
+installation: the granted node is their root, paths are rendered relative to it, and
+nothing above or beside it exists in any response. This is the requirement — a
+municipality must not learn that other municipalities are customers — and it is what makes
+the read side, not the write side, the hard part.
+
+Two consequences fall out of it:
+
+- **Provenance stops at the boundary.** The API reports every setting as
+  `{local, effective, source}`, and `source` names the ancestor a value came from. Above a
+  user's root that ancestor is a path they may not know. Such a value is reported with
+  `source: "outside"` — the effective value, honestly labelled, with no path. Suppressing
+  the value instead would be worse: they would see a number they cannot explain.
+- **Agents are global infrastructure, and are not scoped by grants.** A scoped user sees
+  the names and liveness of the agents that measure targets inside their scope, because
+  otherwise "from ams-01" on their own graph is unreadable. They see no public keys, no
+  enrolment tokens, and cannot enrol, rename, disable or remove anything. Those are
+  global-admin actions.
+
+**What stays global admin only:** agents and enrolment tokens, the root defaults,
+`/metrics` (it counts and names things across the whole installation), and `config
+import`/`export`, which are declarative over the entire tree and cannot express a partial
+apply.
+
+**Writes.** An editor may create, edit and delete within their subtree. Creation and moves
+check *both* endpoints: the node's current parent and its proposed parent must each be
+inside the scope, or a move becomes a way to smuggle a target across a boundary.
+
+**Enforcement is at the API boundary**, not in the store. Sessions exist there and nowhere
+else, and threading a scope through every query would spread the check across every layer
+that can read a row. The risk this accepts is the obvious one — a new endpoint that
+forgets to filter is a leak, not a bug — so it is paid for with a test that enumerates the
+routes the mux actually has and fails when one is neither explicitly scoped nor explicitly
+declared global. Forgetting becomes a red build rather than a disclosure.
+
+**Migration.** Adding the first grant must not silently lock out everyone who could
+already read. What an authenticated user with no grant gets is therefore an explicit
+setting, `--default-role`, which is `viewer` — today's behaviour — until an operator
+chooses `none`. A security change that happens as a side effect of unrelated
+configuration is a change nobody reviewed.
+
 ## 8. Frontend and rendering pipeline
 
 ### 8.1 Stack
