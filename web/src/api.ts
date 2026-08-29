@@ -69,8 +69,13 @@ export function deleteAlertRule(id: number): Promise<unknown> {
   return mutate(`/api/v1/alert-rules/${id}`, 'DELETE')
 }
 
-/** Where an effective setting came from: this node, or the ancestor that set it. */
-export type Provenance = 'local' | { id: number; name: string; path: string }
+/**
+ * Where an effective setting came from: this node, the ancestor that set it,
+ * or — for a caller scoped to a subtree — an ancestor above their scope, whose
+ * path they may not know (DESIGN.md §7.4). The value is still reported; only
+ * the path it came from is withheld.
+ */
+export type Provenance = 'local' | 'outside' | { id: number; name: string; path: string }
 
 /**
  * One resolved setting (DESIGN.md §4.2). `local` is null when the value is

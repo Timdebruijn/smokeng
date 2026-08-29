@@ -14,6 +14,8 @@ interface Props {
   refreshKey: number
   logScale: boolean
   onZoom: (from: number, to: number) => void
+  /** Absent on the detail screen, which is already the detail. */
+  onOpenDetail?: () => void
 }
 
 /**
@@ -102,6 +104,7 @@ export default function Plot({
   refreshKey,
   logScale,
   onZoom,
+  onOpenDetail,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
@@ -394,7 +397,13 @@ export default function Plot({
     <section className="card plot">
       <div className="plot-head">
         <span className="dot" style={{ background: dotColour(quality.length) }} />
-        <span className="plot-title">{target.title ?? target.path}</span>
+        {onOpenDetail ? (
+          <button className="plot-title link-title" onClick={onOpenDetail}>
+            {target.title ?? target.path}
+          </button>
+        ) : (
+          <span className="plot-title">{target.title ?? target.path}</span>
+        )}
         <span className="host">
           {target.host} · {target.address_family}
         </span>
@@ -405,6 +414,14 @@ export default function Plot({
             {rowCount > 0 && q.count < rowCount && <> ({q.count}/{rowCount})</>}
           </span>
         ))}
+        {onOpenDetail && (
+          <>
+            <span className="spacer" />
+            <button className="pill" onClick={onOpenDetail}>
+              Detail →
+            </button>
+          </>
+        )}
       </div>
       <div
         ref={stackRef}

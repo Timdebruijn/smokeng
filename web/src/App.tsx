@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import Admin from './Admin'
 import Agents from './Agents'
 import Alerts from './Alerts'
+import Detail from './Detail'
 import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
@@ -14,11 +15,14 @@ const RANGES: { label: string; seconds: number }[] = [
 ]
 const REFRESH_MS = 10_000
 
-type View = 'graphs' | 'targets' | 'alerts' | 'agents' | 'access'
+type View = 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 
 export default function App() {
   const [view, setView] = useState<View>('graphs')
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  // Which target the detail screen is showing. Detail is reached from a plot,
+  // never from the tab bar, so it is not one of the tabs.
+  const [detailId, setDetailId] = useState<number | null>(null)
   const [me, setMe] = useState<Me | null>(null)
 
   useEffect(() => {
@@ -50,8 +54,19 @@ export default function App() {
         onToggleUser={() => setUserMenuOpen((v) => !v)}
       />
       <main>
-      {view === 'graphs' ? (
-        <Graphs />
+      {view === 'detail' && detailId !== null ? (
+        <DetailRoute
+          targetId={detailId}
+          onBack={() => setView('graphs')}
+          onEdit={() => setView('targets')}
+        />
+      ) : view === 'graphs' ? (
+        <Graphs
+          onOpenDetail={(id) => {
+            setDetailId(id)
+            setView('detail')
+          }}
+        />
       ) : view === 'targets' ? (
         <Admin readOnly={!isAdmin} />
       ) : view === 'alerts' ? (
@@ -153,7 +168,7 @@ function AppHeader({
   )
 }
 
-function Graphs() {
+function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
   const [targets, setTargets] = useState<Target[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -306,6 +321,7 @@ function Graphs() {
             refreshKey={refreshKey}
             logScale={logScale}
             onZoom={onZoom}
+            onOpenDetail={() => onOpenDetail(s.target.id)}
           />
         ))}
       </div>
@@ -372,6 +388,28 @@ function TargetSidebar({
       </button>
     </aside>
   )
+}
+
+// The detail screen needs the tree and the agent list the same way Graphs
+// does; loading them here keeps it reachable by id alone.
+function DetailRoute({
+  targetId,
+  onBack,
+  onEdit,
+}: {
+  targetId: number
+  onBack: () => void
+  onEdit: () => void
+}) {
+  const [targets, setTargets] = useState<Target[]>([])
+  const [agents, setAgents] = useState<AgentInfo[]>([])
+  useEffect(() => {
+    void fetchTargets().then(setTargets).catch(() => setTargets([]))
+    void fetchAgents().then(setAgents).catch(() => setAgents([]))
+  }, [])
+  const target = targets.find((t) => t.id === targetId)
+  if (!target) return <p className="hint">Loading…</p>
+  return <Detail target={target} agents={agents} onBack={onBack} onEdit={onEdit} />
 }
 
 function fmtSpan(seconds: number): string {

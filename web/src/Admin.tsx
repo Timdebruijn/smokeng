@@ -400,6 +400,11 @@ function SettingRow({
       <td className="provenance">
         {value.source === 'local' ? (
           <span className="chip local">set here</span>
+        ) : value.source === 'outside' ? (
+          // The ancestor that set this is above the caller's scope, so it has
+          // no name they may be told. The value still applies, and saying so
+          // is better than showing a number with no account of itself.
+          <span className="chip">inherited from outside your scope</span>
         ) : (
           <span className="chip">
             inherited from <code>{value.source.path === '/' ? '/' : value.source.path}</code>
