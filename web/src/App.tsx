@@ -280,8 +280,12 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
   const series = shown.flatMap((t) => {
     const names = (t.settings.agents.effective || 'local').split(/\s+/).filter(Boolean)
     const resolved = names.map((n) => ({ name: n, id: byID.get(n) })).filter((a) => a.id !== undefined)
-    // Fall back to the local agent when the names cannot be resolved yet.
-    if (resolved.length === 0) return [{ target: t, agentId: 0, agentName: undefined }]
+    // No fallback to the local agent. Querying agent 0 for a target assigned
+    // to someone else attributes one vantage point's measurements to another,
+    // which is the one thing this project will not do — and it made a target
+    // nobody measures look measured. The server counts these in
+    // smokeng_targets_unmeasured; the screen should agree with it.
+    if (resolved.length === 0) return []
     return resolved.map((a) => ({
       target: t,
       agentId: a.id as number,
@@ -352,7 +356,11 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
           </p>
         )}
         {!error && leaves.length > 0 && series.length === 0 && (
-          <div className="card empty">No targets selected — check some in the target list.</div>
+          <div className="card empty">
+            {shown.length === 0
+              ? 'No targets selected — check some in the target list.'
+              : 'The selected targets are assigned to agents that are not enrolled, so nothing measures them.'}
+          </div>
         )}
         {series.map((s) => (
           <Plot

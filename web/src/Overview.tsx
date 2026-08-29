@@ -12,14 +12,23 @@ import {
 } from './api'
 
 const WINDOW_S = 3600
+// Matches the Graphs screen's REFRESH_MS (App.tsx) — the same "live" claim
+// should mean the same thing everywhere it's made.
+const REFRESH_MS = 10_000
 
 interface Row {
   target: Target
-  agentId: number
+  // null means the target's configured agent name(s) never resolved to an
+  // enrolled agent — there is nothing to query, not just nothing queried yet.
+  agentId: number | null
   agentName?: string
   median: number
   p95: number
   loss: number
+  // Totals behind `loss`, kept alongside it because loss alone can't tell a
+  // reader apart from "we have nothing" — see the row rendering below.
+  sent: number
+  received: number
   flags: number
   spark: number[]
 }
@@ -38,6 +47,18 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
   const [delivering, setDelivering] = useState(true)
   const [recent, setRecent] = useState<AlertEvent[]>([])
   const [error, setError] = useState<string | null>(null)
+
+  // Bumped on a timer to re-run the effect below. Relying on the effect's own
+  // cleanup (which React runs before the next tick's effect body) to flip
+  // `cancelled` on the previous tick is what stops a slow, stale request from
+  // landing after a faster, newer one already painted the screen — the same
+  // pattern Graphs (App.tsx) uses for the same reason.
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  useEffect(() => {
+    const id = setInterval(() => setRefreshTick((t) => t + 1), REFRESH_MS)
+    return () => clearInterval(id)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -58,21 +79,31 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
           const resolved = names
             .map((n) => ({ name: n, id: byName.get(n) }))
             .filter((a): a is { name: string; id: number } => a.id !== undefined)
-          if (resolved.length === 0) return [{ target: t, agentId: 0, agentName: undefined }]
+          // A name that never resolved to an enrolled agent is not "the local
+          // agent" — querying agent 0 here would silently show one vantage
+          // point's numbers labelled as another's. The server counts this
+          // target as smokeng_targets_unmeasured; say the same thing rather
+          // than inventing a series for it.
+          if (resolved.length === 0) {
+            return [{ target: t, agentId: null, agentName: names.join(', ') }]
+          }
           return resolved.map((a) => ({
             target: t,
-            agentId: a.id,
+            agentId: a.id as number | null,
             agentName: resolved.length > 1 ? a.name : undefined,
           }))
         })
 
         const built = await Promise.all(
           series.map(async (x) => {
+            if (x.agentId === null) {
+              return { ...x, median: 0, p95: 0, loss: 0, sent: 0, received: 0, flags: 0, spark: [] }
+            }
             try {
               const s = await fetchSeries(x.target.id, x.agentId, now - WINDOW_S, now)
               return { ...x, ...summarise(s) }
             } catch {
-              return { ...x, median: 0, p95: 0, loss: 0, flags: 0, spark: [] }
+              return { ...x, median: 0, p95: 0, loss: 0, sent: 0, received: 0, flags: 0, spark: [] }
             }
           }),
         )
@@ -97,7 +128,7 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [refreshTick])
 
   const worst = rows?.reduce((a, r) => Math.max(a, r.loss), 0) ?? 0
   const flagged = rows?.filter((r) => r.flags !== 0).length ?? 0
@@ -148,40 +179,55 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
             <p className="hint panel-pad">No targets yet.</p>
           ) : (
             <>
-              {rows.map((r) => (
-                <button
-                  key={`${r.target.id}-${r.agentId}`}
-                  className="health-row"
-                  onClick={() => onOpenDetail(r.target.id)}
-                >
-                  <span
-                    className="dot"
-                    style={{
-                      background:
-                        r.spark.length === 0
+              {rows.map((r) => {
+                // Three states, not two. `spark.length` used to stand in for
+                // "do we have anything to show", but a target with total loss
+                // has sent probes and gotten zero replies back — its spark is
+                // empty (there is no RTT to plot a shape from) even though the
+                // loss figure itself is exactly known and is the single most
+                // important thing this row can say. Read `sent`/`received`
+                // instead of the spark to tell "never measured" apart from
+                // "measured, and everything was lost".
+                const noData = r.sent === 0
+                const noReplies = !noData && r.received === 0
+                return (
+                  <button
+                    key={`${r.target.id}-${r.agentId ?? 'unresolved'}`}
+                    className="health-row"
+                    onClick={() => onOpenDetail(r.target.id)}
+                  >
+                    <span
+                      className="dot"
+                      style={{
+                        background: noData
                           ? 'var(--dim)'
                           : r.loss > 0
                             ? 'var(--bad)'
                             : r.flags !== 0
                               ? 'var(--warn)'
                               : 'var(--good)',
-                    }}
-                  />
-                  <span className="health-name">
-                    <span className="health-title">
-                      {r.target.title ?? r.target.name}
-                      {r.agentName && <span className="from-agent">from {r.agentName}</span>}
+                      }}
+                    />
+                    <span className="health-name">
+                      <span className="health-title">
+                        {r.target.title ?? r.target.name}
+                        {r.agentId === null ? (
+                          <span className="from-agent">{r.agentName} not enrolled</span>
+                        ) : (
+                          r.agentName && <span className="from-agent">from {r.agentName}</span>
+                        )}
+                      </span>
+                      <span className="health-host">{r.target.host}</span>
                     </span>
-                    <span className="health-host">{r.target.host}</span>
-                  </span>
-                  <Spark values={r.spark} />
-                  <span className="mono">{r.spark.length ? fmtUs(r.median) : '—'}</span>
-                  <span className="mono dimmed">{r.spark.length ? fmtUs(r.p95) : '—'}</span>
-                  <span className={r.loss > 0 ? 'mono bad' : 'mono dimmed'}>
-                    {r.spark.length ? `${r.loss.toFixed(1)}%` : '—'}
-                  </span>
-                </button>
-              ))}
+                    <Spark values={r.spark} />
+                    <span className="mono">{noData || noReplies ? '—' : fmtUs(r.median)}</span>
+                    <span className="mono dimmed">{noData || noReplies ? '—' : fmtUs(r.p95)}</span>
+                    <span className={!noData && r.loss > 0 ? 'mono bad' : 'mono dimmed'}>
+                      {noData ? '—' : `${r.loss.toFixed(1)}%`}
+                    </span>
+                  </button>
+                )
+              })}
               <p className="health-legend">
                 <span />
                 <span>target</span>
@@ -338,6 +384,11 @@ function summarise(s: {
     median: q(0.5),
     p95: q(0.95),
     loss: sent > 0 ? 100 * (1 - received / sent) : 0,
+    // Exposed alongside loss so the row rendering can tell "nothing sent"
+    // apart from "sent and lost" without going back to the spark, which is
+    // empty in both cases and can't make that distinction.
+    sent,
+    received,
     flags,
     spark,
   }

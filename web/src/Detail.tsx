@@ -56,7 +56,9 @@ export default function Detail({
 
   const agentNames = (target.settings.agents.effective || 'local').split(/\s+/).filter(Boolean)
   const byName = new Map(agents.map((a) => [a.name, a.id]))
-  const agentId = byName.get(agentNames[0]) ?? 0
+  // Null rather than 0: falling back to the local prober would show one
+  // vantage point's measurements under another's name.
+  const agentId = byName.get(agentNames[0]) ?? null
 
   const [from, to] = useMemo(() => {
     const now = Math.floor(Date.now() / 1000)
@@ -64,6 +66,10 @@ export default function Detail({
   }, [rangeS, refreshKey])
 
   useEffect(() => {
+    if (agentId === null) {
+      setStats(null)
+      return
+    }
     let cancelled = false
     fetchSeries(target.id, agentId, from, to)
       .then((s) => !cancelled && setStats(summarise(s)))
@@ -102,11 +108,11 @@ export default function Detail({
       </div>
 
       <div className="stat-grid">
-        <Stat label="Median" value={stats ? fmtUs(stats.median) : '—'} />
-        <Stat label="p95" value={stats ? fmtUs(stats.p95) : '—'} />
+        <Stat label="Median" value={stats?.median != null ? fmtUs(stats.median) : '—'} />
+        <Stat label="p95" value={stats?.p95 != null ? fmtUs(stats.p95) : '—'} />
         <Stat
           label="Spread (p95−p5)"
-          value={stats ? fmtUs(stats.spread) : '—'}
+          value={stats?.spread != null ? fmtUs(stats.spread) : '—'}
           title="The width of the distribution. A link whose median is unchanged but whose spread has tripled is degrading."
         />
         <Stat
@@ -133,6 +139,12 @@ export default function Detail({
             </button>
           ))}
         </div>
+        {agentId === null ? (
+          <p className="hint">
+            Assigned to <code>{agentNames.join(' ')}</code>, which is not enrolled — so nothing is
+            measuring this target.
+          </p>
+        ) : (
         <Plot
           target={target}
           agentId={agentId}
@@ -142,6 +154,7 @@ export default function Detail({
           logScale
           onZoom={() => undefined}
         />
+        )}
       </div>
 
       <div className="detail-columns">
@@ -234,9 +247,11 @@ function Stat({
 }
 
 interface Stats {
-  median: number
-  p95: number
-  spread: number
+  // null when there are no replies to measure a latency from — distinct from
+  // 0µs, which is a real (if implausible) measurement.
+  median: number | null
+  p95: number | null
+  spread: number | null
   loss: number
   dot: string
 }
@@ -244,7 +259,12 @@ interface Stats {
 /** Pooled over the whole window, from the samples themselves. */
 function summarise(s: { values: Uint32Array; sent: Float64Array; received: Float64Array }): Stats {
   const all = Array.from(s.values).sort((a, b) => a - b)
-  const q = (p: number) => (all.length ? all[Math.min(all.length - 1, Math.floor(p * all.length))] : 0)
+  // With no replies, `all` is empty and every quantile would otherwise read
+  // as 0 — not "unknown", but a specific, wrong number that looks exactly
+  // like a suspiciously fast link. Loss is still known in that case (indeed
+  // it's the whole story), so it's computed unconditionally below; the
+  // latency figures are reported as null instead of being invented.
+  const q = (p: number) => all[Math.min(all.length - 1, Math.floor(p * all.length))]
   let sent = 0
   let received = 0
   for (let i = 0; i < s.sent.length; i++) {
@@ -253,9 +273,9 @@ function summarise(s: { values: Uint32Array; sent: Float64Array; received: Float
   }
   const loss = sent > 0 ? 100 * (1 - received / sent) : 0
   return {
-    median: q(0.5),
-    p95: q(0.95),
-    spread: q(0.95) - q(0.05),
+    median: all.length ? q(0.5) : null,
+    p95: all.length ? q(0.95) : null,
+    spread: all.length ? q(0.95) - q(0.05) : null,
     loss,
     dot: loss > 0 ? 'var(--warn)' : 'var(--good)',
   }

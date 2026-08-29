@@ -44,6 +44,12 @@ self.onmessage = (ev: MessageEvent) => {
     canvas = msg.canvas as OffscreenCanvas
   } else if (msg.type === 'render' && canvas) {
     render(canvas, msg.series as SeriesMsg, msg.view as ViewMsg)
+  } else if (msg.type === 'clear' && canvas) {
+    // A failed fetch on the main thread has nothing to render, and leaving
+    // the previous render up would show old data under whatever axis labels
+    // the main thread has since moved on to. Blank the canvas rather than
+    // let a stale frame keep looking current.
+    canvas.getContext('2d')!.clearRect(0, 0, canvas.width, canvas.height)
   }
 }
 
@@ -152,13 +158,28 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
       sumSent += d.sent[i]
       sumRecv += d.received[i]
       for (let j = d.offsets[i]; j < d.offsets[i + 1]; j++) {
-        const y = (plotH - 1) * (1 - Math.min(yFrac(d.values[j]), 1))
+        const v = d.values[j]
+        // On the linear scale ymax is a clip, not the true max — it exists so
+        // one outlier can't crush the rest of the plot. `Math.min(us, ymax)`
+        // used to pin every sample above it to the same row at the axis edge,
+        // which after the blur reads as a flat, solid density there: an
+        // actual excursion becomes visually identical to a real plateau at
+        // that latency. Leave clipped samples out of the density entirely —
+        // still counted in the pooled median below, since that's a real
+        // statistic and can legitimately sit above the drawn axis. The log
+        // scale never clips (ymax there is sized from the data itself), so
+        // this only applies on linear.
+        if (!log && v > ymax) {
+          pooled.push(v)
+          continue
+        }
+        const y = (plotH - 1) * (1 - Math.min(yFrac(v), 1))
         const y0 = Math.floor(y)
         const f = y - y0
         if (y0 >= 0 && y0 < plotH) dens[y0] += 1 - f
         if (y0 + 1 >= 0 && y0 + 1 < plotH) dens[y0 + 1] += f
         total++
-        pooled.push(d.values[j])
+        pooled.push(v)
       }
     }
     if (sumSent > 0) loss[x] = 1 - sumRecv / sumSent
@@ -220,13 +241,17 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
     ctx.fillText(label, Math.min(Math.max(x, axisW + 18 * dpr), w - 18 * dpr), h - axisH + 4 * dpr)
   }
 
-  // median line, breaking at gaps
+  // median line, breaking at gaps — and, on the linear scale, wherever the
+  // median itself sits above the clip: `Math.min(yFrac(v), 1)` used to pin
+  // that segment to the axis edge too, drawing a real excursion as a flat
+  // run along the top exactly like the density above did. Treat it as a gap
+  // instead of a value at ymax.
   ctx.strokeStyle = medianColor
   ctx.lineWidth = 1.25 * dpr
   ctx.beginPath()
   let pen = false
   for (let x = 0; x < plotW; x++) {
-    if (Number.isNaN(median[x])) {
+    if (Number.isNaN(median[x]) || (!log && median[x] > ymax)) {
       pen = false
       continue
     }

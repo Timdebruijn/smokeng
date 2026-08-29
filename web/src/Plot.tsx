@@ -125,6 +125,10 @@ export default function Plot({
   rangeRef.current = { from, to }
   const [quality, setQuality] = useState<{ label: string; title: string; count: number }[]>([])
   const [rowCount, setRowCount] = useState(0)
+  // Set only when the measurements fetch itself failed — not when it
+  // succeeded with zero rows, which is a legitimate (and different) thing to
+  // show. Cleared on the next successful fetch.
+  const [fetchError, setFetchError] = useState<string | null>(null)
   // The plot's own width, observed rather than read once. Reading clientWidth
   // when the effect first runs can catch the element before layout and bake a
   // zero into the render, which draws nothing at all and never recovers.
@@ -302,6 +306,7 @@ export default function Plot({
     fetchSeries(target.id, agentId, from, to)
       .then((series) => {
         if (cancelled || !workerRef.current) return
+        setFetchError(null)
         const n = series.ts.length
         const rows: RowIndex = {
           ts: series.ts.slice(),
@@ -345,7 +350,22 @@ export default function Plot({
         )
         drawOverlay()
       })
-      .catch((e: Error) => console.error(`plot ${target.path}:`, e))
+      .catch((e: Error) => {
+        if (cancelled) return
+        console.error(`plot ${target.path}:`, e)
+        // The overlay and axis labels are drawn from `from`/`to`, which have
+        // already moved to the new range by the time this rejects — leaving
+        // the worker's last successful frame on screen would show the old
+        // range's smoke under the new range's axis, which looks current but
+        // isn't. Blank the density canvas and say the fetch failed instead of
+        // a wrong-but-plausible-looking plot.
+        rowsRef.current = null
+        setRowCount(0)
+        setQuality([])
+        setFetchError(e.message)
+        workerRef.current?.postMessage({ type: 'clear' })
+        drawOverlay()
+      })
 
     // Route changes are a separate, much smaller fetch; a failure here must
     // not stop the smoke rendering.
@@ -429,6 +449,7 @@ export default function Plot({
           </>
         )}
       </div>
+      {fetchError && <p className="error">Measurements failed to load: {fetchError}</p>}
       <div
         ref={stackRef}
         className="plot-stack"
