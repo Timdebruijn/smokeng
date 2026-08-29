@@ -13,6 +13,3 @@ web/node_modules/
 
 # OS noise
 .DS_Store
-
-# local agent/editor tooling
-.claude/
