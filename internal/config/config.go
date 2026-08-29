@@ -25,6 +25,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"smokeng/internal/alert"
 	"smokeng/internal/store"
 	"smokeng/internal/tree"
 )
@@ -41,6 +42,20 @@ type Values struct {
 	Agents           *string `toml:"agents,omitempty"`
 }
 
+// AlertRule is one alert condition in TOML form, keyed by its name within the
+// node it applies to.
+type AlertRule struct {
+	Metric    string  `toml:"metric"`
+	Op        string  `toml:"op"`
+	Threshold float64 `toml:"threshold"`
+	// Hysteresis. Zero means the default, not "fire immediately": a rule
+	// without it would flap, and a config file should not be able to ask for
+	// that by omission.
+	For      int  `toml:"for_intervals,omitempty"`
+	ClearFor int  `toml:"clear_intervals,omitempty"`
+	Disabled bool `toml:"disabled,omitempty"`
+}
+
 // Entry is one target table, keyed by its path. A table without host is a
 // group node.
 type Entry struct {
@@ -52,27 +67,52 @@ type Entry struct {
 	Disabled      bool    `toml:"disabled,omitempty"`
 	SortOrder     int     `toml:"sort_order,omitempty"`
 	Values
+	// Alerts are the rules defined on this node, keyed by name. They apply to
+	// this node and everything below it, replacing any inherited set.
+	Alerts map[string]AlertRule `toml:"alerts,omitempty"`
 }
 
 // File is the complete on-disk form.
 type File struct {
-	Defaults Values           `toml:"defaults,omitempty"`
-	Targets  map[string]Entry `toml:"targets,omitempty"`
+	Defaults Values `toml:"defaults,omitempty"`
+	// DefaultAlerts are the rules on the root, mirroring how Defaults holds
+	// the root's settings.
+	DefaultAlerts map[string]AlertRule `toml:"default_alerts,omitempty"`
+	Targets       map[string]Entry     `toml:"targets,omitempty"`
+}
+
+// Store is the persistence a sync needs: the target tree plus alert rules,
+// since a configuration that covered only half of them would be a trap for
+// anyone managing this from a repository.
+type Store interface {
+	store.Store
+	ListAlertRules(ctx context.Context) ([]alert.Rule, error)
+	UpsertAlertRule(ctx context.Context, r *alert.Rule) error
+	DeleteAlertRule(ctx context.Context, id int64) error
 }
 
 // Summary reports what an import changed.
 type Summary struct {
 	Created, Updated, Disabled, Deleted int
+	// Rule counts are reported separately: seeing "3 alert rules disabled"
+	// is the difference between noticing and discovering it during an
+	// incident.
+	RulesCreated, RulesUpdated, RulesDisabled, RulesDeleted int
 }
 
 func (s Summary) String() string {
-	return fmt.Sprintf("%d created, %d updated, %d disabled, %d deleted",
+	out := fmt.Sprintf("targets: %d created, %d updated, %d disabled, %d deleted",
 		s.Created, s.Updated, s.Disabled, s.Deleted)
+	if s.RulesCreated+s.RulesUpdated+s.RulesDisabled+s.RulesDeleted > 0 {
+		out += fmt.Sprintf("\nalert rules: %d created, %d updated, %d disabled, %d deleted",
+			s.RulesCreated, s.RulesUpdated, s.RulesDisabled, s.RulesDeleted)
+	}
+	return out
 }
 
 // Import applies a TOML file to the store as a declarative sync. The
 // resulting tree is fully validated before anything is written.
-func Import(ctx context.Context, st store.Store, data []byte, prune bool) (Summary, error) {
+func Import(ctx context.Context, st Store, data []byte, prune bool) (Summary, error) {
 	var f File
 	if err := toml.Unmarshal(data, &f); err != nil {
 		return Summary{}, fmt.Errorf("config: parse: %w", err)
@@ -83,7 +123,7 @@ func Import(ctx context.Context, st store.Store, data []byte, prune bool) (Summa
 // Apply syncs an already-parsed configuration into the store. Both the TOML
 // importer and the SmokePing importer land here, so they cannot drift apart
 // in how absence, inheritance or validation are handled.
-func Apply(ctx context.Context, st store.Store, f File, prune bool) (Summary, error) {
+func Apply(ctx context.Context, st Store, f File, prune bool) (Summary, error) {
 	var sum Summary
 	for p, e := range f.Targets {
 		if err := validatePath(p); err != nil {
@@ -91,6 +131,20 @@ func Apply(ctx context.Context, st store.Store, f File, prune bool) (Summary, er
 		}
 		if err := validateEntry(p, e); err != nil {
 			return sum, err
+		}
+	}
+	// Validate every rule before writing anything, so a typo in one does not
+	// leave the tree half-synced.
+	for name, r := range f.DefaultAlerts {
+		if _, err := toAlertRule(name, r, 0); err != nil {
+			return sum, err
+		}
+	}
+	for p, e := range f.Targets {
+		for name, r := range e.Alerts {
+			if _, err := toAlertRule(name, r, 0); err != nil {
+				return sum, fmt.Errorf("config: %q: %w", p, err)
+			}
 		}
 	}
 
@@ -274,12 +328,117 @@ func Apply(ctx context.Context, st store.Store, f File, prune bool) (Summary, er
 		}
 		sum.Deleted++
 	}
+
+	// 6. Alert rules, once every node has a real id to hang them on.
+	if err := applyRules(ctx, st, f, nodes, deleted, prune, &sum); err != nil {
+		return sum, err
+	}
 	return sum, nil
+}
+
+// applyRules syncs alert rules the same way targets are synced: rules present
+// in the file are upserted, and rules absent from it are disabled — or, with
+// prune, deleted. Absence meaning "disabled" rather than "gone" mirrors the
+// target behaviour exactly, and matters here because importing a file that
+// happens to omit alerts should be recoverable, not a silent wipe. The
+// summary reports the counts either way.
+func applyRules(ctx context.Context, st Store, f File, nodes map[string]*tree.Target,
+	deleted map[string]bool, prune bool, sum *Summary) error {
+	existing, err := st.ListAlertRules(ctx)
+	if err != nil {
+		return err
+	}
+	type ruleKey struct {
+		targetID int64
+		name     string
+	}
+	current := map[ruleKey]*alert.Rule{}
+	for i := range existing {
+		r := &existing[i]
+		current[ruleKey{r.TargetID, r.Name}] = r
+	}
+
+	// Collect what the file asks for, resolving paths to node ids.
+	wanted := map[ruleKey]AlertRule{}
+	for name, r := range f.DefaultAlerts {
+		wanted[ruleKey{nodes[""].ID, name}] = r
+	}
+	for p, e := range f.Targets {
+		node, ok := nodes[p]
+		if !ok || deleted[p] {
+			continue
+		}
+		for name, r := range e.Alerts {
+			wanted[ruleKey{node.ID, name}] = r
+		}
+	}
+
+	for key, spec := range wanted {
+		rule, err := toAlertRule(key.name, spec, key.targetID)
+		if err != nil {
+			return err
+		}
+		if prev, ok := current[key]; ok {
+			rule.ID = prev.ID
+			sum.RulesUpdated++
+		} else {
+			sum.RulesCreated++
+		}
+		if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+			return fmt.Errorf("config: alert rule %q: %w", key.name, err)
+		}
+	}
+
+	for key, rule := range current {
+		if _, ok := wanted[key]; ok {
+			continue
+		}
+		if prune {
+			if err := st.DeleteAlertRule(ctx, rule.ID); err != nil {
+				return err
+			}
+			sum.RulesDeleted++
+			continue
+		}
+		if rule.Enabled {
+			rule.Enabled = false
+			if err := st.UpsertAlertRule(ctx, rule); err != nil {
+				return err
+			}
+			sum.RulesDisabled++
+		}
+	}
+	return nil
+}
+
+// toAlertRule converts the TOML form, applying the hysteresis defaults and
+// validating with exactly the rules the API applies.
+func toAlertRule(name string, r AlertRule, targetID int64) (alert.Rule, error) {
+	out := alert.Rule{
+		TargetID:  targetID,
+		Name:      name,
+		Metric:    alert.Metric(r.Metric),
+		Op:        alert.Op(r.Op),
+		Threshold: r.Threshold,
+		For:       r.For,
+		ClearFor:  r.ClearFor,
+		Enabled:   !r.Disabled,
+	}
+	if out.For == 0 {
+		out.For = 3
+	}
+	if out.ClearFor == 0 {
+		out.ClearFor = 3
+	}
+	if err := out.Validate(); err != nil {
+		return out, fmt.Errorf("config: alert rule %q: %w", name, err)
+	}
+	return out, nil
 }
 
 // Export renders the current tree as TOML: the root's settings as [defaults],
 // every other node as a path-keyed table carrying only its local values.
-func Export(ctx context.Context, st store.Store) ([]byte, error) {
+func Export(ctx context.Context, st Store) ([]byte, error) {
 	current, err := st.ListTargets(ctx)
 	if err != nil {
 		return nil, err
@@ -288,11 +447,27 @@ func Export(ctx context.Context, st store.Store) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	rules, err := st.ListAlertRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byNode := map[int64]map[string]AlertRule{}
+	for _, r := range rules {
+		if byNode[r.TargetID] == nil {
+			byNode[r.TargetID] = map[string]AlertRule{}
+		}
+		byNode[r.TargetID][r.Name] = AlertRule{
+			Metric: string(r.Metric), Op: string(r.Op), Threshold: r.Threshold,
+			For: r.For, ClearFor: r.ClearFor, Disabled: !r.Enabled,
+		}
+	}
+
 	f := File{Targets: map[string]Entry{}}
 	for i := range current {
 		n := &current[i]
 		if n.ParentID == nil {
 			f.Defaults = valuesFrom(n.Settings)
+			f.DefaultAlerts = byNode[n.ID]
 			continue
 		}
 		p, err := tr.Path(n.ID)
@@ -308,6 +483,7 @@ func Export(ctx context.Context, st store.Store) ([]byte, error) {
 			Disabled:      !n.Enabled,
 			SortOrder:     n.SortOrder,
 			Values:        valuesFrom(n.Settings),
+			Alerts:        byNode[n.ID],
 		}
 	}
 	return toml.Marshal(f)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"smokeng/internal/alert"
 	"smokeng/internal/store"
 	"smokeng/internal/tree"
 )
@@ -196,6 +197,149 @@ func TestImportRejectsInvalid(t *testing.T) {
 		s := open(t)
 		if _, err := Import(ctx, s, []byte(body), false); err == nil {
 			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
+const withAlerts = `
+[defaults]
+interval_s = 30
+
+[default_alerts."any loss"]
+metric = "loss"
+op = ">"
+threshold = 5
+
+[targets."Production/cf-v4"]
+host = "1.1.1.1"
+address_family = "v4"
+
+[targets."Production/cf-v4".alerts."slow"]
+metric = "p95"
+op = ">"
+threshold = 100
+for_intervals = 5
+clear_intervals = 2
+`
+
+// Alert rules are configuration too. A file that carried only half of it
+// would be a trap for anyone managing this from a repository.
+func TestAlertRulesImportAndRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	sum, err := Import(ctx, s, []byte(withAlerts), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.RulesCreated != 2 {
+		t.Fatalf("created %d rules, want 2 (%+v)", sum.RulesCreated, sum)
+	}
+
+	rules, err := s.ListAlertRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]alert.Rule{}
+	for _, r := range rules {
+		byName[r.Name] = r
+	}
+	// The root rule landed on the root, so it covers everything.
+	if r := byName["any loss"]; r.TargetID != 1 || r.Metric != alert.MetricLoss || r.Threshold != 5 {
+		t.Errorf("root rule = %+v", r)
+	}
+	// Omitted hysteresis becomes the default rather than "fire immediately".
+	if r := byName["any loss"]; r.For != 3 || r.ClearFor != 3 {
+		t.Errorf("default hysteresis = for %d, clear %d; want 3 and 3", r.For, r.ClearFor)
+	}
+	if r := byName["slow"]; r.Metric != alert.MetricP95 || r.For != 5 || r.ClearFor != 2 {
+		t.Errorf("node rule = %+v", r)
+	}
+
+	// Export must carry them back out, or the round trip silently loses them.
+	exported, err := Export(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2 := open(t)
+	if _, err := Import(ctx, s2, exported, false); err != nil {
+		t.Fatalf("re-import: %v\n%s", err, exported)
+	}
+	again, err := s2.ListAlertRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 2 {
+		t.Fatalf("round trip kept %d rules, want 2:\n%s", len(again), exported)
+	}
+	for _, r := range again {
+		orig, ok := byName[r.Name]
+		if !ok {
+			t.Errorf("unexpected rule %q after round trip", r.Name)
+			continue
+		}
+		if r.Metric != orig.Metric || r.Op != orig.Op || r.Threshold != orig.Threshold ||
+			r.For != orig.For || r.ClearFor != orig.ClearFor || r.Enabled != orig.Enabled {
+			t.Errorf("rule %q changed across the round trip: %+v vs %+v", r.Name, r, orig)
+		}
+	}
+}
+
+// Absence disables rather than deletes, exactly as it does for targets, so an
+// import of a file that omits alerts is recoverable instead of destructive.
+func TestAlertRuleAbsenceDisablesAndPruneDeletes(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	if _, err := Import(ctx, s, []byte(withAlerts), false); err != nil {
+		t.Fatal(err)
+	}
+
+	onlyTargets := `
+[targets."Production/cf-v4"]
+host = "1.1.1.1"
+address_family = "v4"
+`
+	sum, err := Import(ctx, s, []byte(onlyTargets), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.RulesDisabled != 2 {
+		t.Fatalf("disabled %d rules, want 2 (%+v)", sum.RulesDisabled, sum)
+	}
+	rules, err := s.ListAlertRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("rules were deleted without --prune: %d remain", len(rules))
+	}
+	for _, r := range rules {
+		if r.Enabled {
+			t.Errorf("rule %q is still enabled after being omitted", r.Name)
+		}
+	}
+
+	sum, err = Import(ctx, s, []byte(onlyTargets), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.RulesDeleted != 2 {
+		t.Fatalf("pruned %d rules, want 2 (%+v)", sum.RulesDeleted, sum)
+	}
+	if rules, err := s.ListAlertRules(ctx); err != nil || len(rules) != 0 {
+		t.Fatalf("rules after prune = %v (err %v)", rules, err)
+	}
+}
+
+func TestAlertRuleValidationRejects(t *testing.T) {
+	ctx := context.Background()
+	for name, body := range map[string]string{
+		"unknown metric": "[default_alerts.\"x\"]\nmetric = \"jitter\"\nop = \">\"\nthreshold = 1\n",
+		"unknown op":     "[default_alerts.\"x\"]\nmetric = \"loss\"\nop = \"~\"\nthreshold = 1\n",
+		"loss over 100":  "[default_alerts.\"x\"]\nmetric = \"loss\"\nop = \">\"\nthreshold = 400\n",
+	} {
+		s := open(t)
+		if _, err := Import(ctx, s, []byte(body), false); err == nil {
+			t.Errorf("%s: expected an error", name)
 		}
 	}
 }

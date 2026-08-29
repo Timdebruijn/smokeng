@@ -46,9 +46,27 @@ host = "1.1.1.1"
 address_family = "v4"
 ```
 
-Settings cascade down the tree; an unset key means "inherit". `config export` writes the
-tree back out, round-tripping exactly, and `config import --prune` deletes targets absent
-from the file instead of merely disabling them.
+Settings cascade down the tree; an unset key means "inherit". Alert rules live in the
+same file, on the node they apply to:
+
+```toml
+[default_alerts."any loss"]        # on the root, so it covers everything
+metric = "loss"
+op = ">"
+threshold = 10
+
+[targets."Internet/cloudflare-v4".alerts."jitter"]
+metric = "spread"                  # p95 − p5, in milliseconds
+op = ">"
+threshold = 25
+for_intervals = 5                  # omitted hysteresis defaults to 3, never to 1
+```
+
+`config export` writes the whole thing back out, round-tripping exactly, so the file is a
+complete description of the configuration rather than half of one. Import is declarative
+in both: anything absent from the file is disabled, and `config import --prune` deletes
+it instead. The summary reports targets and rules separately, because noticing "2 alert
+rules disabled" at import time is better than discovering it during an incident.
 
 Coming from SmokePing, import its `Targets` file directly:
 
