@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -217,6 +218,11 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 			PacketSize:     res.PacketSize.Effective,
 			DSCP:           res.DSCP.Effective,
 			TraceIntervalS: res.TraceIntervalS.Effective,
+			ProbeType:      res.ProbeType.Effective,
+			ProbePort:      res.ProbePort.Effective,
+			DNSQuery:       res.DNSQuery.Effective,
+			DNSRRType:      res.DNSRRType.Effective,
+			HTTPPath:       res.HTTPPath.Effective,
 		}
 	}
 	return specs, nil
@@ -289,26 +295,47 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			lastAddr = a
 		}
 
-		c, err := e.connFor(spec.Family, spec.DSCP)
-		if err != nil {
-			log.Printf("probe: target %d: %v", spec.TargetID, err)
-			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
-				return
+		// Only ICMP needs a shared socket; the other types open their own
+		// connection per probe and are timed in userspace.
+		var c *conn
+		if spec.ProbeType == "" || spec.ProbeType == "icmp" {
+			c, err = e.connFor(spec.Family, spec.DSCP)
+			if err != nil {
+				log.Printf("probe: target %d: %v", spec.TargetID, err)
+				if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
+					return
+				}
+				continue
 			}
-			continue
 		}
 
 		col := newCollector(spec.Pings, &e.late)
-		dropsBefore := c.drops()
+		var dropsBefore uint64
+		if c != nil {
+			dropsBefore = c.drops()
+		}
 		aborted := false
+		var probeWG sync.WaitGroup
 		for i, at := range times {
 			if !sleepUntil(ctx, at) {
 				aborted = true
 				break
 			}
-			if err := c.send(col, i, addr, spec.PacketSize); err != nil {
-				log.Printf("probe: target %d: send: %v", spec.TargetID, err)
+			if c != nil {
+				if err := c.send(col, i, addr, spec.PacketSize); err != nil {
+					log.Printf("probe: target %d: send: %v", spec.TargetID, err)
+				}
+				continue
 			}
+			// A userspace probe blocks until it answers or times out, so it
+			// runs on its own goroutine: waiting here would push every later
+			// probe of the interval out by however long this one took, and
+			// the schedule is what the distribution means.
+			probeWG.Add(1)
+			go func(i int) {
+				defer probeWG.Done()
+				runUserspaceProbe(ctx, col, i, addr, spec)
+			}(i)
 		}
 
 		// Finalize asynchronously: the finalization wait (bucket end + timeout)
@@ -326,14 +353,21 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			// Drops are counted per socket, not per target, so any target
 			// sharing this socket during the overflow is suspect: its loss
 			// may be ours rather than the network's.
-			dropped := c.drops() != dropsBefore
+			dropped := c != nil && c.drops() != dropsBefore
 			if dropped {
 				e.overflows.Add(1)
 			}
+			// Every in-flight userspace probe has to have finished or timed
+			// out before the bucket is read, or its reply lands after the
+			// snapshot and counts as loss that never happened.
+			probeWG.Wait()
+			raw := c != nil && c.raw
 			m := col.finalize(spec, bucket, conditions{
-				rawSocket: c.raw, overflowed: dropped, truncated: !full,
+				rawSocket: raw, overflowed: dropped, truncated: !full,
 			})
-			c.forget(col)
+			if c != nil {
+				c.forget(col)
+			}
 			select {
 			case e.results <- m:
 			default:
@@ -519,5 +553,21 @@ func (e *Engine) traceOnce(ctx context.Context, spec TargetSpec) {
 	if last != "" {
 		log.Printf("probe: target %d (%s): path changed\n  was: %s\n  now: %s",
 			spec.TargetID, spec.Host, last, hops)
+	}
+}
+
+// runUserspaceProbe dispatches the probe types that are timed around a
+// userspace call rather than by the kernel. finalize flags every measurement
+// they produce as userspace on both sides, because none of them can be
+// kernel-timestamped and a band widened by a busy prober must not read as a
+// slow service.
+func runUserspaceProbe(ctx context.Context, col *collector, idx int, addr netip.Addr, spec TargetSpec) {
+	switch spec.ProbeType {
+	case "dns":
+		probeDNS(ctx, col, idx, addr, spec)
+	default:
+		// loadSpecs refuses an unknown type, so reaching this means a type was
+		// added to the tree's allowed set without a prober behind it.
+		col.markSendFailed(idx)
 	}
 }

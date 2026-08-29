@@ -36,7 +36,19 @@ type Settings struct {
 	TimeoutMS        *int
 	PacketSize       *int
 	DSCP             *int
-	Agents           *string // space-separated agent names
+	Agents           *string
+	// ProbeType is what the N probes of an interval are: icmp, dns, tcp,
+	// http, https or irtt (DESIGN.md §3.2b). probe_mode says when they go
+	// out; this says what they are.
+	ProbeType *string
+	// ProbePort is the port the probe talks to, where the type has one.
+	ProbePort *int
+	// DNSQuery and DNSRRType are what a dns probe asks for; the target's host
+	// is the server being asked.
+	DNSQuery  *string
+	DNSRRType *string
+	// HTTPPath is what an http or https probe requests.
+	HTTPPath *string // space-separated agent names
 	// TraceIntervalS is how often to discover the path; 0 disables it.
 	// Separate from IntervalS because a traceroute costs a round trip per
 	// hop, and a path changes on a scale of days rather than seconds.
@@ -69,6 +81,11 @@ type Resolved struct {
 	DSCP             Value[int]
 	Agents           Value[string]
 	TraceIntervalS   Value[int]
+	ProbeType        Value[string]
+	ProbePort        Value[int]
+	DNSQuery         Value[string]
+	DNSRRType        Value[string]
+	HTTPPath         Value[string]
 }
 
 // Validate checks one node's field-level invariants — the rules that hold
@@ -114,6 +131,26 @@ func (t *Target) Validate() error {
 	}
 	if s.DSCP != nil && (*s.DSCP < 0 || *s.DSCP > 63) {
 		return fmt.Errorf("tree: dscp must be between 0 and 63")
+	}
+	// Every type must produce a distribution of N round-trip times per
+	// interval (DESIGN.md §3.2b). Anything yielding a single number or an
+	// up/down verdict is deliberately not here.
+	if s.ProbeType != nil {
+		switch *s.ProbeType {
+		case "icmp", "dns", "tcp", "http", "https", "irtt":
+		default:
+			return fmt.Errorf("tree: probe_type must be icmp, dns, tcp, http, https or irtt, got %q", *s.ProbeType)
+		}
+	}
+	if s.ProbePort != nil && (*s.ProbePort < 1 || *s.ProbePort > 65535) {
+		return fmt.Errorf("tree: probe_port must be between 1 and 65535")
+	}
+	if s.DNSRRType != nil {
+		switch strings.ToUpper(*s.DNSRRType) {
+		case "A", "AAAA", "CNAME", "MX", "NS", "PTR", "SOA", "SRV", "TXT":
+		default:
+			return fmt.Errorf("tree: dns_rr_type %q is not a record type smokeng asks for", *s.DNSRRType)
+		}
 	}
 	if s.Agents != nil && strings.TrimSpace(*s.Agents) == "" {
 		return fmt.Errorf("tree: agents must name at least one agent, or be unset to inherit")
@@ -169,7 +206,8 @@ func New(targets []Target) (*Tree, error) {
 	s := t.root.Settings
 	if s.IntervalS == nil || s.PingsPerInterval == nil || s.ProbeMode == nil ||
 		s.BurstGapMS == nil || s.TimeoutMS == nil || s.PacketSize == nil ||
-		s.DSCP == nil || s.Agents == nil || s.TraceIntervalS == nil {
+		s.DSCP == nil || s.Agents == nil || s.TraceIntervalS == nil ||
+		s.ProbeType == nil {
 		return nil, fmt.Errorf("tree: root %d must set every inheritable default", t.root.ID)
 	}
 	for _, n := range t.nodes {
@@ -270,6 +308,11 @@ func (t *Tree) Resolve(id int64) (Resolved, error) {
 		PacketSize:       resolve(t, chain, func(s *Settings) *int { return s.PacketSize }),
 		DSCP:             resolve(t, chain, func(s *Settings) *int { return s.DSCP }),
 		Agents:           resolve(t, chain, func(s *Settings) *string { return s.Agents }),
+		ProbeType:        resolve(t, chain, func(s *Settings) *string { return s.ProbeType }),
+		ProbePort:        resolve(t, chain, func(s *Settings) *int { return s.ProbePort }),
+		DNSQuery:         resolve(t, chain, func(s *Settings) *string { return s.DNSQuery }),
+		DNSRRType:        resolve(t, chain, func(s *Settings) *string { return s.DNSRRType }),
+		HTTPPath:         resolve(t, chain, func(s *Settings) *string { return s.HTTPPath }),
 		TraceIntervalS:   resolve(t, chain, func(s *Settings) *int { return s.TraceIntervalS }),
 	}, nil
 }

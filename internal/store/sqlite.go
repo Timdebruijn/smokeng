@@ -217,6 +217,19 @@ CREATE INDEX alert_events_ts ON alert_events (ts DESC);
 	// predates a fix to the measurement path — which is not a cosmetic
 	// question when the fix was to the timestamps themselves.
 	`ALTER TABLE agents ADD COLUMN version TEXT`,
+	// v12: what a target is measured with, as opposed to when (DESIGN.md
+	// §3.2b). Inheritable like every other setting, so the columns are NULL
+	// where a node inherits. Per-type settings live beside it as columns
+	// rather than in a blob, because a value the UI shows has to be able to
+	// say which node it came from.
+	`
+ALTER TABLE targets ADD COLUMN probe_type TEXT;
+ALTER TABLE targets ADD COLUMN probe_port INTEGER;
+ALTER TABLE targets ADD COLUMN dns_query TEXT;
+ALTER TABLE targets ADD COLUMN dns_rr_type TEXT;
+ALTER TABLE targets ADD COLUMN http_path TEXT;
+UPDATE targets SET probe_type = 'icmp' WHERE parent_id IS NULL AND probe_type IS NULL;
+`,
 }
 
 func (s *SQLite) migrate() error {
@@ -310,7 +323,7 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 
 const targetCols = `id, parent_id, name, host, address_family, title, notes,
 	hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
-	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s`
+	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path`
 
 func (s *SQLite) ListTargets(ctx context.Context) ([]tree.Target, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+targetCols+" FROM targets ORDER BY id")
@@ -333,10 +346,13 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 	var t tree.Target
 	var parentID sql.NullInt64
 	var host, af, title, notes, probeMode, agents sql.NullString
+	var probeType, dnsQuery, dnsRRType, httpPath sql.NullString
 	var intervalS, pings, burstGap, timeout, packetSize, dscp, traceInterval sql.NullInt64
+	var probePort sql.NullInt64
 	err := rows.Scan(&t.ID, &parentID, &t.Name, &host, &af, &title, &notes,
 		&t.Hidden, &t.Enabled, &t.SortOrder, &intervalS, &pings, &probeMode,
-		&burstGap, &timeout, &packetSize, &dscp, &agents, &traceInterval)
+		&burstGap, &timeout, &packetSize, &dscp, &agents, &traceInterval,
+		&probeType, &probePort, &dnsQuery, &dnsRRType, &httpPath)
 	if err != nil {
 		return t, err
 	}
@@ -357,6 +373,11 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 		DSCP:             nullInt(dscp),
 		Agents:           nullStr(agents),
 		TraceIntervalS:   nullInt(traceInterval),
+		ProbeType:        nullStr(probeType),
+		ProbePort:        nullInt(probePort),
+		DNSQuery:         nullStr(dnsQuery),
+		DNSRRType:        nullStr(dnsRRType),
+		HTTPPath:         nullStr(httpPath),
 	}
 	return t, nil
 }
@@ -369,8 +390,9 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO targets (id, parent_id, name, host, address_family, title, notes,
 			hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
-			burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s,
+			probe_type, probe_port, dns_query, dns_rr_type, http_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			parent_id = excluded.parent_id, name = excluded.name,
 			host = excluded.host, address_family = excluded.address_family,
@@ -385,14 +407,22 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 			packet_size = excluded.packet_size,
 			dscp = excluded.dscp,
 			agents = excluded.agents,
-			trace_interval_s = excluded.trace_interval_s`,
+			trace_interval_s = excluded.trace_interval_s,
+			probe_type = excluded.probe_type,
+			probe_port = excluded.probe_port,
+			dns_query = excluded.dns_query,
+			dns_rr_type = excluded.dns_rr_type,
+			http_path = excluded.http_path`,
 		id, ptrOrNil(t.ParentID), t.Name, ptrOrNil(t.Host), ptrOrNil(t.AddressFamily),
 		ptrOrNil(t.Title), ptrOrNil(t.Notes), t.Hidden, t.Enabled, t.SortOrder,
 		ptrOrNil(t.Settings.IntervalS), ptrOrNil(t.Settings.PingsPerInterval),
 		ptrOrNil(t.Settings.ProbeMode), ptrOrNil(t.Settings.BurstGapMS),
 		ptrOrNil(t.Settings.TimeoutMS), ptrOrNil(t.Settings.PacketSize),
 		ptrOrNil(t.Settings.DSCP), ptrOrNil(t.Settings.Agents),
-		ptrOrNil(t.Settings.TraceIntervalS))
+		ptrOrNil(t.Settings.TraceIntervalS),
+		ptrOrNil(t.Settings.ProbeType), ptrOrNil(t.Settings.ProbePort),
+		ptrOrNil(t.Settings.DNSQuery), ptrOrNil(t.Settings.DNSRRType),
+		ptrOrNil(t.Settings.HTTPPath))
 	if err != nil {
 		return err
 	}

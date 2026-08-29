@@ -22,4 +22,10 @@ type TargetSpec struct {
 	DSCP       int
 	// TraceIntervalS is how often to discover the path; 0 disables it.
 	TraceIntervalS int
+	// ProbeType is what the N probes of an interval are (DESIGN.md §3.2b).
+	ProbeType string
+	ProbePort int
+	DNSQuery  string
+	DNSRRType string
+	HTTPPath  string
 }

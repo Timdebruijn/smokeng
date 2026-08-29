@@ -16,6 +16,7 @@ func testTargets() []Target {
 			DSCP:             ptr(0),
 			Agents:           ptr("local"),
 			TraceIntervalS:   ptr(300),
+			ProbeType:        ptr("icmp"),
 		}},
 		{ID: 2, ParentID: ptr(int64(1)), Name: "Production", Enabled: true,
 			Settings: Settings{IntervalS: ptr(30)}},

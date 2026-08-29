@@ -131,6 +131,55 @@ guardrail that replaces the ban: every probe type must produce an RTT distributi
 samples per interval. A check that yields a single scalar or an up/down status does not
 belong here, ever — that is the road to a generic uptime dashboard.
 
+### 3.2b Probe types (v0.7)
+
+`probe_mode` says *when* the N probes of an interval go out. `probe_type` says *what*
+they are. It is inheritable like every other setting, defaults to `icmp`, and a host
+measured two ways is two sibling targets — the same pattern address families already use.
+
+**The guardrail from §3.2 is the admission test, and it is not negotiable:** a probe type
+must produce a distribution of N round-trip times per interval. A check yielding one
+number, or up/down, does not belong here however useful it might be elsewhere. That is
+what keeps this a latency instrument rather than a monitoring suite.
+
+Four types, in the order they land:
+
+| Type | What it times | Why it earns its place |
+| --- | --- | --- |
+| `icmp` | Echo request to reply | The baseline, and the only one the kernel can timestamp |
+| `dns` | Query sent to answer received | A resolver going slow looks like a healthy network on ICMP |
+| `tcp` | SYN to the handshake completing | Sees firewalls, SYN drops and a port closing, which ICMP cannot |
+| `http` / `https` | Request to response headers | Service latency including TLS, for the thing users actually wait on |
+| `irtt` | One-way delay, both directions | The only type that can say *which* direction is slow |
+
+**Per-type settings** are columns, not a JSON blob, so they inherit and carry provenance
+like everything else — a value shown in the UI must be able to say where it came from.
+Shared where the meaning genuinely coincides:
+
+- `probe_port` — dns 53, tcp required, http 80, https 443, irtt 2112
+- `dns_query`, `dns_rr_type` — what to ask for; the target's host is the server
+- `http_path` — what to request; the target's host is the server
+
+A setting belonging to an inactive type is inherited and stored as usual, and simply not
+read. The UI shows only the ones the active type uses, because a form offering
+`dns_rr_type` on an ICMP target invites a change that does nothing.
+
+**Accuracy is reported, not assumed.** Only `icmp` can carry kernel timestamps: a DNS
+query or a TCP handshake is timed around a userspace call, and its RTT therefore includes
+scheduler jitter in exactly the way §5.2 describes. Those measurements carry
+`FlagUserspaceTX` and `FlagUserspaceRX` from the start. Drawing them without the flags
+would imply an accuracy the method cannot deliver, and the whole point of the flags is
+that a widened band always has an attributable cause.
+
+`irtt` is the exception in the other direction: it timestamps in the remote agent as well
+as locally, which is what lets it separate the two directions — and it needs an irtt
+server at the far end, so it is only usable towards hosts the operator runs.
+
+**Load is not symmetrical across types.** Twenty ICMP echoes a minute is nothing; twenty
+HTTPS requests a minute to someone else's service is a decision, not a default. Types
+carry their own sensible `pings_per_interval` default rather than inheriting the ICMP
+one blindly, and the documentation says plainly what each one costs the other end.
+
 ### 3.3 Sample encoding
 
 Blob layout, format version 1:

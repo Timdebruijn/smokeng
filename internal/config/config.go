@@ -18,7 +18,9 @@
 package config
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -42,6 +44,14 @@ type Values struct {
 	DSCP             *int    `toml:"dscp,omitempty"`
 	Agents           any     `toml:"agents,omitempty"`
 	TraceIntervalS   *int    `toml:"trace_interval_s,omitempty"`
+	// What the probes of an interval are, and the settings the chosen type
+	// reads (DESIGN.md §3.2b). A setting belonging to another type is stored
+	// and inherited as usual, and simply not read.
+	ProbeType *string `toml:"probe_type,omitempty"`
+	ProbePort *int    `toml:"probe_port,omitempty"`
+	DNSQuery  *string `toml:"dns_query,omitempty"`
+	DNSRRType *string `toml:"dns_rr_type,omitempty"`
+	HTTPPath  *string `toml:"http_path,omitempty"`
 }
 
 // AlertRule is one alert condition in TOML form, keyed by its name within the
@@ -141,7 +151,19 @@ func AllowUnknownAgents() Option { return func(o *options) { o.allowUnknownAgent
 
 func Import(ctx context.Context, st Store, data []byte, prune bool, opts ...Option) (Summary, error) {
 	var f File
-	if err := toml.Unmarshal(data, &f); err != nil {
+	// Strict: a key smokeng does not know is a mistake, and accepting it
+	// quietly is how "probe_type = dns" ends up in a file, changing nothing,
+	// with the operator none the wiser. Refusing costs a typo an error
+	// message instead of an afternoon.
+	dec := toml.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&f); err != nil {
+		// The strict error names no key on its own; its String() carries the
+		// offending lines, which is the whole point of refusing.
+		var strict *toml.StrictMissingError
+		if errors.As(err, &strict) {
+			return Summary{}, fmt.Errorf("config: unknown setting:\n%s", strict.String())
+		}
 		return Summary{}, fmt.Errorf("config: parse: %w", err)
 	}
 	return Apply(ctx, st, f, prune, opts...)
@@ -265,6 +287,11 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 			PacketSize:       e.PacketSize,
 			DSCP:             e.DSCP,
 			Agents:           agentStringFrom(e.Agents),
+			ProbeType:        e.ProbeType,
+			ProbePort:        e.ProbePort,
+			DNSQuery:         e.DNSQuery,
+			DNSRRType:        e.DNSRRType,
+			HTTPPath:         e.HTTPPath,
 		}
 		if existed && !reflect.DeepEqual(before, *n) {
 			sum.Updated++
@@ -588,6 +615,11 @@ func valuesFrom(s tree.Settings) Values {
 		PacketSize:       s.PacketSize,
 		DSCP:             s.DSCP,
 		Agents:           agentListFrom(s.Agents),
+		ProbeType:        s.ProbeType,
+		ProbePort:        s.ProbePort,
+		DNSQuery:         s.DNSQuery,
+		DNSRRType:        s.DNSRRType,
+		HTTPPath:         s.HTTPPath,
 		TraceIntervalS:   s.TraceIntervalS,
 	}
 }
@@ -616,6 +648,21 @@ func overlayValues(dst *tree.Settings, v Values) {
 	}
 	if v.Agents != nil {
 		dst.Agents = agentStringFrom(v.Agents)
+	}
+	if v.ProbeType != nil {
+		dst.ProbeType = v.ProbeType
+	}
+	if v.ProbePort != nil {
+		dst.ProbePort = v.ProbePort
+	}
+	if v.DNSQuery != nil {
+		dst.DNSQuery = v.DNSQuery
+	}
+	if v.DNSRRType != nil {
+		dst.DNSRRType = v.DNSRRType
+	}
+	if v.HTTPPath != nil {
+		dst.HTTPPath = v.HTTPPath
 	}
 	if v.TraceIntervalS != nil {
 		dst.TraceIntervalS = v.TraceIntervalS
@@ -648,6 +695,11 @@ func validateEntry(p string, e Entry) error {
 			PacketSize:       e.PacketSize,
 			DSCP:             e.DSCP,
 			Agents:           agentStringFrom(e.Agents),
+			ProbeType:        e.ProbeType,
+			ProbePort:        e.ProbePort,
+			DNSQuery:         e.DNSQuery,
+			DNSRRType:        e.DNSRRType,
+			HTTPPath:         e.HTTPPath,
 			TraceIntervalS:   e.TraceIntervalS,
 		},
 	}

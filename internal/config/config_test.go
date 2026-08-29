@@ -614,3 +614,72 @@ func TestGrantRejectsUnknownPathAndRole(t *testing.T) {
 		t.Error("a grant of the global admin role was accepted")
 	}
 }
+
+// A key smokeng does not know is a mistake. Accepting it quietly is how
+// `probe_type = "dns"` ends up in a file, changes nothing, and leaves the
+// operator looking at ICMP measurements wondering why the resolver looks fine.
+func TestUnknownSettingIsRefusedAndNamed(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+
+	bad := `
+[targets."a"]
+host = "1.1.1.1"
+address_family = "v4"
+dns_rrtype = "A"
+`
+	_, err := Import(ctx, s, []byte(bad), false)
+	if err == nil {
+		t.Fatal("a misspelled setting was accepted")
+	}
+	// The error has to say which key, or it is a puzzle rather than a report.
+	if !strings.Contains(err.Error(), "dns_rrtype") {
+		t.Errorf("error does not name the offending key:\n%v", err)
+	}
+}
+
+// The probe type and its settings have to survive a round trip, or a tree
+// exported and re-imported quietly reverts to ICMP.
+func TestProbeSettingsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+
+	src := `
+[targets."DNS/quad9"]
+host = "9.9.9.9"
+address_family = "v4"
+probe_type = "dns"
+probe_port = 5353
+dns_query = "example.org"
+dns_rr_type = "AAAA"
+`
+	if _, err := Import(ctx, s, []byte(src), false); err != nil {
+		t.Fatal(err)
+	}
+	exported, err := Export(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"probe_type = 'dns'", "probe_port = 5353",
+		"dns_query = 'example.org'", "dns_rr_type = 'AAAA'"} {
+		if !strings.Contains(string(exported), want) {
+			t.Errorf("export lost %q:\n%s", want, exported)
+		}
+	}
+	s2 := open(t)
+	if _, err := Import(ctx, s2, exported, false); err != nil {
+		t.Fatalf("re-import of export: %v", err)
+	}
+	targets, err := s2.ListTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range targets {
+		if tg.Host == nil {
+			continue
+		}
+		if tg.Settings.ProbeType == nil || *tg.Settings.ProbeType != "dns" {
+			t.Errorf("probe_type did not survive the round trip: %v", tg.Settings.ProbeType)
+		}
+	}
+}
