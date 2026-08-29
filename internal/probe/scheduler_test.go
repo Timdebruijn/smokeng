@@ -138,6 +138,86 @@ func TestCollectorFinalize(t *testing.T) {
 	}
 }
 
+// An ICMP error means the probe was refused rather than ignored, which is a
+// different fact about the network than silence and must survive to the row.
+func TestCollectorRecordsICMPError(t *testing.T) {
+	var late atomic.Int64
+	spec := burstSpec()
+	spec.Pings = 4
+	col := newCollector(4, &late)
+	base := time.Unix(1_756_400_100, 0)
+	for i := range 4 {
+		col.markSent(i, uint16(i), base)
+	}
+	// Two hosts prohibited, one TTL exceeded, one plain timeout.
+	col.onICMPError(0, 3, 10)
+	col.onICMPError(1, 3, 10)
+	col.onICMPError(2, 11, 0)
+
+	m := col.finalize(spec, 1_756_400_100, conditions{})
+	if m.Flags&store.FlagICMPError == 0 {
+		t.Fatalf("expected FlagICMPError, flags = %08b", m.Flags)
+	}
+	if m.ICMPErr == nil {
+		t.Fatal("no ICMP error recorded")
+	}
+	// The most frequent error represents the interval.
+	if want := store.ICMPError(3, 10); *m.ICMPErr != want {
+		t.Errorf("ICMPErr = %#04x, want %#04x (host prohibited)", *m.ICMPErr, want)
+	}
+	if m.Sent != 4 || m.Received != 0 {
+		t.Errorf("sent=%d received=%d, want 4/0", m.Sent, m.Received)
+	}
+}
+
+// A probe the kernel refuses to transmit is still an attempted, failed probe.
+// Dropping it from the count would render an unreachable target as an empty
+// graph instead of total loss.
+func TestSendFailureCountsAsLoss(t *testing.T) {
+	var late atomic.Int64
+	spec := burstSpec()
+	spec.Pings = 3
+	col := newCollector(3, &late)
+	base := time.Unix(1_756_400_100, 0)
+	for i := range 3 {
+		col.markSent(i, uint16(i), base)
+	}
+	col.markSendFailed(1)
+	col.markSendFailed(2)
+	col.onRX(0, base.Add(2*time.Millisecond), true)
+
+	m := col.finalize(spec, 1_756_400_100, conditions{})
+	if m.Sent != 3 {
+		t.Errorf("sent = %d, want 3 (every attempt counts)", m.Sent)
+	}
+	if m.Received != 1 {
+		t.Errorf("received = %d, want 1", m.Received)
+	}
+	if m.Flags&store.FlagSendFailed == 0 {
+		t.Errorf("expected FlagSendFailed, flags = %08b", m.Flags)
+	}
+}
+
+// A ping that was answered is not an error, even if an error arrives late.
+func TestICMPErrorDoesNotOverrideAReply(t *testing.T) {
+	var late atomic.Int64
+	spec := burstSpec()
+	spec.Pings = 1
+	col := newCollector(1, &late)
+	base := time.Unix(1_756_400_100, 0)
+	col.markSent(0, 1, base)
+	col.onRX(0, base.Add(3*time.Millisecond), true)
+	col.onICMPError(0, 3, 1)
+
+	m := col.finalize(spec, 1_756_400_100, conditions{})
+	if m.Flags&store.FlagICMPError != 0 {
+		t.Error("a replied ping was marked as an ICMP error")
+	}
+	if m.Received != 1 {
+		t.Errorf("received = %d, want 1", m.Received)
+	}
+}
+
 // A clock step lands directly in kernel (CLOCK_REALTIME) timestamps, so it
 // must be detectable; NTP slewing moves both clocks together and must not
 // register.

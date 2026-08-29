@@ -110,6 +110,10 @@ type ping struct {
 	txKern     time.Time
 	rx         time.Time
 	rxKernel   bool
+	// An ICMP error explains why this ping went unanswered: the probe was
+	// refused rather than ignored.
+	icmpErr            bool
+	icmpType, icmpCode uint8
 }
 
 func newCollector(n int, late *atomic.Int64) *collector {
@@ -151,6 +155,20 @@ func (c *collector) onRX(idx int, t time.Time, kernel bool) {
 	p.rxKernel = kernel
 }
 
+func (c *collector) onICMPError(idx int, icmpType, code uint8) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done {
+		return
+	}
+	p := &c.pings[idx]
+	// A reply already in hand wins: the error concerns a probe that failed.
+	if !p.rx.IsZero() {
+		return
+	}
+	p.icmpErr, p.icmpType, p.icmpCode = true, icmpType, code
+}
+
 func (c *collector) onTXKernel(idx int, t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -183,12 +201,26 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	if clockStepped(now.Round(0).Sub(c.startWall), now.Sub(c.startMono)) {
 		m.Flags |= store.FlagClockStep
 	}
+	// Tally which ICMP error, if any, explains this interval's failures. The
+	// most frequent one is stored: a single value has to represent the
+	// interval, and the common cause is the useful one.
+	errCounts := map[uint16]int{}
 	for i := range c.pings {
 		p := &c.pings[i]
-		if !p.sent || p.sendFailed {
+		if !p.sent {
 			continue
 		}
+		// A probe the kernel refused to transmit was still attempted, and is
+		// lost. Dropping it from the count would render an unreachable target
+		// as no data at all rather than as total loss.
 		m.Sent++
+		if p.sendFailed {
+			m.Flags |= store.FlagSendFailed
+			continue
+		}
+		if p.icmpErr {
+			errCounts[store.ICMPError(p.icmpType, p.icmpCode)]++
+		}
 		if p.rx.IsZero() {
 			continue
 		}
@@ -215,5 +247,18 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	}
 	slices.Sort(m.Samples)
 	m.Received = len(m.Samples)
+
+	if len(errCounts) > 0 {
+		m.Flags |= store.FlagICMPError
+		var best uint16
+		bestN := -1
+		for packed, n := range errCounts {
+			// Ties break on the lower packed value so the result is stable.
+			if n > bestN || (n == bestN && packed < best) {
+				best, bestN = packed, n
+			}
+		}
+		m.ICMPErr = &best
+	}
 	return m
 }

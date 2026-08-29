@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchSeries, type Target } from './api'
+import { fetchSeries, icmpErrorName, type Target } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtUs, inferSpan } from './layout'
 
@@ -24,6 +24,7 @@ interface RowIndex {
   loss: Float64Array
   sent: Float64Array
   received: Float64Array
+  icmpErrors: (number | null)[]
   span: number
 }
 
@@ -42,18 +43,45 @@ const FLAGS: { bit: number; label: string; title: string }[] = [
     title: 'The receive queue overflowed: some loss shown here is ours, not the network’s.',
   },
   {
-    bit: 1 << 4,
+    bit: 1 << 5,
     label: 'clock step',
     title: 'The wall clock jumped during these intervals; affected RTTs are unreliable.',
   },
+  {
+    bit: 1 << 6,
+    label: 'send refused',
+    title: 'The local stack would not transmit these probes — no route, or a local firewall rule.',
+  },
 ]
+const FLAG_ICMP_ERROR = 1 << 4
 
-function flagCounts(flags: Uint8Array): { label: string; title: string; count: number }[] {
-  return FLAGS.map((f) => {
+function flagCounts(
+  flags: Uint8Array,
+  icmpErrors: (number | null)[],
+): { label: string; title: string; count: number }[] {
+  const out = FLAGS.map((f) => {
     let count = 0
     for (let i = 0; i < flags.length; i++) if (flags[i] & f.bit) count++
     return { label: f.label, title: f.title, count }
   }).filter((f) => f.count > 0)
+
+  // ICMP errors get named rather than lumped together: "host prohibited" and
+  // "TTL exceeded" call for different responses, and both differ from
+  // silence.
+  const byError = new Map<number, number>()
+  for (let i = 0; i < flags.length; i++) {
+    if (!(flags[i] & FLAG_ICMP_ERROR)) continue
+    const e = icmpErrors[i]
+    if (e !== null) byError.set(e, (byError.get(e) ?? 0) + 1)
+  }
+  for (const [packed, count] of [...byError].sort((a, b) => b[1] - a[1])) {
+    out.push({
+      label: icmpErrorName(packed),
+      title: 'Probes were refused with this ICMP error rather than going unanswered.',
+      count,
+    })
+  }
+  return out
 }
 
 /**
@@ -155,6 +183,8 @@ export default function Plot({ target, from, to, refreshKey, logScale, onZoom }:
       Number.isNaN(rows.median[idx]) ? 'no reply' : `median ${fmtUs(rows.median[idx])}`,
       `${rows.received[idx]}/${rows.sent[idx]} replies${rows.loss[idx] > 0 ? ` · ${Math.round(rows.loss[idx] * 100)}% loss` : ''}`,
     ]
+    const err = rows.icmpErrors[idx]
+    if (err !== null && err !== undefined) lines.push(icmpErrorName(err))
     ctx.font = '11px system-ui, sans-serif'
     const boxW = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 14
     const boxH = lines.length * 14 + 10
@@ -210,6 +240,7 @@ export default function Plot({ target, from, to, refreshKey, logScale, onZoom }:
           loss: new Float64Array(n),
           sent: series.sent.slice(),
           received: series.received.slice(),
+          icmpErrors: series.icmpErrors,
           span: inferSpan(series.ts, n),
         }
         for (let i = 0; i < n; i++) {
@@ -220,7 +251,7 @@ export default function Plot({ target, from, to, refreshKey, logScale, onZoom }:
           rows.loss[i] = series.sent[i] > 0 ? 1 - series.received[i] / series.sent[i] : NaN
         }
         rowsRef.current = rows
-        setQuality(flagCounts(series.flags))
+        setQuality(flagCounts(series.flags, series.icmpErrors))
         setRowCount(n)
         workerRef.current.postMessage(
           {

@@ -24,6 +24,9 @@ var measurementsSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "received", Type: arrow.PrimitiveTypes.Uint16},
 	{Name: "flags", Type: arrow.PrimitiveTypes.Uint8},
 	{Name: "samples", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint32)},
+	// ICMP type<<8|code for the error that explains this interval's failures,
+	// null when nothing was refused.
+	{Name: "icmp_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
 }, nil)
 
 // handleMeasurements streams one series over [from, to) as Arrow IPC.
@@ -77,6 +80,7 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	flagsB := rb.Field(3).(*array.Uint8Builder)
 	listB := rb.Field(4).(*array.ListBuilder)
 	valB := listB.ValueBuilder().(*array.Uint32Builder)
+	icmpB := rb.Field(5).(*array.Uint16Builder)
 
 	flush := func() bool {
 		rec := rb.NewRecord()
@@ -90,6 +94,11 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 		flagsB.Append(m.Flags)
 		listB.Append(true)
 		valB.AppendValues(m.Samples, nil)
+		if m.ICMPErr != nil {
+			icmpB.Append(*m.ICMPErr)
+		} else {
+			icmpB.AppendNull()
+		}
 		if (i+1)%batchRows == 0 && !flush() {
 			return // client went away mid-stream
 		}

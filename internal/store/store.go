@@ -12,10 +12,15 @@ type Measurement struct {
 	TargetID int64
 	AgentID  int64
 	TS       int64 // interval start, unix seconds, UTC-aligned
+	// Sent counts probes attempted, including any the local stack refused to
+	// transmit, so loss is measured against what was asked for.
 	Sent     int
 	Received int      // invariant: equals len(Samples); the blob is authoritative
-	Flags    uint8    // timestamp-degradation flags, see below
+	Flags    uint8    // measurement-quality flags, see below
 	Samples  []uint32 // RTTs in µs, sorted ascending
+	// ICMPErr is the ICMP type and code most often reported in this interval
+	// (see ICMPError), or nil when no ping drew an error.
+	ICMPErr *uint16
 }
 
 // Measurement-quality flags (DESIGN.md §3.4). Zero means a clean measurement:
@@ -34,8 +39,21 @@ const (
 	// FlagClockStep means the wall clock jumped during this interval. Kernel
 	// timestamps are CLOCK_REALTIME, so a step lands directly in the RTTs and
 	// would otherwise be drawn as a latency spike that never happened.
-	FlagClockStep uint8 = 1 << 4
+	FlagClockStep uint8 = 1 << 5
+	// FlagICMPError means at least one ping in this interval was answered
+	// with an ICMP error rather than going unanswered. The loss is refusal,
+	// not silence — a firewall or a dead route, not a black hole — and
+	// ICMPError names which.
+	FlagICMPError uint8 = 1 << 4
+	// FlagSendFailed means the local stack refused to transmit some pings at
+	// all (no route, or a local firewall rule). They count as attempted and
+	// lost: a target we cannot reach is a failing target, not an unmeasured
+	// one, and must not render as an empty graph.
+	FlagSendFailed uint8 = 1 << 6
 )
+
+// ICMPError packs an ICMP type and code into one value for storage.
+func ICMPError(icmpType, code uint8) uint16 { return uint16(icmpType)<<8 | uint16(code) }
 
 // LocalAgentID is the master's built-in prober (DESIGN.md §2).
 const LocalAgentID int64 = 0

@@ -100,12 +100,21 @@ func Open(path string) (*SQLite, error) {
 	return s, nil
 }
 
+// migrations are applied in order; index i takes the schema from version i to
+// i+1. Existing databases only run what they have not seen.
+var migrations = []string{
+	schemaV1,
+	// v2: record the ICMP error that explains a failed ping, so refusal is
+	// distinguishable from silence.
+	`ALTER TABLE measurements ADD COLUMN icmp_error INTEGER`,
+}
+
 func (s *SQLite) migrate() error {
 	var version int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("store: read schema version: %w", err)
 	}
-	if version >= 1 {
+	if version >= len(migrations) {
 		return nil
 	}
 	tx, err := s.db.Begin()
@@ -113,10 +122,13 @@ func (s *SQLite) migrate() error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(schemaV1); err != nil {
-		return fmt.Errorf("store: apply schema v1: %w", err)
+	for v := version; v < len(migrations); v++ {
+		if _, err := tx.Exec(migrations[v]); err != nil {
+			return fmt.Errorf("store: apply schema v%d: %w", v+1, err)
+		}
 	}
-	if _, err := tx.Exec("PRAGMA user_version = 1"); err != nil {
+	// PRAGMA does not take a bound parameter.
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(migrations))); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -134,8 +146,8 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 	}
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT OR REPLACE INTO measurements (target_id, agent_id, ts, sent, received, flags, samples)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		INSERT OR REPLACE INTO measurements (target_id, agent_id, ts, sent, received, flags, samples, icmp_error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -149,7 +161,8 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 		if err != nil {
 			return err
 		}
-		if _, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.TS, m.Sent, m.Received, m.Flags, blob); err != nil {
+		if _, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.TS, m.Sent, m.Received,
+			m.Flags, blob, ptrOrNil(m.ICMPErr)); err != nil {
 			return err
 		}
 	}
@@ -158,7 +171,7 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 
 func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ts, sent, received, flags, samples FROM measurements
+		SELECT ts, sent, received, flags, samples, icmp_error FROM measurements
 		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?
 		ORDER BY ts`, targetID, agentID, from, to)
 	if err != nil {
@@ -169,8 +182,13 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 	for rows.Next() {
 		m := Measurement{TargetID: targetID, AgentID: agentID}
 		var blob []byte
-		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob); err != nil {
+		var icmpErr sql.NullInt64
+		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &icmpErr); err != nil {
 			return nil, err
+		}
+		if icmpErr.Valid {
+			v := uint16(icmpErr.Int64)
+			m.ICMPErr = &v
 		}
 		if m.Samples, err = enc.Decode(blob); err != nil {
 			return nil, fmt.Errorf("store: measurement (%d,%d,%d): %w", targetID, agentID, m.TS, err)

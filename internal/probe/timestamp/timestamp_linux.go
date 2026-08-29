@@ -63,12 +63,21 @@ func fromOOB(oob []byte) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func readErrQueue(fd int) ([]TXStamp, error) {
-	var out []TXStamp
-	buf := make([]byte, 64) // OPT_TSONLY: no packet payload is returned
-	oob := make([]byte, 512)
+func enableICMPErrors(fd int, ipv6 bool) bool {
+	if ipv6 {
+		return unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_RECVERR, 1) == nil
+	}
+	return unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_RECVERR, 1) == nil
+}
+
+func readErrQueue(fd int) ([]ErrQueueEntry, error) {
+	var out []ErrQueueEntry
+	// Timestamp entries carry no payload (OPT_TSONLY), but ICMP error entries
+	// return the offending datagram, which is what identifies the ping.
+	buf := make([]byte, 1500)
+	oob := make([]byte, 1024)
 	for {
-		_, oobn, _, _, err := unix.Recvmsg(fd, buf, oob, unix.MSG_ERRQUEUE|unix.MSG_DONTWAIT)
+		n, oobn, _, _, err := unix.Recvmsg(fd, buf, oob, unix.MSG_ERRQUEUE|unix.MSG_DONTWAIT)
 		if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
 			return out, nil
 		}
@@ -83,8 +92,8 @@ func readErrQueue(fd int) ([]TXStamp, error) {
 			continue
 		}
 		var at time.Time
-		var counter uint32
-		var haveTS, haveErr bool
+		var haveTS bool
+		var se *unix.SockExtendedErr
 		for _, m := range cmsgs {
 			switch {
 			case m.Header.Level == unix.SOL_SOCKET && m.Header.Type == unix.SCM_TIMESTAMPING:
@@ -93,17 +102,26 @@ func readErrQueue(fd int) ([]TXStamp, error) {
 				}
 			case (m.Header.Level == unix.IPPROTO_IP && m.Header.Type == unix.IP_RECVERR) ||
 				(m.Header.Level == unix.IPPROTO_IPV6 && m.Header.Type == unix.IPV6_RECVERR):
-				// struct sock_extended_err carries the OPT_ID counter in ee_data.
 				if len(m.Data) >= int(unsafe.Sizeof(unix.SockExtendedErr{})) {
-					se := (*unix.SockExtendedErr)(unsafe.Pointer(&m.Data[0]))
-					if se.Origin == unix.SO_EE_ORIGIN_TIMESTAMPING {
-						counter, haveErr = se.Data, true
-					}
+					se = (*unix.SockExtendedErr)(unsafe.Pointer(&m.Data[0]))
 				}
 			}
 		}
-		if haveTS && haveErr {
-			out = append(out, TXStamp{Counter: counter, At: at})
+		if se == nil {
+			continue
+		}
+		switch se.Origin {
+		case unix.SO_EE_ORIGIN_TIMESTAMPING:
+			// ee_data carries the OPT_ID counter of the packet sent.
+			if haveTS {
+				out = append(out, ErrQueueEntry{TXStamp: &TXStamp{Counter: se.Data, At: at}})
+			}
+		case unix.SO_EE_ORIGIN_ICMP, unix.SO_EE_ORIGIN_ICMP6:
+			payload := make([]byte, n)
+			copy(payload, buf[:n])
+			out = append(out, ErrQueueEntry{
+				ICMPError: &ICMPError{Type: se.Type, Code: se.Code, Payload: payload},
+			})
 		}
 	}
 }

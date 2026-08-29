@@ -58,7 +58,13 @@ type conn struct {
 	rxDrops   atomic.Uint64
 	dropsPath string
 	dropsNode string
+
+	reportsICMPErrors bool
+	icmpErrors        atomic.Int64
 }
+
+// ICMPErrors counts ICMP errors attributed to our pings on this socket.
+func (c *conn) ICMPErrors() int64 { return c.icmpErrors.Load() }
 
 // drops returns the cumulative count of replies the kernel discarded because
 // our receive queue was full. Always 0 where the kernel cannot report it.
@@ -159,9 +165,14 @@ func openConn(family string, dscp int, late *atomic.Int64) (*conn, error) {
 	rand.Read(idBytes[:])
 	c.rawID = binary.BigEndian.Uint16(idBytes[:])
 
+	// Routes ICMP errors for our packets onto the error queue instead of
+	// letting them be discarded, so a refused probe is distinguishable from
+	// an unanswered one.
+	c.reportsICMPErrors = timestamp.EnableICMPErrors(fd, family == "v6")
+
 	c.wg.Add(1)
 	go c.recvLoop()
-	if c.caps.KernelTX {
+	if c.caps.KernelTX || c.reportsICMPErrors {
 		c.wg.Add(1)
 		go c.errQueueLoop()
 	}
@@ -251,10 +262,14 @@ func (c *conn) recvLoop() {
 			n, _, err = unix.Recvfrom(c.fd, buf, 0)
 		}
 		if err != nil {
-			if err == unix.EAGAIN || err == unix.EWOULDBLOCK || err == unix.EINTR {
-				continue
+			// With IP_RECVERR enabled the kernel reports pending ICMP errors
+			// here too (EHOSTUNREACH and friends). Those are data about a
+			// probe, not a broken socket, so only a closed descriptor ends
+			// the loop — anything else would silently stop all measurement.
+			if err == unix.EBADF {
+				return
 			}
-			return // socket closed or fatal
+			continue
 		}
 		if !kernel {
 			rx = time.Now()
@@ -334,22 +349,57 @@ func (c *conn) errQueueLoop() {
 	defer tick.Stop()
 	for !c.closed.Load() {
 		<-tick.C
-		stamps, err := timestamp.ReadErrQueue(c.fd)
+		entries, err := timestamp.ReadErrQueue(c.fd)
 		if err != nil {
 			continue
 		}
-		for _, s := range stamps {
-			c.mu.Lock()
-			p, ok := c.byCounter[s.Counter]
-			if ok {
-				delete(c.byCounter, s.Counter)
-			}
-			c.mu.Unlock()
-			if ok {
-				p.col.onTXKernel(p.idx, s.At)
+		for _, e := range entries {
+			switch {
+			case e.TXStamp != nil:
+				c.mu.Lock()
+				p, ok := c.byCounter[e.TXStamp.Counter]
+				if ok {
+					delete(c.byCounter, e.TXStamp.Counter)
+				}
+				c.mu.Unlock()
+				if ok {
+					p.col.onTXKernel(p.idx, e.TXStamp.At)
+				}
+			case e.ICMPError != nil:
+				c.handleICMPError(e.ICMPError)
 			}
 		}
 	}
+}
+
+// handleICMPError attributes an ICMP error to the ping that provoked it. The
+// error queue returns the offending datagram — for a ping socket, our own
+// echo request — so its sequence number identifies the ping exactly.
+func (c *conn) handleICMPError(e *timestamp.ICMPError) {
+	proto := protoICMPv4
+	if c.family == "v6" {
+		proto = protoICMPv6
+	}
+	msg, err := icmp.ParseMessage(proto, e.Payload)
+	if err != nil {
+		return
+	}
+	echo, ok := msg.Body.(*icmp.Echo)
+	if !ok {
+		return
+	}
+	c.mu.Lock()
+	p, ok := c.pending[uint16(echo.Seq)]
+	if ok {
+		delete(c.pending, uint16(echo.Seq))
+		delete(c.byCounter, p.counter)
+	}
+	c.mu.Unlock()
+	if !ok {
+		return // already timed out, or not ours
+	}
+	c.icmpErrors.Add(1)
+	p.col.onICMPError(p.idx, e.Type, e.Code)
 }
 
 func (c *conn) forgetSeq(seq uint16) {

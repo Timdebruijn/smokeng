@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -10,6 +11,65 @@ import (
 )
 
 func ptr[T any](v T) *T { return &v }
+
+// An existing database must be upgraded in place, with its measurements
+// intact: history is the whole point of this project and a migration that
+// loses it, or refuses to run, is worse than no migration.
+func TestMigrationFromV1(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v1.db")
+
+	// Build a database as version 1 knew it.
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(migrations[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO measurements (target_id, agent_id, ts, sent, received, flags, samples)
+		VALUES (1, 0, 1756400000, 5, 1, 0, X'01A09C01')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("opening a v1 database: %v", err)
+	}
+	defer s.Close()
+
+	var version int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != len(migrations) {
+		t.Errorf("user_version = %d, want %d", version, len(migrations))
+	}
+
+	// The pre-existing row survives, and reads back through the new column.
+	got, err := s.QueryRange(ctx, 1, LocalAgentID, 0, 1<<40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("measurements after migration = %d, want 1", len(got))
+	}
+	if got[0].Sent != 5 || got[0].ICMPErr != nil {
+		t.Errorf("migrated row = %+v, want sent=5 and no ICMP error", got[0])
+	}
+
+	// Reopening an already-migrated database must be a no-op, not an error.
+	s.Close()
+	again, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopening a migrated database: %v", err)
+	}
+	again.Close()
+}
 
 func TestSQLiteRoundTrip(t *testing.T) {
 	ctx := context.Background()

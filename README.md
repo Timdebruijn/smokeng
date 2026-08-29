@@ -14,8 +14,6 @@ crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that
 target tree and shows, per setting, whether a value is set here or inherited and from
 where. Still to come: OIDC and alerting (v0.3), remote agents (v0.4).
 
-Known gap before this is trustworthy in production: ICMP errors (unreachable, TTL
-exceeded) are collapsed into plain loss rather than kept distinct.
 
 ## Build
 
@@ -128,6 +126,8 @@ contains flagged measurements.
 | `raw socket` | Unprivileged datagram ICMP was unavailable. |
 | `dropped replies` | The socket's receive queue overflowed: some loss shown is smokeng's, not the network's. |
 | `clock step` | The wall clock jumped during the interval, so its RTTs are unreliable. |
+| *the ICMP error by name* | Probes were refused with an ICMP error instead of going unanswered. |
+| `send refused` | The local stack would not transmit some probes: no route, or a local firewall rule. |
 
 Two of these deserve a note.
 
@@ -139,6 +139,15 @@ caps it lower. It then polls the kernel's per-socket drop counter from `/proc/ne
 Without this, a host that is merely busy reads as a lossy network. Note that the obvious
 mechanism, `SO_RXQ_OVFL`, does not work here: `setsockopt` accepts it on a ping socket
 and then never reports anything, because `ping_recvmsg` does not attach the counter.
+
+**ICMP errors.** A target at 100% loss because a firewall says "administratively
+prohibited" and one at 100% loss in silence are different findings that call for
+different responses, so smokeng keeps them apart. `IP_RECVERR` routes ICMP errors for our
+probes onto the socket error queue, which returns the offending datagram alongside them —
+our own echo request, whose sequence number attributes the error to an exact ping. The
+graphs name the error rather than reporting a generic failure. A probe the kernel
+declines to send is counted as attempted and lost for the same reason: an unreachable
+target should render as total loss, not as an empty graph.
 
 **Clock steps.** Kernel timestamps are `CLOCK_REALTIME`, so a clock jump lands directly
 in the RTTs and would be drawn as a latency spike that never happened. smokeng compares

@@ -76,8 +76,9 @@ CREATE TABLE measurements (
   ts        INTEGER NOT NULL,             -- interval start, unix seconds, UTC-aligned
   sent      INTEGER NOT NULL,
   received  INTEGER NOT NULL,             -- invariant: == sample count in blob
-  flags     INTEGER NOT NULL DEFAULT 0,   -- see §3.4
-  samples   BLOB NOT NULL,                -- encoded sorted RTTs, see §3.3
+  flags      INTEGER NOT NULL DEFAULT 0,  -- see §3.4
+  samples    BLOB NOT NULL,               -- encoded sorted RTTs, see §3.3
+  icmp_error INTEGER,                     -- schema v2; see §3.4
   PRIMARY KEY (target_id, agent_id, ts)
 ) WITHOUT ROWID;
 
@@ -162,6 +163,20 @@ per row rather than silent (brief requirement):
 - bit 0 — TX timestamp from userspace (kernel TX timestamping unavailable)
 - bit 1 — RX timestamp from userspace
 - bit 2 — raw-socket fallback (datagram ICMP socket not permitted)
+- bit 3 — the socket's receive queue overflowed: some loss is ours, not the network's
+- bit 4 — at least one probe drew an ICMP error; `icmp_error` names which
+- bit 5 — the wall clock stepped during the interval, so its RTTs are unreliable
+- bit 6 — the local stack refused to transmit some probes (no route, local firewall)
+
+Added after the design was agreed (2026-08-29), on the same principle as the original
+three: a measurement is worth what its conditions are worth, and every way it can mean
+less than it appears to is recorded rather than inferred. `icmp_error` (schema v2) holds
+the ICMP type and code most often reported in the interval, packed as `type<<8 | code`,
+and is NULL when nothing was refused. It exists because total loss with a stated reason
+("administratively prohibited") and total loss in silence are different findings that
+call for different responses; collapsing them, as the first cut did, throws that away.
+A probe the kernel declines to send counts as attempted and lost — otherwise an
+unreachable target renders as an empty graph rather than as a failing one.
 
 The frontend can badge series rendered from degraded data.
 

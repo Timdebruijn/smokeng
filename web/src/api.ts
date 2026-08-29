@@ -104,6 +104,30 @@ export interface Series {
   flags: Uint8Array
   offsets: Uint32Array // length rows+1
   values: Uint32Array // all samples, concatenated
+  /** ICMP type<<8|code per row, or null where nothing was refused. */
+  icmpErrors: (number | null)[]
+}
+
+/**
+ * Names for the ICMP errors worth telling apart. Anything else is shown as
+ * its raw type and code rather than guessed at.
+ */
+const ICMP_NAMES: Record<number, string> = {
+  0x0300: 'network unreachable',
+  0x0301: 'host unreachable',
+  0x0302: 'protocol unreachable',
+  0x0303: 'port unreachable',
+  0x0304: 'fragmentation needed',
+  0x0309: 'network prohibited',
+  0x030a: 'host prohibited',
+  0x030d: 'administratively filtered',
+  0x0500: 'redirect',
+  0x0b00: 'TTL exceeded',
+  0x0b01: 'fragment reassembly timeout',
+}
+
+export function icmpErrorName(packed: number): string {
+  return ICMP_NAMES[packed] ?? `ICMP type ${packed >> 8} code ${packed & 0xff}`
 }
 
 export async function fetchSeries(targetId: number, from: number, to: number): Promise<Series> {
@@ -118,6 +142,7 @@ export async function fetchSeries(targetId: number, from: number, to: number): P
   const recvCol = table.getChild('received')!
   const flagsCol = table.getChild('flags')!
   const samplesCol = table.getChild('samples')!
+  const icmpCol = table.getChild('icmp_error')
 
   const ts = new Float64Array(n)
   const sent = new Float64Array(n)
@@ -125,6 +150,7 @@ export async function fetchSeries(targetId: number, from: number, to: number): P
   const flags = new Uint8Array(n)
   const offsets = new Uint32Array(n + 1)
   const rows: Uint32Array[] = new Array(n)
+  const icmpErrors: (number | null)[] = new Array(n)
   let total = 0
   for (let i = 0; i < n; i++) {
     // Flechette decodes timestamps as epoch milliseconds; normalize to seconds.
@@ -133,6 +159,8 @@ export async function fetchSeries(targetId: number, from: number, to: number): P
     sent[i] = Number(sentCol.at(i))
     received[i] = Number(recvCol.at(i))
     flags[i] = Number(flagsCol.at(i))
+    const icmp = icmpCol?.at(i)
+    icmpErrors[i] = icmp === null || icmp === undefined ? null : Number(icmp)
     const row = samplesCol.at(i) as ArrayLike<number> | null
     const arr = row instanceof Uint32Array ? row : Uint32Array.from(row ?? [])
     rows[i] = arr
@@ -141,5 +169,5 @@ export async function fetchSeries(targetId: number, from: number, to: number): P
   }
   const values = new Uint32Array(total)
   for (let i = 0; i < n; i++) values.set(rows[i], offsets[i])
-  return { ts, sent, received, flags, offsets, values }
+  return { ts, sent, received, flags, offsets, values, icmpErrors }
 }
