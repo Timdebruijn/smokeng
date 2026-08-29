@@ -105,6 +105,7 @@ export default function Plot({
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
+  const stackRef = useRef<HTMLDivElement>(null)
   const workerRef = useRef<Worker | null>(null)
   const rowsRef = useRef<RowIndex | null>(null)
   const cursorRef = useRef<number | null>(null)
@@ -115,6 +116,12 @@ export default function Plot({
   rangeRef.current = { from, to }
   const [quality, setQuality] = useState<{ label: string; title: string; count: number }[]>([])
   const [rowCount, setRowCount] = useState(0)
+  // The plot's own width, observed rather than read once. Reading clientWidth
+  // when the effect first runs can catch the element before layout and bake a
+  // zero into the render, which draws nothing at all and never recovers.
+  // Observing it also makes the density redraw when the window is resized,
+  // which it previously did not.
+  const [width, setWidth] = useState(0)
 
   // Pixel ↔ time mapping, in CSS pixels over the density area only.
   const xToTime = useCallback((xCss: number, widthCss: number): number | null => {
@@ -237,12 +244,31 @@ export default function Plot({
     lines.forEach((l, i) => ctx.fillText(l, bx + 7, 12 + i * 14))
   }, [timeToX])
 
+  useEffect(() => {
+    const el = stackRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      setWidth(Math.round(entry.contentRect.width))
+    })
+    ro.observe(el)
+    setWidth(el.clientWidth)
+    return () => ro.disconnect()
+  }, [])
+
   // One worker per plot, owning its density canvas for the component's life.
   useEffect(() => {
     const canvas = canvasRef.current!
     const worker = new Worker(new URL('./render.worker.ts', import.meta.url), {
       type: 'module',
     })
+    // A worker that dies takes the plot with it and says nothing, which is
+    // indistinguishable from "no data". Say it out loud instead.
+    worker.onerror = (e) => {
+      console.error(`plot ${target.path}: render worker failed:`, e.message || e)
+    }
+    worker.onmessageerror = () => {
+      console.error(`plot ${target.path}: render worker could not read a message`)
+    }
     const off = canvas.transferControlToOffscreen()
     worker.postMessage({ type: 'init', canvas: off }, [off])
     workerRef.current = worker
@@ -262,9 +288,7 @@ export default function Plot({
 
   useEffect(() => {
     let cancelled = false
-    const canvas = canvasRef.current!
     const dpr = window.devicePixelRatio || 1
-    const cssW = canvas.clientWidth
     const dark = matchMedia('(prefers-color-scheme: dark)').matches
     fetchSeries(target.id, agentId, from, to)
       .then((series) => {
@@ -286,6 +310,12 @@ export default function Plot({
           rows.median[i] = b > a ? series.values[a + ((b - a) >> 1)] : NaN
           rows.loss[i] = series.sent[i] > 0 ? 1 - series.received[i] / series.sent[i] : NaN
         }
+        // Measure here rather than when the effect started: at effect time
+        // the element may not have been laid out, and a zero width renders an
+        // empty plot that never recovers. `width` only drives re-renders on
+        // resize; the live measurement is what gets drawn.
+        const cssW = stackRef.current?.clientWidth || width
+        if (cssW === 0) return
         rowsRef.current = rows
         setQuality(flagCounts(series.flags, series.icmpErrors))
         setRowCount(n)
@@ -322,7 +352,7 @@ export default function Plot({
     return () => {
       cancelled = true
     }
-  }, [target.id, target.path, agentId, from, to, refreshKey, logScale, drawOverlay])
+  }, [target.id, target.path, agentId, from, to, refreshKey, logScale, width, drawOverlay])
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -376,6 +406,7 @@ export default function Plot({
         ))}
       </h2>
       <div
+        ref={stackRef}
         className="plot-stack"
         style={{ height: PLOT_HEIGHT }}
         onMouseMove={onMove}
