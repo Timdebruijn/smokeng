@@ -5,7 +5,11 @@ rebuilt from scratch. The one thing that makes it worth existing: it keeps the *
 distribution per measurement interval, forever, at full resolution**, and renders it as
 actual density — no rollup, no consolidation, no single-value-per-check.
 
-**Status: v0.5, unreleased.** The design is agreed and frozen in
+![Three targets in the smokeng UI: the density smoke, the pooled median line and the loss
+rail, stacked on a shared time axis](docs/images/smokeng.png)
+
+**Status: the roadmap is complete; [v0.1.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.1.0)
+is the first tagged release.** The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the ICMP prober (burst and spread, kernel
 timestamping with observable fallback), the SQLite store, TOML import/export of the
 target tree, a SmokePing `Targets` importer, the Arrow measurements API, the browser
@@ -15,6 +19,18 @@ target tree and shows, per setting, whether a value is set here or inherited and
 where; alerting with webhook delivery; OIDC login with viewer and admin roles; remote
 agents pushing signed measurements; and path correlation. That is the whole roadmap.
 
+
+## Documentation
+
+The rest of this file is a technical overview. The task-oriented guides live in
+[`docs/`](docs/README.md):
+
+- [Getting started](docs/getting-started.md) — install, run, add your first target
+- [Configuration](docs/configuration.md) — the complete TOML reference and the target tree
+- [Reading the graphs](docs/reading-graphs.md) — what the smoke, the loss rail and the quality badges mean
+- [Alerting](docs/alerting.md) · [Remote agents](docs/agents.md) · [Authentication](docs/authentication.md)
+- [Operations](docs/operations.md) — storage growth, backups, Prometheus metrics, systemd
+- [Migrating from SmokePing](docs/migrating-from-smokeping.md)
 
 ## Install
 
