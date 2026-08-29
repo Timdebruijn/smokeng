@@ -4,6 +4,7 @@ import Agents from './Agents'
 import Alerts from './Alerts'
 import Detail from './Detail'
 import Overview from './Overview'
+import Palette from './Palette'
 import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
@@ -24,6 +25,7 @@ export default function App() {
   // Which target the detail screen is showing. Detail is reached from a plot,
   // never from the tab bar, so it is not one of the tabs.
   const [detailId, setDetailId] = useState<number | null>(null)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
 
   useEffect(() => {
@@ -42,6 +44,18 @@ export default function App() {
     ? ['overview', 'graphs', 'targets', 'alerts', 'agents', 'access']
     : ['overview', 'graphs', 'targets', 'alerts', 'agents']
 
+  // ⌘K / Ctrl-K, the shortcut every tool of this shape has.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   if (needsLogin) return <SignIn />
 
   return (
@@ -53,7 +67,23 @@ export default function App() {
         onView={setView}
         userMenuOpen={userMenuOpen}
         onToggleUser={() => setUserMenuOpen((v) => !v)}
+        onOpenPalette={() => setPaletteOpen(true)}
       />
+      {paletteOpen && (
+        <Palette
+          actions={views.map((v) => ({
+            id: `view-${v}`,
+            label: v[0].toUpperCase() + v.slice(1),
+            hint: 'screen',
+            run: () => setView(v),
+          }))}
+          onClose={() => setPaletteOpen(false)}
+          onOpenDetail={(id) => {
+            setDetailId(id)
+            setView('detail')
+          }}
+        />
+      )}
       <main>
       {view === 'overview' ? (
         <Overview
@@ -126,6 +156,7 @@ function AppHeader({
   onView,
   userMenuOpen,
   onToggleUser,
+  onOpenPalette,
 }: {
   me: Me | null
   view: View
@@ -133,6 +164,7 @@ function AppHeader({
   onView: (v: View) => void
   userMenuOpen: boolean
   onToggleUser: () => void
+  onOpenPalette: () => void
 }) {
   const who = me?.name ?? me?.email ?? me?.subject ?? ''
   return (
@@ -150,6 +182,10 @@ function AppHeader({
           ))}
         </nav>
         <span className="spacer" />
+        <button className="search-button" onClick={onOpenPalette}>
+          <span>Search…</span>
+          <kbd>⌘K</kbd>
+        </button>
         {me?.auth_enabled && me.authenticated && (
           <div className="usermenu">
             <button className="chip-button" onClick={onToggleUser}>

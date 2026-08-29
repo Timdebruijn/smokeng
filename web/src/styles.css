@@ -1356,3 +1356,87 @@ a.button {
 .modal .pill-row {
   margin-top: 12px;
 }
+
+/* ── Command palette ───────────────────────────────────────────────────── */
+
+.search-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card2);
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.search-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.search-button kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: var(--card);
+}
+
+.palette {
+  width: min(560px, 100%);
+  align-self: start;
+  margin-top: 12vh;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  padding: 10px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.palette input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card2);
+  color: var(--fg);
+  font-size: 14px;
+  outline: none;
+  margin-bottom: 8px;
+}
+
+.palette input:focus {
+  border-color: var(--accent);
+}
+
+.palette-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 13.5px;
+}
+
+.palette-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.palette-empty {
+  padding: 8px 12px;
+}
