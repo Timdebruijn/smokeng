@@ -1,8 +1,12 @@
-# binaries and local databases
+# build output
 /bin/
+/dist/
+
+# local databases and agent keys — never commit an agent's private key
 *.db
 *.db-wal
 *.db-shm
+probe.key
 
 # frontend
 web/node_modules/

@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Binaries are stamped with `git describe`, which needs the tags.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Refuse to ship a binary whose tests were never run: a tag is not a
+      # reason to skip the checks, it is a reason to insist on them.
+      - name: allow unprivileged ICMP sockets
+        run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+      - run: go test ./...
+
+      - name: build release binaries
+        run: make dist
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "smokeng ${{ github.ref_name }}" \
+            --generate-notes \
+            dist/smokeng-* dist/SHA256SUMS

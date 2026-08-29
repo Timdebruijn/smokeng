@@ -27,7 +27,12 @@ import (
 	"github.com/timdebruijn/smokeng/web"
 )
 
-const version = "0.1.0-dev"
+// version is stamped at build time from the git tag:
+//
+//	go build -ldflags "-X main.version=$(git describe --tags --always --dirty)"
+//
+// A build without it says so rather than claiming a version it does not have.
+var version = "dev"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.LUTC)
@@ -49,7 +54,8 @@ func main() {
 			log.Fatal(err)
 		}
 	case "version":
-		fmt.Printf("smokeng %s (%s)\n", version, runtime.Version())
+		fmt.Printf("smokeng %s %s/%s (%s)\n",
+			version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 	default:
 		usage()
 		os.Exit(2)

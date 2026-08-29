@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l cmd internal web/embed.go)
+          if [ -n "$unformatted" ]; then
+            echo "these files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+
+      - run: go vet ./...
+
+      # The Linux-only tests are the ones that matter most — kernel
+      # timestamping, drop counting, ICMP errors and path discovery all live
+      # there — and they need unprivileged ICMP sockets to run rather than
+      # skip. Without this sysctl they would quietly skip and CI would look
+      # green while testing nothing.
+      - name: allow unprivileged ICMP sockets
+        run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+
+      - run: go test -race ./...
+
+  # A stale committed web/dist would ship a frontend that does not match the
+  # source, and nothing else would catch it: the binary builds either way.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+      - run: npm run typecheck
+        working-directory: web
+
+      - name: web/dist matches the source
+        run: |
+          npm run build --prefix web
+          if ! git diff --quiet -- web/dist; then
+            echo "web/dist is out of date; run 'make web' and commit the result:"
+            git diff --stat -- web/dist
+            exit 1
+          fi
+
+  # Every platform the prober claims to support, including the 32-bit ones
+  # where Timespec is int32 — that break was found by compiling, not by
+  # reading.
+  cross-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build every supported platform
+        run: |
+          set -eu
+          for p in linux/amd64 linux/arm64 linux/arm linux/386 linux/riscv64 \
+                   darwin/amd64 darwin/arm64; do
+            echo "== $p"
+            CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} go build ./...
+          done

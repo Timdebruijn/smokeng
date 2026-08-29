@@ -16,15 +16,44 @@ where; alerting with webhook delivery; OIDC login with viewer and admin roles; a
 agents pushing signed measurements; and path correlation. That is the whole roadmap.
 
 
-## Build
+## Install
+
+Download a binary from the [releases page](https://github.com/timdebruijn/smokeng/releases)
+— one static, CGO-free file with the frontend embedded, for linux/amd64, arm64, arm and
+386, and darwin/amd64 and arm64:
+
+```bash
+curl -fsSLO https://github.com/timdebruijn/smokeng/releases/latest/download/smokeng-linux-amd64
+curl -fsSL  https://github.com/timdebruijn/smokeng/releases/latest/download/SHA256SUMS |
+  grep smokeng-linux-amd64 | sha256sum -c -
+chmod +x smokeng-linux-amd64 && sudo mv smokeng-linux-amd64 /usr/local/bin/smokeng
+```
+
+Or build it:
+
+```bash
+go install github.com/timdebruijn/smokeng/cmd/smokeng@latest
+```
+
+## Build from source
 
 Requirements: Go 1.27+. Node 22+ only when rebuilding the frontend (`web/dist` is
-committed, so `go build` alone always produces a working binary).
+committed, so `go build` alone always produces a working binary — and CI fails if that
+committed output ever drifts from the source).
 
 ```
 make            # rebuild frontend + binary
 make build      # binary only, no Node needed
-make test
+make check      # what CI runs: gofmt, vet, tests, frontend typecheck
+make dist       # release binaries for every supported platform, with checksums
+```
+
+The Linux-only tests — kernel timestamping, receive-queue drops, ICMP errors, path
+discovery — skip unless unprivileged ICMP sockets are permitted, so run them with the
+sysctl set or they will pass by not running:
+
+```bash
+sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
 ```
 
 Run:
