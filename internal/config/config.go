@@ -81,6 +81,10 @@ type File struct {
 	// the root's settings.
 	DefaultAlerts map[string]AlertRule `toml:"default_alerts,omitempty"`
 	Targets       map[string]Entry     `toml:"targets,omitempty"`
+	// Grants is a pointer so that "no grants key" and "an empty grants list"
+	// can be told apart. The first leaves authorisation alone; the second is
+	// an instruction to remove all of it (DESIGN.md §7.4).
+	Grants *[]GrantEntry `toml:"grants,omitempty"`
 }
 
 // Store is the persistence a sync needs: the target tree plus alert rules,
@@ -100,6 +104,8 @@ type Summary struct {
 	// is the difference between noticing and discovering it during an
 	// incident.
 	RulesCreated, RulesUpdated, RulesDisabled, RulesDeleted int
+	// Grants have no disabled state: authorisation is policy, not history.
+	GrantsCreated, GrantsUpdated, GrantsRemoved int
 	// Warnings are problems the import chose to carry rather than refuse.
 	Warnings []string
 }
@@ -110,6 +116,10 @@ func (s Summary) String() string {
 	if s.RulesCreated+s.RulesUpdated+s.RulesDisabled+s.RulesDeleted > 0 {
 		out += fmt.Sprintf("\nalert rules: %d created, %d updated, %d disabled, %d deleted",
 			s.RulesCreated, s.RulesUpdated, s.RulesDisabled, s.RulesDeleted)
+	}
+	if s.GrantsCreated+s.GrantsUpdated+s.GrantsRemoved > 0 {
+		out += fmt.Sprintf("\ngrants: %d created, %d updated, %d removed",
+			s.GrantsCreated, s.GrantsUpdated, s.GrantsRemoved)
 	}
 	return out
 }
@@ -387,6 +397,20 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 	if err := applyRules(ctx, st, f, nodes, deleted, prune, &sum); err != nil {
 		return sum, err
 	}
+
+	// 7. Grants, last and against the written tree: they name nodes by path,
+	// and the paths that exist are the ones the sync just settled on.
+	written, err := st.ListTargets(ctx)
+	if err != nil {
+		return sum, err
+	}
+	wtr, err := tree.New(written)
+	if err != nil {
+		return sum, err
+	}
+	if err := syncGrants(ctx, st, f, wtr, written, &sum); err != nil {
+		return sum, err
+	}
 	return sum, nil
 }
 
@@ -507,6 +531,10 @@ func Export(ctx context.Context, st Store) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	grants, err := exportGrants(ctx, st, tr)
+	if err != nil {
+		return nil, err
+	}
 	byNode := map[int64]map[string]AlertRule{}
 	for _, r := range rules {
 		if byNode[r.TargetID] == nil {
@@ -519,6 +547,11 @@ func Export(ctx context.Context, st Store) ([]byte, error) {
 	}
 
 	f := File{Targets: map[string]Entry{}}
+	// Only when there are any: an export that always wrote an empty grants
+	// list would, on the next import, be an instruction to revoke everything.
+	if len(grants) > 0 {
+		f.Grants = &grants
+	}
 	for i := range current {
 		n := &current[i]
 		if n.ParentID == nil {

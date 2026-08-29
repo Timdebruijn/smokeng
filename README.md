@@ -8,16 +8,17 @@ actual density — no rollup, no consolidation, no single-value-per-check.
 ![Three targets in the smokeng UI: the density smoke, the pooled median line and the loss
 rail, stacked on a shared time axis](docs/images/smokeng.png)
 
-**Status: the roadmap is complete; [v0.1.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.1.0)
-is the first tagged release.** The design is agreed and frozen in
+**Status: released, [v0.2.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.2.0).**
+The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the ICMP prober (burst and spread, kernel
 timestamping with observable fallback), the SQLite store, TOML import/export of the
 target tree, a SmokePing `Targets` importer, the Arrow measurements API, the browser
 renderer — density smoke, pooled median, loss rail, stacked plots with a shared
 crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that edits the
 target tree and shows, per setting, whether a value is set here or inherited and from
-where; alerting with webhook delivery; OIDC login with viewer and admin roles; remote
-agents pushing signed measurements; and path correlation. That is the whole roadmap.
+where; alerting with webhook delivery; OIDC login, with grants that scope a user to one
+subtree and show them nothing else; remote agents that enrol themselves with a one-time
+token and push signed measurements; and path correlation.
 
 
 ## Documentation
@@ -28,7 +29,8 @@ The rest of this file is a technical overview. The task-oriented guides live in
 - [Getting started](docs/getting-started.md) — install, run, add your first target
 - [Configuration](docs/configuration.md) — the complete TOML reference and the target tree
 - [Reading the graphs](docs/reading-graphs.md) — what the smoke, the loss rail and the quality badges mean
-- [Alerting](docs/alerting.md) · [Remote agents](docs/agents.md) · [Authentication](docs/authentication.md)
+- [Alerting](docs/alerting.md) · [Remote agents](docs/agents.md)
+- [Authentication](docs/authentication.md) · [Access control](docs/access-control.md) — scoping a user to one subtree
 - [Operations](docs/operations.md) — storage growth, backups, Prometheus metrics, systemd
 - [Migrating from SmokePing](docs/migrating-from-smokeping.md)
 
@@ -279,11 +281,20 @@ smokeng serve --db smokeng.db --listen 0.0.0.0:8080 \
   --oidc-admin-value smokeng-admins
 ```
 
-Two roles: **viewer** reads, **admin** also writes. The role comes from a claim
-(`--oidc-admin-claim`, default `groups`); anything not recognised as an admin is a
-viewer, so a provider that renames or drops the claim demotes people rather than
-promoting them. Leaving `--oidc-admin-value` empty makes every authenticated user an
-admin, which is logged loudly at startup rather than left to be discovered.
+**admin** is global and comes from a claim (`--oidc-admin-claim`, default `groups`);
+anything not recognised as an admin is not one, so a provider that renames or drops the
+claim demotes people rather than promoting them. Leaving `--oidc-admin-value` empty makes
+every authenticated user an admin, which is logged loudly at startup rather than left to
+be discovered.
+
+Everyone else gets what their **grants** give them. A grant gives an OIDC group `viewer`
+or `editor` on one node and its subtree, and the isolation is total: that subtree is
+presented as though it were the whole installation, so one customer never learns that
+there are others. Grants live in smokeng's own table, round-trip through TOML, and never
+reach agents, the root defaults, `/metrics` or `config import`. What an authenticated user
+with no grant may do is `--default-role`, which stays `viewer` — the behaviour before
+grants existed — until you set it to `none`. See
+[Access control](docs/access-control.md).
 
 Sessions are held in an HMAC-signed cookie whose key is stored in the database, so they
 survive a restart; deleting the `session_key` row invalidates every session at once.

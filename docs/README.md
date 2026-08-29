@@ -13,7 +13,8 @@ Start here:
 | [Reading the graphs](reading-graphs.md) | What the smoke, the median line, the loss rail and the quality badges mean |
 | [Alerting](alerting.md) | Alert rules, hysteresis, webhook delivery |
 | [Remote agents](agents.md) | Measuring from more than one vantage point |
-| [Authentication](authentication.md) | OIDC login, viewer and admin roles |
+| [Authentication](authentication.md) | OIDC login and sessions |
+| [Access control](access-control.md) | Roles, and scoping a user to one subtree |
 | [Operations](operations.md) | Storage growth, backups, Prometheus metrics, running as a service |
 | [Migrating from SmokePing](migrating-from-smokeping.md) | Importing an existing `Targets` file, and what differs |
 

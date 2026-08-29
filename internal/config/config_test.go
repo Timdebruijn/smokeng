@@ -492,3 +492,125 @@ address_family = "v4"
 		t.Errorf("export did not use the array form:\n%s", e1)
 	}
 }
+
+const grantSample = `
+[targets."Klanten"]
+title = "Klanten"
+
+[targets."Klanten/GemeenteX"]
+host = "198.51.100.1"
+address_family = "v4"
+
+[[grants]]
+group = "gemeente-x"
+path = "Klanten/GemeenteX"
+role = "viewer"
+`
+
+func TestGrantsImportAndRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+
+	sum, err := Import(ctx, s, []byte(grantSample), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.GrantsCreated != 1 {
+		t.Fatalf("created %d grants, want 1: %s", sum.GrantsCreated, sum)
+	}
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Group != "gemeente-x" || got[0].Role != "viewer" {
+		t.Fatalf("stored grants = %+v", got)
+	}
+
+	// Re-importing the same file changes nothing, and the export re-imports
+	// into an identical state.
+	again, err := Import(ctx, s, []byte(grantSample), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.GrantsCreated+again.GrantsUpdated+again.GrantsRemoved != 0 {
+		t.Errorf("re-import reported grant work: %s", again)
+	}
+	exported, err := Export(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(exported), "gemeente-x") {
+		t.Errorf("export lost the grants:\n%s", exported)
+	}
+	s2 := open(t)
+	if _, err := Import(ctx, s2, exported, false); err != nil {
+		t.Fatalf("re-import of export: %v\n%s", err, exported)
+	}
+	round, err := s2.ListGrants(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(round) != 1 || round[0].Group != got[0].Group || round[0].Role != got[0].Role {
+		t.Errorf("round trip changed the grants: %+v -> %+v", got, round)
+	}
+}
+
+// Absence removes a grant, unlike a target, which is disabled. A target's
+// measurements are the product; a grant holds no data, and the dangerous
+// direction for authorisation is the one that leaves stale access in place.
+func TestAbsentGrantIsRemoved(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	if _, err := Import(ctx, s, []byte(grantSample), false); err != nil {
+		t.Fatal(err)
+	}
+	withoutGrant := strings.Split(grantSample, "[[grants]]")[0] + "\n[[grants]]\ngroup = \"other\"\npath = \"Klanten\"\nrole = \"editor\"\n"
+	sum, err := Import(ctx, s, []byte(withoutGrant), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.GrantsRemoved != 1 {
+		t.Errorf("removed %d grants, want 1: %s", sum.GrantsRemoved, sum)
+	}
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Group != "other" {
+		t.Errorf("grants after the second import = %+v", got)
+	}
+}
+
+// A file that never mentions grants must leave them alone: importing a
+// targets-only file is not a request to revoke everyone's access.
+func TestFileWithoutGrantsLeavesThemAlone(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	if _, err := Import(ctx, s, []byte(grantSample), false); err != nil {
+		t.Fatal(err)
+	}
+	targetsOnly := strings.Split(grantSample, "[[grants]]")[0]
+	if _, err := Import(ctx, s, []byte(targetsOnly), false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("a targets-only import revoked access: %d grants left", len(got))
+	}
+}
+
+func TestGrantRejectsUnknownPathAndRole(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	bad := strings.Replace(grantSample, `path = "Klanten/GemeenteX"`, `path = "Klanten/Nope"`, 1)
+	if _, err := Import(ctx, s, []byte(bad), false); err == nil {
+		t.Error("a grant on a nonexistent path was accepted")
+	}
+	bad = strings.Replace(grantSample, `role = "viewer"`, `role = "admin"`, 1)
+	if _, err := Import(ctx, s, []byte(bad), false); err == nil {
+		t.Error("a grant of the global admin role was accepted")
+	}
+}

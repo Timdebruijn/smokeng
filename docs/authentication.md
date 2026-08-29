@@ -42,18 +42,18 @@ in Authentik and Keycloak that is a scope or mapper you have to add explicitly.
 
 ## Roles
 
-| Role | May |
-| --- | --- |
-| `viewer` | Read graphs, targets, alert rules and firing alerts |
-| `admin` | Everything a viewer may, plus create, edit and delete targets and alert rules |
+`admin` comes from the ID token: if the claim named by `--oidc-admin-claim` contains
+`--oidc-admin-value`, the user is a global admin. The claim is read as a string, a comma-
+or space-separated list, or an array. If `--oidc-admin-value` is empty, **every
+authenticated user is an admin** — fine for a small team, wrong for a large one.
 
-Role comes from the ID token. If `--oidc-admin-value` is empty, **every authenticated user
-is an admin** — fine for a small team, wrong for a large one. When it is set, the claim is
-read as a string, a comma- or space-separated list, or an array, and an exact match grants
-admin. Everyone else is a viewer.
+Everyone else gets what their **grants** give them, plus whatever `--default-role` allows
+a user with no grants. That is where per-subtree access lives — one customer seeing only
+their own targets, for instance — and it has its own guide:
+[Access control](access-control.md).
 
-Anyone your provider lets in gets at least viewer. Restrict who can authenticate at the
-provider, not here.
+Restrict *who may authenticate at all* at the provider. smokeng decides what a signed-in
+user may reach; it does not decide who may sign in.
 
 ## Sessions
 
