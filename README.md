@@ -398,13 +398,21 @@ builds for linux/amd64, arm64, 386, arm and riscv64.
 
 | Path | Contents |
 |---|---|
-| `cmd/smokeng` | the binary: `serve`, `config`, (v0.4) `agent` |
+| `cmd/smokeng` | the binary: `serve`, `config`, `agent`, `version` |
 | `internal/tree` | target tree, inheritance resolution with provenance |
-| `internal/probe` | scheduler + ICMP engine (skeleton) |
-| `internal/store` | storage interface, SQLite backend, samples codec |
-| `internal/api` | HTTP API, Arrow serialization |
-| `internal/config` | TOML import/export, SmokePing importer (skeleton) |
-| `internal/ingest` | signed agent ingest, v0.4 (skeleton) |
+| `internal/probe` | scheduler + ICMP engine |
+| `internal/probe/timestamp` | kernel packet timestamping and the socket error queue |
+| `internal/probe/dnscache` | TTL-respecting hostname resolution |
+| `internal/probe/trace` | path discovery, to see whether the route changed |
+| `internal/store` | storage interface, SQLite backend |
+| `internal/store/enc` | versioned samples-blob codec |
+| `internal/api` | HTTP API, Arrow serialization, embedded web UI |
+| `internal/auth` | OIDC login and the two roles |
+| `internal/config` | TOML import/export, SmokePing importer |
+| `internal/alert` | rule evaluation, hysteresis, webhook notification |
+| `internal/agent` | remote node: assignment pull, local buffer, signed push |
+| `internal/ingest` | signed agent protocol: batch push, assignment pull |
+| `internal/metrics` | Prometheus exposition of smokeng's own health |
 | `web` | React frontend, embedded into the binary |
 
 See [DESIGN.md](DESIGN.md) for the data model, rendering pipeline, agent protocol and
