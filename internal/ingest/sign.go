@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -128,9 +129,18 @@ type Agent struct {
 // Verifier checks signed requests. It is safe for concurrent use.
 type Verifier struct {
 	// Lookup returns the enrolled agent, if any.
-	Lookup func(id int64) (Agent, bool)
-	nonces nonceCache
-	limits rateLimiters
+	Lookup   func(id int64) (Agent, bool)
+	nonces   nonceCache
+	limits   rateLimiters
+	accepted atomic.Int64
+	rejected atomic.Int64
+}
+
+// Stats reports how ingest is faring. Rejections are counted without a
+// breakdown by reason: the log carries that, and a label per reason would let
+// anyone who can reach /metrics probe which check they are failing.
+func (v *Verifier) Stats() (accepted, rejected int64) {
+	return v.accepted.Load(), v.rejected.Load()
 }
 
 // ErrRejected is what callers should return to the network. The specific
@@ -142,6 +152,16 @@ var ErrRejected = errors.New("rejected")
 // The order is fixed by the design: cheap and non-cryptographic checks first,
 // so a flood of junk cannot make the master do signature maths.
 func (v *Verifier) Check(s Signed, now time.Time) (Agent, error) {
+	agent, err := v.check(s, now)
+	if err != nil {
+		v.rejected.Add(1)
+	} else {
+		v.accepted.Add(1)
+	}
+	return agent, err
+}
+
+func (v *Verifier) check(s Signed, now time.Time) (Agent, error) {
 	agent, ok := v.Lookup(s.AgentID)
 	if !ok {
 		return agent, fmt.Errorf("%w: unknown agent %d", ErrRejected, s.AgentID)

@@ -43,6 +43,10 @@ type Engine struct {
 	results   chan store.Measurement
 	late      atomic.Int64 // replies that arrived after their bucket finalized
 	overflows atomic.Int64 // measurements taken while the receive queue dropped replies
+	written   atomic.Int64
+	writeErrs atomic.Int64
+	dnsErrs   atomic.Int64
+	dropped   atomic.Int64 // measurements lost because the results channel was full
 
 	mu       sync.Mutex
 	conns    map[connKey]*conn
@@ -246,6 +250,7 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			// No address, no measurement: the gap in the data is the honest
 			// representation (DESIGN.md §8.2).
 			log.Printf("probe: target %d (%s): resolve: %v", spec.TargetID, spec.Host, err)
+			e.dnsErrs.Add(1)
 			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
 				return
 			}
@@ -306,6 +311,7 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			case e.results <- m:
 			default:
 				log.Printf("probe: results backlog full, dropping measurement for target %d", spec.TargetID)
+				e.dropped.Add(1)
 			}
 		}(col, bucket)
 		if aborted {
@@ -326,6 +332,9 @@ func (e *Engine) writer(stop <-chan struct{}) {
 		wctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := e.st.WriteMeasurements(wctx, batch); err != nil {
 			log.Printf("probe: write %d measurements: %v", len(batch), err)
+			e.writeErrs.Add(1)
+		} else {
+			e.written.Add(int64(len(batch)))
 		}
 		// Evaluate only what was stored, and only after storing it: an alert
 		// that outlives its evidence would be unexplainable.
@@ -381,11 +390,37 @@ func sleepUntil(ctx context.Context, t time.Time) bool {
 	}
 }
 
-// LateReplies counts replies that arrived after their bucket finalized; it
-// feeds the upcoming /metrics endpoint.
-func (e *Engine) LateReplies() int64 { return e.late.Load() }
+// Stats reports the prober's own health. Everything here is about smokeng,
+// never about the network: the measurements themselves live in the store at
+// full resolution and are read as Arrow.
+type Stats struct {
+	// LateReplies arrived after their bucket had been finalized.
+	LateReplies int64
+	// SocketOverflows counts measurements taken while the kernel was dropping
+	// replies for want of receive-queue space — loss that is ours, not the
+	// network's. A non-zero value means smokeng is behind, not the link.
+	SocketOverflows     int64
+	MeasurementsWritten int64
+	WriteErrors         int64
+	DNSFailures         int64
+	// Dropped measurements were finalized but never stored, because the
+	// writer could not keep up. This should always be zero.
+	Dropped int64
+	// ActiveTargets is how many target loops are currently running.
+	ActiveTargets int64
+}
 
-// SocketOverflows counts measurements taken while the kernel was dropping
-// replies for want of receive-queue space — loss that is ours, not the
-// network's. A non-zero value means smokeng is behind, not the link.
-func (e *Engine) SocketOverflows() int64 { return e.overflows.Load() }
+func (e *Engine) Stats() Stats {
+	e.mu.Lock()
+	active := int64(len(e.running))
+	e.mu.Unlock()
+	return Stats{
+		LateReplies:         e.late.Load(),
+		SocketOverflows:     e.overflows.Load(),
+		MeasurementsWritten: e.written.Load(),
+		WriteErrors:         e.writeErrs.Load(),
+		DNSFailures:         e.dnsErrs.Load(),
+		Dropped:             e.dropped.Load(),
+		ActiveTargets:       active,
+	}
+}

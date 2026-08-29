@@ -52,7 +52,7 @@ func ingestFixture(t *testing.T) (http.Handler, *store.SQLite, int64, ed25519.Pr
 			t.Fatal(err)
 		}
 	}
-	return New(st, nil, nil, fstest.MapFS{}), st, rec.ID, priv, mine.ID, theirs.ID
+	return New(st, Options{}, fstest.MapFS{}), st, rec.ID, priv, mine.ID, theirs.ID
 }
 
 func submit(t *testing.T, h http.Handler, id int64, key ed25519.PrivateKey,

@@ -224,6 +224,31 @@ survive a restart; deleting the `session_key` row invalidates every session at o
 Without `--oidc-issuer`, smokeng runs unauthenticated and refuses to listen anywhere but
 loopback unless explicitly overridden.
 
+## Monitoring smokeng itself
+
+`/metrics` serves Prometheus text exposition about smokeng's own health: targets being
+probed, measurements written, write errors, dropped measurements, late replies, socket
+overflows, DNS failures, agent enrolment and last contact, ingest accepted and rejected,
+and alerts firing.
+
+What it deliberately does not carry is measurement data. Latency and loss live in the
+store at full resolution and are read as Arrow; pushing them through Prometheus would
+flatten every interval to a single number, which is the exact loss this project exists to
+avoid. These metrics answer "is smokeng healthy", never "what is the network doing" — and
+a test asserts that no sample value ever comes from a measurement.
+
+The endpoint names agents and counts targets, so it sits behind the session like every
+other read. Open it for a scraper explicitly:
+
+```bash
+smokeng serve --db smokeng.db --metrics-public
+```
+
+Two counters deserve a standing alert of your own: `smokeng_measurements_dropped_total`
+above zero means measurements were taken and then lost because the writer fell behind,
+and `smokeng_socket_overflow_measurements_total` climbing means the loss you are looking
+at is partly smokeng's rather than the network's.
+
 ## Measurement quality
 
 Every measurement records the conditions it was taken under, because a number is only

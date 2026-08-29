@@ -34,7 +34,7 @@ func authedServer(t *testing.T, sess *auth.Session) http.Handler {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return New(st, nil, &fakeAuth{session: sess}, fstest.MapFS{})
+	return New(st, Options{Auth: &fakeAuth{session: sess}}, fstest.MapFS{})
 }
 
 // Every route that changes state must require an admin, and every route that
@@ -115,7 +115,7 @@ func TestUnauthenticatedModeReportsItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	h := New(st, nil, nil, fstest.MapFS{})
+	h := New(st, Options{}, fstest.MapFS{})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/me", nil))
@@ -127,5 +127,62 @@ func TestUnauthenticatedModeReportsItself(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/targets", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("targets without auth configured = %d, want 200", rec.Code)
+	}
+}
+
+// /metrics names agents and counts targets, so it stays behind the session by
+// default and opens only when an operator asks for it.
+func TestMetricsAccess(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	guarded := New(st, Options{Auth: &fakeAuth{}}, fstest.MapFS{})
+	rec := httptest.NewRecorder()
+	guarded.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous /metrics = %d, want 401 by default", rec.Code)
+	}
+
+	open := New(st, Options{Auth: &fakeAuth{}, MetricsPublic: true}, fstest.MapFS{})
+	rec = httptest.NewRecorder()
+	open.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("anonymous /metrics with --metrics-public = %d, want 200", rec.Code)
+	}
+}
+
+// The point of these metrics is that they describe smokeng, not the network:
+// latency and loss must never leak into a scrape.
+func TestMetricsCarryNoMeasurementData(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.WriteMeasurements(t.Context(), []store.Measurement{{
+		TargetID: 1, TS: 1_756_400_000, Sent: 5, Received: 3,
+		Samples: []uint32{1234, 5678, 9012},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := New(st, Options{Version: "test"}, fstest.MapFS{})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/metrics = %d", rec.Code)
+	}
+	if !strings.Contains(body, `smokeng_build_info{version="test"} 1`) {
+		t.Errorf("no build info in:\n%s", body)
+	}
+	for _, forbidden := range []string{"rtt", "latency", "median", "1234", "5678", "9012"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("scrape leaks measurement data (%q):\n%s", forbidden, body)
+		}
 	}
 }

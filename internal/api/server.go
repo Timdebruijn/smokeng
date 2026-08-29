@@ -41,14 +41,37 @@ type server struct {
 	auth     Authenticator
 	agents   AgentStore
 	verifier *ingest.Verifier
+	probe    ProbeStats
+	ingest   IngestStats
+	version  string
+}
+
+// Options are the parts of the server that are optional or supplied later.
+type Options struct {
+	Alerts AlertView
+	Auth   Authenticator
+	// Probe is the local engine, absent on an instance that only serves.
+	Probe   ProbeStats
+	Version string
+	// MetricsPublic serves /metrics without a session even when
+	// authentication is enabled, so Prometheus can scrape it. Off by default:
+	// an endpoint that bypasses login should be asked for, not assumed.
+	MetricsPublic bool
 }
 
 // New builds the HTTP handler: API routes plus the embedded frontend.
 // authenticator may be nil, in which case every request is treated as an
 // admin — permitted only on loopback, which serve enforces.
 // /metrics (Prometheus self-observability, §7.1) is still to come.
-func New(st Store, alerts AlertView, authenticator Authenticator, webFS fs.FS) http.Handler {
-	s := &server{st: st, alerts: alerts, auth: authenticator, agents: st}
+func New(st Store, opts Options, webFS fs.FS) http.Handler {
+	authenticator := opts.Auth
+	s := &server{
+		st: st, alerts: opts.Alerts, auth: authenticator, agents: st,
+		probe: opts.Probe, version: opts.Version,
+	}
+	if s.version == "" {
+		s.version = "unknown"
+	}
 	// Agents authenticate with their own Ed25519 signatures, never with a
 	// browser session, so the verifier reads the same enrolment table the
 	// admin CLI writes.
@@ -65,6 +88,7 @@ func New(st Store, alerts AlertView, authenticator Authenticator, webFS fs.FS) h
 		}
 		return ingest.Agent{}, false
 	}}
+	s.ingest = s.verifier
 	viewer := func(h http.HandlerFunc) http.HandlerFunc { return s.requireRole(auth.RoleViewer, h) }
 	admin := func(h http.HandlerFunc) http.HandlerFunc { return s.requireRole(auth.RoleAdmin, h) }
 
@@ -77,6 +101,14 @@ func New(st Store, alerts AlertView, authenticator Authenticator, webFS fs.FS) h
 	mux.HandleFunc("GET /api/v1/me", s.handleMe)
 	if authenticator != nil {
 		authenticator.Routes(mux)
+	}
+	// /metrics carries no measurement data, but it does name agents and count
+	// targets, so it stays behind the session unless explicitly opened for a
+	// scraper.
+	if opts.MetricsPublic {
+		mux.HandleFunc("GET /metrics", s.handleMetrics)
+	} else {
+		mux.HandleFunc("GET /metrics", viewer(s.handleMetrics))
 	}
 
 	mux.HandleFunc("GET /api/v1/targets", viewer(s.handleTargets))

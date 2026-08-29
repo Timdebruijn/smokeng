@@ -157,6 +157,8 @@ func serve(args []string) error {
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	insecure := fs.Bool("i-know-this-is-unauthenticated", false,
 		"allow listening on a non-loopback address without authentication (DESIGN.md §7.1)")
+	metricsPublic := fs.Bool("metrics-public", false,
+		"serve /metrics without a session so Prometheus can scrape it")
 	webhook := fs.String("alert-webhook", "",
 		"POST firing and resolved alerts to this URL in Alertmanager's v2 format")
 	oidcIssuer := fs.String("oidc-issuer", "", "OIDC issuer URL; enables authentication")
@@ -238,8 +240,11 @@ func serve(args []string) error {
 		return err
 	}
 	srv := &http.Server{
-		Addr:    *listen,
-		Handler: api.New(st, alertViewOrNil(alerts), authOrNil(authenticator), dist),
+		Addr: *listen,
+		Handler: api.New(st, api.Options{
+			Alerts: alertViewOrNil(alerts), Auth: authOrNil(authenticator),
+			Probe: eng, Version: version, MetricsPublic: *metricsPublic,
+		}, dist),
 	}
 
 	errc := make(chan error, 1)
