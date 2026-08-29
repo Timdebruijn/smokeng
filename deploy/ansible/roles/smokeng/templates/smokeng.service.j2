@@ -1,0 +1,48 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=smokeng
+Documentation=https://github.com/{{ smokeng_repo }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ smokeng_user }}
+Group={{ smokeng_group }}
+ExecStart={{ smokeng_bin }} serve \
+    --db {{ smokeng_db }} \
+    --listen {{ smokeng_listen }}{% if smokeng_allow_unauthenticated | bool %} \
+    --i-know-this-is-unauthenticated{% endif %}{% if smokeng_metrics_public | bool %} \
+    --metrics-public{% endif %}{% if smokeng_alert_webhook | length > 0 %} \
+    --alert-webhook {{ smokeng_alert_webhook }}{% endif %}{% if smokeng_oidc_issuer | length > 0 %} \
+    --oidc-issuer {{ smokeng_oidc_issuer }} \
+    --oidc-client-id {{ smokeng_oidc_client_id }} \
+    --oidc-client-secret {{ smokeng_oidc_client_secret }} \
+    --oidc-admin-claim {{ smokeng_oidc_admin_claim }}{% if smokeng_oidc_redirect_url | length > 0 %} \
+    --oidc-redirect-url {{ smokeng_oidc_redirect_url }}{% endif %}{% if smokeng_oidc_admin_value | length > 0 %} \
+    --oidc-admin-value {{ smokeng_oidc_admin_value }}{% endif %}{% endif %}
+
+Restart=always
+RestartSec=5
+
+# smokeng needs no privileges beyond the ping_group_range sysctl this role
+# sets, so it can be locked down hard. NoNewPrivileges is compatible with
+# unprivileged datagram ICMP; it is *not* compatible with the CAP_NET_RAW
+# fallback, so if you drop the sysctl you must drop this line too and add
+# AmbientCapabilities=CAP_NET_RAW instead.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths={{ smokeng_state_dir }}
+
+[Install]
+WantedBy=multi-user.target

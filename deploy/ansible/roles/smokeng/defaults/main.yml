@@ -1,0 +1,41 @@
+---
+# Which release to install. Pin it: an unattended "latest" turns every play
+# into an unreviewed upgrade.
+smokeng_version: v0.1.1
+smokeng_repo: Timdebruijn/smokeng
+
+smokeng_user: smokeng
+smokeng_group: smokeng
+smokeng_bin: /usr/local/bin/smokeng
+smokeng_state_dir: /var/lib/smokeng
+smokeng_db: "{{ smokeng_state_dir }}/smokeng.db"
+
+# Loopback by default. Binding anywhere else without authentication needs
+# smokeng_allow_unauthenticated, which is spelled out on purpose.
+smokeng_listen: 127.0.0.1:8080
+smokeng_allow_unauthenticated: false
+
+# Prometheus cannot present a session cookie, so /metrics needs this to be
+# scrapable at all.
+smokeng_metrics_public: false
+
+# Alertmanager-compatible endpoint. Empty means rules are stored but never
+# evaluated.
+smokeng_alert_webhook: ""
+
+# OIDC. Setting the issuer enables authentication; the rest is only read then.
+smokeng_oidc_issuer: ""
+smokeng_oidc_client_id: ""
+smokeng_oidc_client_secret: ""
+smokeng_oidc_redirect_url: ""
+smokeng_oidc_admin_claim: groups
+smokeng_oidc_admin_value: ""
+
+# Optional path on the controller to a targets.toml to import after install.
+smokeng_targets_file: ""
+smokeng_targets_prune: false
+
+# Restrict unprivileged ICMP to the service's own group rather than opening it
+# to every user on the box. Override with a literal "low high" pair if you have
+# a reason to widen it.
+smokeng_ping_group_range: ""

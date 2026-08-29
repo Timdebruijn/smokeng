@@ -1,0 +1,73 @@
+# Deploying smokeng with Ansible
+
+An idempotent role that installs smokeng as a systemd service on a Debian-family
+host: release binary verified against the release's own `SHA256SUMS`, a system
+user, unprivileged ICMP granted to that user's group alone, a hardened unit, and
+an optional declarative import of the target tree.
+
+## Requirements
+
+- Ansible with the `ansible.posix` collection: `ansible-galaxy install -r requirements.yml`
+- A Debian-family target with systemd, reachable over SSH with sudo
+
+## Quick start
+
+```bash
+cp inventory.example.ini inventory.ini
+cp group_vars/smokeng.example.yml group_vars/smokeng.yml
+$EDITOR inventory.ini group_vars/smokeng.yml
+ansible-galaxy install -r requirements.yml
+ansible-playbook -i inventory.ini site.yml
+```
+
+`inventory.ini`, `group_vars/*.yml` (except the examples) and `targets.local.toml`
+are gitignored: they name your hosts.
+
+## What it does
+
+| Step | Detail |
+| --- | --- |
+| Binary | Downloads `smokeng-linux-<arch>` for the pinned version and verifies it against the release's `SHA256SUMS`. Architecture comes from the host's facts. |
+| User | System user and group, no login shell, no home. |
+| ICMP | Sets `net.ipv4.ping_group_range` to the service group's gid **only**, so unprivileged ICMP is not a machine-wide capability. |
+| Unit | `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `MemoryDenyWriteExecute`, and `ReadWritePaths` limited to the state directory. smokeng needs no privileges beyond that sysctl. |
+| Targets | Optional: ships a `targets.toml` and imports it. The import is declarative, so it runs every play and reports a change only when it made one. |
+
+Re-running the play changes nothing. That is the point: it is safe from cron,
+CI or Semaphore.
+
+## Variables
+
+The full set is in [`roles/smokeng/defaults/main.yml`](roles/smokeng/defaults/main.yml).
+The ones that matter:
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `smokeng_version` | `v0.1.1` | Pin it. An unattended "latest" is an unreviewed upgrade. |
+| `smokeng_listen` | `127.0.0.1:8080` | |
+| `smokeng_allow_unauthenticated` | `false` | Required to bind off loopback without OIDC. The role refuses otherwise. |
+| `smokeng_oidc_issuer` | `""` | Setting it enables authentication; see [../../docs/authentication.md](../../docs/authentication.md) |
+| `smokeng_metrics_public` | `false` | Prometheus cannot present a session cookie |
+| `smokeng_alert_webhook` | `""` | Empty means rules are stored but never evaluated |
+| `smokeng_targets_file` | `""` | Path on the controller to a `targets.toml` |
+| `smokeng_targets_prune` | `false` | Delete absent targets instead of disabling them |
+
+Put the OIDC client secret in a vault, not in `group_vars` in the clear.
+
+## A note on exposure
+
+The role refuses to bind off loopback unless you have either configured OIDC or
+explicitly set `smokeng_allow_unauthenticated`. An unauthenticated instance on a
+routable address lets anyone who reaches it edit your targets. On a trusted LAN
+that may be an acceptable trade for a test box — but it should be a decision,
+which is why it has to be written down.
+
+The durable arrangement is a TLS-terminating reverse proxy in front and OIDC
+behind it.
+
+## Adding a remote agent
+
+The role installs a master. To measure the same targets from somewhere else, see
+[../../docs/agents.md](../../docs/agents.md): enrol the agent's public key with
+`smokeng agent add` on this host, then run `smokeng agent run` on the other one.
+Each vantage point becomes its own series, never an average of the two.

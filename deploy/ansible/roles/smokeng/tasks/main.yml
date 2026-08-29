@@ -1,0 +1,125 @@
+---
+- name: Refuse to run anywhere the unit and paths would not fit
+  ansible.builtin.assert:
+    that: ansible_facts['os_family'] == 'Debian'
+    fail_msg: >-
+      This role targets Debian-family hosts with systemd. smokeng itself is a
+      static binary and runs anywhere; only this role is opinionated.
+
+- name: Refuse to expose an unauthenticated instance by accident
+  ansible.builtin.assert:
+    that:
+      - smokeng_listen is match('^(127\.0\.0\.1|\[::1\]|localhost):')
+        or smokeng_allow_unauthenticated | bool
+        or smokeng_oidc_issuer | length > 0
+    fail_msg: >-
+      smokeng_listen is not on loopback and neither OIDC nor
+      smokeng_allow_unauthenticated is set. Anyone who can reach that address
+      would be able to edit your targets.
+
+# Ansible hands its temp module file to the unprivileged user with an ACL, and
+# the Debian cloud image ships without setfacl.
+- name: Ensure Ansible can drop privileges to the service user
+  ansible.builtin.apt:
+    name: acl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the service group
+  ansible.builtin.group:
+    name: "{{ smokeng_group }}"
+    system: true
+  register: smokeng_group_info
+
+- name: Create the service user
+  ansible.builtin.user:
+    name: "{{ smokeng_user }}"
+    group: "{{ smokeng_group }}"
+    home: "{{ smokeng_state_dir }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+# smokeng pings from unprivileged datagram ICMP sockets. The kernel gates those
+# behind a range of group ids; granting it to the service's own group keeps it
+# from being a machine-wide capability.
+- name: Permit unprivileged ICMP for the service group
+  ansible.posix.sysctl:
+    name: net.ipv4.ping_group_range
+    value: >-
+      {{ smokeng_ping_group_range
+         if smokeng_ping_group_range | length > 0
+         else smokeng_group_info.gid ~ ' ' ~ smokeng_group_info.gid }}
+    sysctl_file: /etc/sysctl.d/99-smokeng.conf
+    sysctl_set: true
+    reload: true
+
+- name: Create the state directory
+  ansible.builtin.file:
+    path: "{{ smokeng_state_dir }}"
+    state: directory
+    owner: "{{ smokeng_user }}"
+    group: "{{ smokeng_group }}"
+    mode: "0750"
+
+# The checksum comes from the release's own SHA256SUMS, so a truncated or
+# swapped download fails here rather than at first run.
+- name: Install the smokeng binary
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/{{ smokeng_repo }}/releases/download/{{ smokeng_version }}/smokeng-linux-{{ smokeng_arch }}
+    dest: "{{ smokeng_bin }}"
+    checksum: >-
+      sha256:https://github.com/{{ smokeng_repo }}/releases/download/{{ smokeng_version }}/SHA256SUMS
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart smokeng
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: smokeng.service.j2
+    dest: /etc/systemd/system/smokeng.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart smokeng
+
+- name: Flush handlers so the service is current before the tree is imported
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start smokeng
+  ansible.builtin.systemd_service:
+    name: smokeng
+    enabled: true
+    state: started
+
+- name: Ship the target tree
+  ansible.builtin.copy:
+    src: "{{ smokeng_targets_file }}"
+    dest: "{{ smokeng_state_dir }}/targets.toml"
+    owner: "{{ smokeng_user }}"
+    group: "{{ smokeng_group }}"
+    mode: "0640"
+  when: smokeng_targets_file | length > 0
+
+# The import is declarative and idempotent, so it runs every time and reports
+# what it actually did. A handler keyed on the copy would silently skip the
+# import whenever the file was already in place but the database was not.
+- name: Import the target tree
+  ansible.builtin.command:
+    argv: >-
+      {{ [smokeng_bin, 'config', 'import', '--db', smokeng_db]
+         + (['--prune'] if smokeng_targets_prune | bool else [])
+         + [smokeng_state_dir ~ '/targets.toml'] }}
+  become: true
+  become_user: "{{ smokeng_user }}"
+  when: smokeng_targets_file | length > 0
+  register: smokeng_import
+  changed_when: >-
+    smokeng_import.stdout_lines
+    | reject('search', '0 created, 0 updated, 0 disabled, 0 deleted')
+    | list | length > 0

@@ -13,3 +13,9 @@ web/node_modules/
 
 # OS noise
 .DS_Store
+
+# real Ansible inventories and their vars name your hosts; keep the examples
+deploy/ansible/inventory.ini
+deploy/ansible/group_vars/*.yml
+!deploy/ansible/group_vars/*.example.yml
+deploy/ansible/targets.local.toml

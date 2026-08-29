@@ -1,0 +1,21 @@
+---
+# Copy to group_vars/smokeng.yml and adjust. Real inventories and group_vars
+# are gitignored: they name your hosts.
+
+# Loopback is the default. To reach the UI from elsewhere, put a
+# TLS-terminating proxy in front and enable OIDC rather than opening it up.
+# smokeng_listen: 0.0.0.0:8080
+# smokeng_oidc_issuer: https://auth.example.org/application/o/smokeng/
+# smokeng_oidc_client_id: smokeng
+# smokeng_oidc_client_secret: "{{ vault_smokeng_client_secret }}"
+# smokeng_oidc_redirect_url: https://smokeng.example.org/auth/callback
+# smokeng_oidc_admin_value: smokeng-admins
+
+# On a trusted LAN you can skip authentication instead, but you have to say so:
+# smokeng_allow_unauthenticated: true
+
+# Prometheus cannot present a session cookie.
+# smokeng_metrics_public: true
+
+# smokeng_alert_webhook: http://alertmanager:9093/api/v2/alerts
+# smokeng_targets_file: targets.example.toml

@@ -1,0 +1,40 @@
+# A starting tree: two public resolvers, the local gateway, and loopback as a
+# control. Loopback never leaves the machine, so anything visible on it is the
+# host or the measurement method rather than the network — which makes it the
+# reference every other plot is read against.
+
+[defaults]
+interval_s = 60
+pings_per_interval = 20
+probe_mode = "burst"
+burst_gap_ms = 10
+trace_interval_s = 300
+
+[default_alerts.loss]
+metric = "loss"
+op = ">"
+threshold = 20
+for_intervals = 3
+
+[targets."Internet"]
+title = "Internet"
+
+[targets."Internet/cloudflare-v4"]
+host = "1.1.1.1"
+address_family = "v4"
+
+[targets."Internet/quad9-v4"]
+host = "9.9.9.9"
+address_family = "v4"
+
+[targets."Local"]
+title = "Local"
+trace_interval_s = 0
+
+[targets."Local/gateway"]
+host = "192.0.2.1"
+address_family = "v4"
+
+[targets."Local/loopback"]
+host = "127.0.0.1"
+address_family = "v4"

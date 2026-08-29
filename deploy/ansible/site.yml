@@ -1,0 +1,6 @@
+---
+- name: Install smokeng
+  hosts: smokeng
+  become: true
+  roles:
+    - smokeng
