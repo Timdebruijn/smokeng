@@ -208,7 +208,7 @@ func ParseSmokePing(data []byte, alsoIPv6 bool) (File, []string, error) {
 
 		// Things smokeng does not implement.
 		if v, ok := n.keys["alerts"]; ok {
-			warn("%s: alerts = %q not imported; alerting arrives in v0.3", n.path, v)
+			warn("%s: alerts = %q not imported; smokeng expresses alert rules differently, see docs/alerting.md", n.path, v)
 		}
 		if v, ok := n.keys["parents"]; ok {
 			warn("%s: parents = %q not imported; smokeng has a single target tree, not alternative hierarchies",

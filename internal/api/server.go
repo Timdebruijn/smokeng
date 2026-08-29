@@ -132,10 +132,6 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	return mux
 }
 
-func notImplemented(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "not implemented yet"})
-}
-
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	// The target tree changes under the caller's feet — an admin edit, a TOML
