@@ -2,10 +2,36 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"fmt"
 
 	"smokeng/internal/alert"
 )
+
+// SessionKey returns the persisted session signing key, generating one on
+// first use. Persisting it is what lets sessions survive a restart; deleting
+// the row is the way to invalidate every session at once.
+func (s *SQLite) SessionKey(ctx context.Context) ([]byte, error) {
+	const key = "session_key"
+	var value []byte
+	err := s.db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key = ?", key).Scan(&value)
+	if err == nil && len(value) >= 32 {
+		return value, nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	value = make([]byte, 32)
+	if _, err := rand.Read(value); err != nil {
+		return nil, fmt.Errorf("store: generate session key: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		"INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", key, value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
 
 // ListAlertRules returns every rule, in tree order by the node that defines
 // it. Resolving which rules apply to a target is the tree's job, not the

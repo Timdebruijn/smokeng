@@ -135,6 +135,9 @@ CREATE TABLE alert_state (
   PRIMARY KEY (rule_id, target_id, agent_id)
 ) WITHOUT ROWID;
 `,
+	// v4: server-side secrets that must outlive a restart, starting with the
+	// session signing key — a fresh key on every start would log everyone out.
+	`CREATE TABLE settings (key TEXT PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID`,
 }
 
 func (s *SQLite) migrate() error {

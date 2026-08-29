@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Admin from './Admin'
+import Alerts from './Alerts'
 import Plot from './Plot'
-import { fetchTargets, type Target } from './api'
+import { fetchMe, fetchTargets, logout, type Me, type Target } from './api'
 
 const RANGES: { label: string; seconds: number }[] = [
   { label: '15m', seconds: 15 * 60 },
@@ -11,24 +12,59 @@ const RANGES: { label: string; seconds: number }[] = [
 ]
 const REFRESH_MS = 10_000
 
-type View = 'graphs' | 'targets'
+type View = 'graphs' | 'targets' | 'alerts'
 
 export default function App() {
   const [view, setView] = useState<View>('graphs')
+  const [me, setMe] = useState<Me | null>(null)
+
+  useEffect(() => {
+    fetchMe()
+      .then(setMe)
+      .catch(() => setMe(null))
+  }, [])
+
+  // Until we know otherwise, assume the least: showing controls that turn out
+  // to be refused is worse than showing them a moment late.
+  const isAdmin = me?.role === 'admin'
+  const needsLogin = me?.auth_enabled === true && !me.authenticated
+
   return (
     <main>
       <header>
         <h1>smokeng</h1>
         <nav className="controls">
-          <button className={view === 'graphs' ? 'active' : ''} onClick={() => setView('graphs')}>
-            Graphs
-          </button>
-          <button className={view === 'targets' ? 'active' : ''} onClick={() => setView('targets')}>
-            Targets
-          </button>
+          {(['graphs', 'targets', 'alerts'] as View[]).map((v) => (
+            <button key={v} className={view === v ? 'active' : ''} onClick={() => setView(v)}>
+              {v[0].toUpperCase() + v.slice(1)}
+            </button>
+          ))}
+          {me?.auth_enabled &&
+            (me.authenticated ? (
+              <button
+                title={`${me.email ?? me.subject ?? ''} · ${me.role}`}
+                onClick={() => void logout().then(() => location.reload())}
+              >
+                {me.name ?? me.email ?? 'signed in'} ({me.role}) · sign out
+              </button>
+            ) : (
+              <a className="button" href="/auth/login">
+                Sign in
+              </a>
+            ))}
         </nav>
       </header>
-      {view === 'graphs' ? <Graphs /> : <Admin />}
+      {needsLogin ? (
+        <p>
+          You are not signed in. <a href="/auth/login">Sign in</a> to see measurements.
+        </p>
+      ) : view === 'graphs' ? (
+        <Graphs />
+      ) : view === 'targets' ? (
+        <Admin readOnly={!isAdmin} />
+      ) : (
+        <Alerts isAdmin={isAdmin} />
+      )}
     </main>
   )
 }

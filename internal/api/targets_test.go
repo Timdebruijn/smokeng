@@ -20,7 +20,7 @@ func newTestServer(t *testing.T) (http.Handler, *store.SQLite) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return New(st, nil, fstest.MapFS{}), st
+	return New(st, nil, nil, fstest.MapFS{}), st
 }
 
 func do(t *testing.T, h http.Handler, method, path string, body any) (int, map[string]any) {

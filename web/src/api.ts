@@ -1,5 +1,72 @@
 import { tableFromIPC } from '@uwdata/flechette'
 
+export interface Me {
+  authenticated: boolean
+  auth_enabled: boolean
+  role?: 'viewer' | 'admin'
+  email?: string
+  name?: string
+  subject?: string
+}
+
+export async function fetchMe(): Promise<Me> {
+  const r = await fetch('/api/v1/me', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`me: HTTP ${r.status}`)
+  return (await r.json()) as Me
+}
+
+export async function logout(): Promise<void> {
+  await fetch('/auth/logout', { method: 'POST' })
+}
+
+export interface AlertRule {
+  id: number
+  target_id: number
+  name: string
+  metric: 'loss' | 'median' | 'p95' | 'spread'
+  op: '>' | '<'
+  threshold: number
+  for_intervals: number
+  clear_intervals: number
+  enabled: boolean
+  describes: string
+}
+
+export interface FiringAlert {
+  rule: string
+  metric: string
+  target: string
+  host: string
+  agent: string
+  value: number
+  since?: number
+  describes: string
+}
+
+export async function fetchAlertRules(): Promise<AlertRule[]> {
+  const r = await fetch('/api/v1/alert-rules', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`alert rules: HTTP ${r.status}`)
+  return ((await r.json()) as { rules: AlertRule[] }).rules ?? []
+}
+
+export async function fetchFiringAlerts(): Promise<{ alerts: FiringAlert[]; enabled: boolean }> {
+  const r = await fetch('/api/v1/alerts', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`alerts: HTTP ${r.status}`)
+  return (await r.json()) as { alerts: FiringAlert[]; enabled: boolean }
+}
+
+export function createAlertRule(body: Partial<AlertRule>): Promise<unknown> {
+  return mutate('/api/v1/alert-rules', 'POST', body)
+}
+
+export function updateAlertRule(id: number, body: Partial<AlertRule>): Promise<unknown> {
+  return mutate(`/api/v1/alert-rules/${id}`, 'PATCH', body)
+}
+
+export function deleteAlertRule(id: number): Promise<unknown> {
+  return mutate(`/api/v1/alert-rules/${id}`, 'DELETE')
+}
+
 /** Where an effective setting came from: this node, or the ancestor that set it. */
 export type Provenance = 'local' | { id: number; name: string; path: string }
 

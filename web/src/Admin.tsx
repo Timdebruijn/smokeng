@@ -20,11 +20,14 @@ const SETTINGS: { key: SettingKey; label: string; unit?: string; kind: 'number' 
   { key: 'agents', label: 'Agents', kind: 'text' },
 ]
 
-export default function Admin() {
+export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
   const [targets, setTargets] = useState<Target[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState(false)
+  // A viewer may look at the tree but not change it. The server enforces this
+  // regardless; disabling the controls only saves them a refused request.
+  const busy = saving || readOnly
 
   const reload = useCallback(async () => {
     try {
@@ -44,7 +47,7 @@ export default function Admin() {
   // server is the authority on what the tree now looks like.
   const run = useCallback(
     async (fn: () => Promise<unknown>) => {
-      setBusy(true)
+      setSaving(true)
       setError(null)
       try {
         await fn()
@@ -54,7 +57,7 @@ export default function Admin() {
         setError((e as Error).message)
         return false
       } finally {
-        setBusy(false)
+        setSaving(false)
       }
     },
     [reload],

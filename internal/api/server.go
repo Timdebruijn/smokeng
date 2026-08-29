@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"smokeng/internal/alert"
+	"smokeng/internal/auth"
 	"smokeng/internal/store"
 )
 
@@ -29,27 +30,41 @@ type AlertView interface {
 type server struct {
 	st     AlertStore
 	alerts AlertView
+	auth   Authenticator
 }
 
 // New builds the HTTP handler: API routes plus the embedded frontend.
+// authenticator may be nil, in which case every request is treated as an
+// admin — permitted only on loopback, which serve enforces.
 // /metrics (Prometheus self-observability, §7.1) is still to come.
-func New(st AlertStore, alerts AlertView, webFS fs.FS) http.Handler {
-	s := &server{st: st, alerts: alerts}
+func New(st AlertStore, alerts AlertView, authenticator Authenticator, webFS fs.FS) http.Handler {
+	s := &server{st: st, alerts: alerts, auth: authenticator}
+	viewer := func(h http.HandlerFunc) http.HandlerFunc { return s.requireRole(auth.RoleViewer, h) }
+	admin := func(h http.HandlerFunc) http.HandlerFunc { return s.requireRole(auth.RoleAdmin, h) }
+
 	mux := http.NewServeMux()
+	// Unauthenticated: a health check that needs a login is not a health
+	// check, and the UI shell holds no data of its own.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok\n"))
 	})
-	mux.HandleFunc("GET /api/v1/targets", s.handleTargets)
-	mux.HandleFunc("POST /api/v1/targets", s.handleCreateTarget)
-	mux.HandleFunc("PATCH /api/v1/targets/{id}", s.handleUpdateTarget)
-	mux.HandleFunc("DELETE /api/v1/targets/{id}", s.handleDeleteTarget)
-	mux.HandleFunc("GET /api/v1/measurements", s.handleMeasurements)
-	mux.HandleFunc("GET /api/v1/alert-rules", s.handleAlertRules)
-	mux.HandleFunc("POST /api/v1/alert-rules", s.handleCreateAlertRule)
-	mux.HandleFunc("PATCH /api/v1/alert-rules/{id}", s.handleUpdateAlertRule)
-	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", s.handleDeleteAlertRule)
-	mux.HandleFunc("GET /api/v1/alerts", s.handleFiringAlerts)
-	// Signed agent ingest (§9); v0.4.
+	mux.HandleFunc("GET /api/v1/me", s.handleMe)
+	if authenticator != nil {
+		authenticator.Routes(mux)
+	}
+
+	mux.HandleFunc("GET /api/v1/targets", viewer(s.handleTargets))
+	mux.HandleFunc("POST /api/v1/targets", admin(s.handleCreateTarget))
+	mux.HandleFunc("PATCH /api/v1/targets/{id}", admin(s.handleUpdateTarget))
+	mux.HandleFunc("DELETE /api/v1/targets/{id}", admin(s.handleDeleteTarget))
+	mux.HandleFunc("GET /api/v1/measurements", viewer(s.handleMeasurements))
+	mux.HandleFunc("GET /api/v1/alert-rules", viewer(s.handleAlertRules))
+	mux.HandleFunc("POST /api/v1/alert-rules", admin(s.handleCreateAlertRule))
+	mux.HandleFunc("PATCH /api/v1/alert-rules/{id}", admin(s.handleUpdateAlertRule))
+	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", admin(s.handleDeleteAlertRule))
+	mux.HandleFunc("GET /api/v1/alerts", viewer(s.handleFiringAlerts))
+	// Signed agent ingest (§9); v0.4. Agents authenticate with their own
+	// Ed25519 signatures, not with a browser session.
 	mux.HandleFunc("POST /api/v1/ingest", notImplemented)
 	mux.Handle("/", http.FileServerFS(webFS))
 	return mux

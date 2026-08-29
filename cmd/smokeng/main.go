@@ -20,6 +20,7 @@ import (
 
 	"smokeng/internal/alert"
 	"smokeng/internal/api"
+	"smokeng/internal/auth"
 	"smokeng/internal/config"
 	"smokeng/internal/probe"
 	"smokeng/internal/store"
@@ -150,13 +151,22 @@ func serve(args []string) error {
 		"allow listening on a non-loopback address without authentication (DESIGN.md §7.1)")
 	webhook := fs.String("alert-webhook", "",
 		"POST firing and resolved alerts to this URL in Alertmanager's v2 format")
+	oidcIssuer := fs.String("oidc-issuer", "", "OIDC issuer URL; enables authentication")
+	oidcClientID := fs.String("oidc-client-id", "", "OIDC client id")
+	oidcSecret := fs.String("oidc-client-secret", "", "OIDC client secret")
+	oidcRedirect := fs.String("oidc-redirect-url", "",
+		"OIDC redirect URL, e.g. https://smokeng.example.org/auth/callback")
+	oidcAdminClaim := fs.String("oidc-admin-claim", "groups",
+		"ID-token claim listing the user's groups")
+	oidcAdminValue := fs.String("oidc-admin-value", "",
+		"membership in this group grants admin; empty means every authenticated user is an admin")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	if !isLoopback(*listen) && !*insecure {
-		return fmt.Errorf("refusing to listen on non-loopback %q: smokeng has no authentication before v0.3; "+
-			"pass --i-know-this-is-unauthenticated to override", *listen)
+	if *oidcIssuer == "" && !isLoopback(*listen) && !*insecure {
+		return fmt.Errorf("refusing to listen on non-loopback %q without authentication: "+
+			"configure --oidc-issuer, or pass --i-know-this-is-unauthenticated to override", *listen)
 	}
 
 	st, err := store.Open(*dbPath)
@@ -167,6 +177,33 @@ func serve(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	var authenticator *auth.Authenticator
+	if *oidcIssuer != "" {
+		key, err := st.SessionKey(ctx)
+		if err != nil {
+			return err
+		}
+		redirect := *oidcRedirect
+		if redirect == "" {
+			redirect = "http://" + *listen + "/auth/callback"
+		}
+		authenticator, err = auth.New(ctx, auth.Config{
+			Issuer:       *oidcIssuer,
+			ClientID:     *oidcClientID,
+			ClientSecret: *oidcSecret,
+			RedirectURL:  redirect,
+			AdminClaim:   *oidcAdminClaim,
+			AdminValue:   *oidcAdminValue,
+			// Cookies may only skip the Secure attribute where the browser
+			// would refuse them anyway: local development over plain HTTP.
+			Insecure: isLoopback(*listen),
+		}, key)
+		if err != nil {
+			return err
+		}
+		log.Printf("authentication enabled via %s", *oidcIssuer)
+	}
 
 	// Without a webhook there is nowhere to send alerts, so rules are not
 	// evaluated at all rather than firing into a void.
@@ -192,7 +229,10 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	srv := &http.Server{Addr: *listen, Handler: api.New(st, alertViewOrNil(alerts), dist)}
+	srv := &http.Server{
+		Addr:    *listen,
+		Handler: api.New(st, alertViewOrNil(alerts), authOrNil(authenticator), dist),
+	}
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
@@ -227,6 +267,13 @@ func alertViewOrNil(m *alert.Manager) api.AlertView {
 		return nil
 	}
 	return m
+}
+
+func authOrNil(a *auth.Authenticator) api.Authenticator {
+	if a == nil {
+		return nil
+	}
+	return a
 }
 
 func isLoopback(addr string) bool {

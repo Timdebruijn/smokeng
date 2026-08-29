@@ -323,5 +323,89 @@ button.link {
   font-size: 0.8rem;
   color: var(--fg-dim);
   margin: 0.25rem 0;
+  max-width: 44rem;
+}
+
+h2.section {
+  font-size: 0.95rem;
+  margin: 1.5rem 0 0.4rem;
+}
+
+.alerts {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  width: 100%;
+  max-width: 60rem;
+}
+
+.alerts td {
+  padding: 0.3rem 0.75rem 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: baseline;
+}
+
+.alerts tr.disabled-row {
+  opacity: 0.5;
+}
+
+.alerts button {
+  font: inherit;
+  font-size: 0.8rem;
+  margin-right: 0.35rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.alerts button.danger {
+  color: #c0392b;
+  border-color: color-mix(in srgb, #c0392b 40%, transparent);
+}
+
+.chip.firing {
+  color: #c0392b;
+  border: 1px solid color-mix(in srgb, #c0392b 45%, transparent);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.78rem;
+}
+
+.rule-form {
+  display: grid;
+  gap: 0.5rem;
   max-width: 40rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.rule-form .inline {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.rule-form input,
+.rule-form select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+}
+
+a.button {
+  font-size: 0.85rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  text-decoration: none;
 }

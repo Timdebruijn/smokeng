@@ -5,14 +5,15 @@ rebuilt from scratch. The one thing that makes it worth existing: it keeps the *
 distribution per measurement interval, forever, at full resolution**, and renders it as
 actual density — no rollup, no consolidation, no single-value-per-check.
 
-**Status: v0.2 feature-complete, unreleased.** The design is agreed and frozen in
+**Status: v0.3 feature-complete, unreleased.** The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the ICMP prober (burst and spread, kernel
 timestamping with observable fallback), the SQLite store, TOML import/export of the
 target tree, a SmokePing `Targets` importer, the Arrow measurements API, the browser
 renderer — density smoke, pooled median, loss rail, stacked plots with a shared
 crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that edits the
 target tree and shows, per setting, whether a value is set here or inherited and from
-where. Still to come: OIDC and alerting (v0.3), remote agents (v0.4).
+where; alerting with webhook delivery; and OIDC login with viewer and admin roles. Still
+to come: remote agents (v0.4).
 
 
 ## Build
@@ -113,6 +114,55 @@ those measurements are stamped in userspace and carry `FlagUserspaceRX` — so e
 occasional flagged measurement right after startup, and on targets whose interval is long
 enough that the socket goes quiet between bursts. Nothing is silently mis-measured; the
 flag is the record.
+
+## Alerting
+
+Rules hang on nodes of the target tree and inherit downward, replacing rather than
+adding: the nearest ancestor that defines any rules defines the whole set for its
+subtree. A rule tests `loss`, `median`, `p95` or `spread` against a threshold — the last
+two exist only because smokeng keeps whole distributions.
+
+Rules are edge-triggered with hysteresis in both directions: the condition must hold for
+N consecutive intervals before it fires, and fail for M before it clears. A single bad
+interval never pages anyone, a gap in the series resets the count rather than bridging
+intervals nobody measured, and state is persisted so an alert firing for an hour does not
+resolve and re-fire across a restart. Measurements flagged as smokeng's own fault
+(§ Measurement quality) are excluded from the metrics they would distort.
+
+Delivery is one webhook, in Alertmanager's v2 format:
+
+```bash
+smokeng serve --db smokeng.db --alert-webhook http://alertmanager:9093/api/v2/alerts
+```
+
+Firing alerts are repeated once a minute, because Alertmanager expires an alert it stops
+hearing about. Grouping, silencing, escalation and notification channels are
+Alertmanager's job; smokeng does not reimplement them. Without `--alert-webhook`, rules
+are stored but never evaluated, which the UI says plainly rather than pretending to
+watch.
+
+## Authentication
+
+There are no local accounts and no password handling. Point smokeng at an OIDC provider:
+
+```bash
+smokeng serve --db smokeng.db --listen 0.0.0.0:8080 \
+  --oidc-issuer https://id.example.org/application/o/smokeng/ \
+  --oidc-client-id smokeng --oidc-client-secret "$SECRET" \
+  --oidc-redirect-url https://smokeng.example.org/auth/callback \
+  --oidc-admin-value smokeng-admins
+```
+
+Two roles: **viewer** reads, **admin** also writes. The role comes from a claim
+(`--oidc-admin-claim`, default `groups`); anything not recognised as an admin is a
+viewer, so a provider that renames or drops the claim demotes people rather than
+promoting them. Leaving `--oidc-admin-value` empty makes every authenticated user an
+admin, which is logged loudly at startup rather than left to be discovered.
+
+Sessions are held in an HMAC-signed cookie whose key is stored in the database, so they
+survive a restart; deleting the `session_key` row invalidates every session at once.
+Without `--oidc-issuer`, smokeng runs unauthenticated and refuses to listen anywhere but
+loopback unless explicitly overridden.
 
 ## Measurement quality
 

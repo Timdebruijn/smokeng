@@ -238,12 +238,27 @@ The API never returns a flattened effective config. Every inheritable field is a
 This is exactly what the admin UI needs for "20 pings, inherited from Production
 [override]". Setting `local` to null via the API reverts to inheritance.
 
-### 4.3 Alert rules (forward-looking note)
+### 4.3 Alert rules
 
-Alert rules (v0.3) will be rows attached to tree nodes, inheriting downward. The open
-semantic decision — does a child rule *replace* or *add to* parent rules — is deferred to
-the v0.3 design and explicitly not decided here. The `targets` model above does not
-constrain either choice.
+Alert rules are rows attached to tree nodes, inheriting downward. The open question —
+does a child's rules *replace* or *add to* the parent's — is **decided (2026-08-29):
+replace**. The nearest ancestor that defines any rules defines the whole set for its
+subtree. Two reasons, pulling the same way: it is how every other inheritable setting in
+this system behaves, so there is one rule to learn rather than two; and it is what
+SmokePing does, so an imported configuration keeps its meaning. Accumulation would also
+raise a question with no good answer — how does a child *remove* an inherited rule?
+
+A rule tests one metric (`loss`, `median`, `p95`, `spread`) against a threshold, and
+carries its own hysteresis: `for` consecutive matching intervals to fire, `clear_for`
+consecutive non-matching to clear. `p95` and `spread` exist only because the full
+distribution is kept; a tool storing one RTT per interval cannot express them.
+
+Two properties matter more than the DSL. Continuity is literal: a gap in the series
+resets the streak rather than bridging intervals nobody measured. And the quality flags
+of §3.4 gate evaluation — a measurement taken while our own receive queue overflowed
+does not count towards a loss rule, and one taken across a clock step does not count
+towards a latency rule. Alerting on those would page someone about smokeng rather than
+about the network.
 
 ## 5. Probing engine
 
@@ -632,6 +647,6 @@ management, no RRD import, no config distribution beyond §9, no multi-tenancy.
 | 5 | Sample unit | 1 µs vs 1 ns | µs — below timestamping noise; version byte keeps ns possible |
 | 6 | Probe modes modeling | inheritable `probe_mode` vs `probe_defs` table | inheritable column now; an inheritable `probe_type` (+ per-type settings) is an additive migration when TCP-connect lands — expected, per the 2026-08-29 decision to allow more latency probes (§3.2) |
 | 7 | Multi-series endpoint | per-target requests vs batched | per-target now; batch only if measured overhead |
-| 8 | Alert rule inheritance | child replaces vs child adds | defer to v0.3 design, model constrains neither |
+| 8 | Alert rule inheritance | child replaces vs child adds | **decided 2026-08-29**: replace, consistently with every other setting and with SmokePing (§4.3) |
 | 9 | Agent target assignment | hand-configured per agent vs narrow pull of assigned targets from master | **agreed 2026-08-29**: pull (data-only, signed, pull-only — see §9) |
 | 10 | Alternative hierarchies | SmokePing `parents`/multi-hierarchy vs single-parent tree | single-parent only — inheritance and provenance hang on the tree; alternative *views* (tags/saved selections) can come later as presentation, never as a second parent axis |

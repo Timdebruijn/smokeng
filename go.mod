@@ -5,14 +5,17 @@ go 1.27.0
 require (
 	codeberg.org/miekg/dns v0.6.105
 	github.com/apache/arrow-go/v18 v18.7.0
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	golang.org/x/net v0.55.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.57.0
 )
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
 	github.com/google/uuid v1.6.0 // indirect
