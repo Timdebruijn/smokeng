@@ -392,7 +392,7 @@ builds for linux/amd64, arm64, 386, arm and riscv64.
 | `internal/api` | HTTP API, Arrow serialization, embedded web UI |
 | `internal/auth` | OIDC login and the two roles |
 | `internal/config` | TOML import/export, SmokePing importer |
-| `internal/alert` | rule evaluation, hysteresis, notifiers |
+| `internal/alert` | rule evaluation, hysteresis, webhook notification |
 | `internal/agent` | remote node: assignment pull, local buffer, signed push |
 | `internal/ingest` | signed agent protocol: batch push, assignment pull |
 | `internal/metrics` | Prometheus exposition of smokeng's own health |
