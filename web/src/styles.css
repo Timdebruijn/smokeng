@@ -1,15 +1,50 @@
+/* Design tokens (Smokeng Redesign.dc.html). light-dark() keeps one declaration
+   per colour instead of a second palette in a media query. */
 :root {
   color-scheme: light dark;
-  font-family: system-ui, sans-serif;
-  --fg: light-dark(#1a1a1a, #e6e6e6);
-  --fg-dim: light-dark(#666, #999);
-  --accent: light-dark(#0369a1, #7dd3fc);
-  --border: light-dark(#ddd, #333);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+
+  --fg: light-dark(#141f29, #e7edf3);
+  --dim: light-dark(#5b6a78, #8d9aa8);
+  --card: light-dark(#ffffff, #161d25);
+  --card2: light-dark(#f7f9fb, #1b242e);
+  --border: light-dark(#e2e8ee, #263140);
+  --accent: light-dark(#0e7fc0, #56c4ec);
+  --accent-soft: light-dark(#e3f2fb, #123243);
+  --good: light-dark(#0e9a6c, #34d29b);
+  --warn: light-dark(#c07d08, #eab84a);
+  --bad: light-dark(#c93a3a, #f27d7d);
+  --shadow: 0 1px 2px light-dark(rgba(20, 35, 50, 0.06), rgba(0, 0, 0, 0.4));
+  --shadow-pop: 0 10px 30px light-dark(rgba(20, 35, 50, 0.14), rgba(0, 0, 0, 0.6));
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 
 body {
   margin: 0;
   color: var(--fg);
+  background: light-dark(#f2f5f8, #0f1419);
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+}
+
+input,
+select,
+button,
+textarea {
+  font: inherit;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 main {
@@ -43,7 +78,7 @@ h1 {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: transparent;
-  color: var(--fg-dim);
+  color: var(--dim);
   cursor: pointer;
 }
 
@@ -66,7 +101,7 @@ h1 {
   margin-left: 0.6rem;
   font-weight: 400;
   font-size: 0.8rem;
-  color: var(--fg-dim);
+  color: var(--dim);
 }
 
 /* Measurement-quality warnings: visible, but not alarming — they qualify the
@@ -78,7 +113,7 @@ h1 {
   padding: 0.05rem 0.35rem;
   border-radius: 4px;
   border: 1px solid var(--border);
-  color: var(--fg-dim);
+  color: var(--dim);
 }
 
 .plot h2 .quality {
@@ -113,7 +148,7 @@ h1 {
 .range {
   margin: 0.35rem 0 0;
   font-size: 0.8rem;
-  color: var(--fg-dim);
+  color: var(--dim);
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -197,7 +232,7 @@ button.link {
 
 .tree-row .dim,
 .detail .dim {
-  color: var(--fg-dim);
+  color: var(--dim);
   font-size: 0.8rem;
 }
 
@@ -208,7 +243,7 @@ button.link {
   padding: 0.05rem 0.3rem;
   border: 1px solid var(--border);
   border-radius: 4px;
-  color: var(--fg-dim);
+  color: var(--dim);
 }
 
 .detail h2 {
@@ -274,18 +309,18 @@ button.link {
 }
 
 .settings input:disabled {
-  color: var(--fg-dim);
+  color: var(--dim);
   border-color: transparent;
 }
 
 .unit {
   margin-left: 0.3rem;
-  color: var(--fg-dim);
+  color: var(--dim);
 }
 
 .chip {
   font-size: 0.78rem;
-  color: var(--fg-dim);
+  color: var(--dim);
 }
 
 .chip.local {
@@ -301,7 +336,7 @@ button.link {
   border: 1px solid var(--border);
   border-radius: 5px;
   background: transparent;
-  color: var(--fg-dim);
+  color: var(--dim);
   cursor: pointer;
 }
 
@@ -331,7 +366,7 @@ button.link {
 
 .hint {
   font-size: 0.8rem;
-  color: var(--fg-dim);
+  color: var(--dim);
   margin: 0.25rem 0;
   max-width: 44rem;
 }
@@ -366,7 +401,7 @@ h2.section {
   border: 1px solid var(--border);
   border-radius: 5px;
   background: transparent;
-  color: var(--fg-dim);
+  color: var(--dim);
   cursor: pointer;
 }
 
@@ -499,4 +534,228 @@ a.button {
 .hint.warn {
   border-left: 3px solid #d97706;
   padding-left: 0.6rem;
+}
+
+/* ── App shell ─────────────────────────────────────────────────────────── */
+
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.appbar-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 clamp(12px, 3vw, 24px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 56px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  padding: 6px 0;
+  cursor: pointer;
+  color: var(--fg);
+}
+
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--accent);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  font-family: var(--mono);
+}
+
+.brand-mark.large {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 22px;
+  display: inline-grid;
+}
+
+.brand-name {
+  font-weight: 650;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 13.5px;
+}
+
+.tab:hover {
+  color: var(--fg);
+  background: var(--card2);
+}
+
+.tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.usermenu {
+  position: relative;
+}
+
+.chip-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card2);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.who {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-tag {
+  font-size: 11px;
+  color: var(--dim);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 5px;
+}
+
+.popover {
+  position: absolute;
+  right: 0;
+  top: 44px;
+  width: 240px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-pop);
+  padding: 8px;
+  z-index: 60;
+}
+
+.popover-title {
+  margin: 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.popover-item {
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.popover-item:hover {
+  background: var(--card2);
+}
+
+/* ── Cards, the surface everything else sits on ────────────────────────── */
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.hint.small {
+  font-size: 12px;
+}
+
+/* ── Sign in ───────────────────────────────────────────────────────────── */
+
+.signin {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+}
+
+.signin-card {
+  padding: 36px 32px;
+  width: min(380px, 92vw);
+  text-align: center;
+  border-radius: 16px;
+}
+
+.signin-card h1 {
+  font-size: 20px;
+  margin: 14px 0 6px;
+}
+
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.button.primary:hover {
+  filter: brightness(1.08);
+}
+
+.button.block {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px;
+  text-align: center;
+  border-radius: 10px;
 }

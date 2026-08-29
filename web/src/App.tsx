@@ -18,6 +18,7 @@ type View = 'graphs' | 'targets' | 'alerts' | 'agents' | 'access'
 
 export default function App() {
   const [view, setView] = useState<View>('graphs')
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
 
   useEffect(() => {
@@ -36,36 +37,20 @@ export default function App() {
     ? ['graphs', 'targets', 'alerts', 'agents', 'access']
     : ['graphs', 'targets', 'alerts', 'agents']
 
+  if (needsLogin) return <SignIn />
+
   return (
-    <main>
-      <header>
-        <h1>smokeng</h1>
-        <nav className="controls">
-          {views.map((v) => (
-            <button key={v} className={view === v ? 'active' : ''} onClick={() => setView(v)}>
-              {v[0].toUpperCase() + v.slice(1)}
-            </button>
-          ))}
-          {me?.auth_enabled &&
-            (me.authenticated ? (
-              <button
-                title={`${me.email ?? me.subject ?? ''} · ${me.role}`}
-                onClick={() => void logout().then(() => location.reload())}
-              >
-                {me.name ?? me.email ?? 'signed in'} ({me.role}) · sign out
-              </button>
-            ) : (
-              <a className="button" href="/auth/login">
-                Sign in
-              </a>
-            ))}
-        </nav>
-      </header>
-      {needsLogin ? (
-        <p>
-          You are not signed in. <a href="/auth/login">Sign in</a> to see measurements.
-        </p>
-      ) : view === 'graphs' ? (
+    <>
+      <AppHeader
+        me={me}
+        view={view}
+        views={views}
+        onView={setView}
+        userMenuOpen={userMenuOpen}
+        onToggleUser={() => setUserMenuOpen((v) => !v)}
+      />
+      <main>
+      {view === 'graphs' ? (
         <Graphs />
       ) : view === 'targets' ? (
         <Admin readOnly={!isAdmin} />
@@ -80,7 +65,91 @@ export default function App() {
             authEnabled={me?.auth_enabled !== false}
           />
       )}
+      </main>
+    </>
+  )
+}
+
+// The sign-in screen is a screen, not a sentence in the middle of the app: it
+// is the whole page for someone who cannot see anything yet.
+function SignIn() {
+  return (
+    <main>
+      <section className="signin">
+        <div className="card signin-card">
+          <span className="brand-mark large">s</span>
+          <h1>Sign in to smokeng</h1>
+          <p className="hint">
+            Latency monitoring with the full RTT distribution, at full resolution, forever. Sign
+            in with your organisation account to see measurements.
+          </p>
+          <a className="button primary block" href="/auth/login">
+            Continue with OIDC
+          </a>
+          <p className="hint small">
+            What you may see comes from your identity provider and the grants an admin has
+            written.
+          </p>
+        </div>
+      </section>
     </main>
+  )
+}
+
+function AppHeader({
+  me,
+  view,
+  views,
+  onView,
+  userMenuOpen,
+  onToggleUser,
+}: {
+  me: Me | null
+  view: View
+  views: View[]
+  onView: (v: View) => void
+  userMenuOpen: boolean
+  onToggleUser: () => void
+}) {
+  const who = me?.name ?? me?.email ?? me?.subject ?? ''
+  return (
+    <header className="appbar">
+      <div className="appbar-inner">
+        <button className="brand" onClick={() => onView('graphs')}>
+          <span className="brand-mark">s</span>
+          <span className="brand-name">smokeng</span>
+        </button>
+        <nav className="tabs">
+          {views.map((v) => (
+            <button key={v} className={view === v ? 'tab active' : 'tab'} onClick={() => onView(v)}>
+              {v[0].toUpperCase() + v.slice(1)}
+            </button>
+          ))}
+        </nav>
+        <span className="spacer" />
+        {me?.auth_enabled && me.authenticated && (
+          <div className="usermenu">
+            <button className="chip-button" onClick={onToggleUser}>
+              <span className="avatar">{(who || '?').slice(0, 1).toUpperCase()}</span>
+              <span className="who">{who}</span>
+              <span className="role-tag">{me.role}</span>
+            </button>
+            {userMenuOpen && (
+              <div className="popover">
+                <p className="popover-title">{me.email ?? me.subject}</p>
+                <p className="hint small">Signed in via OIDC · {me.role}</p>
+                <button
+                  className="popover-item"
+                  onClick={() => void logout().then(() => location.reload())}
+                >
+                  Sign out
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </header>
   )
 }
 
