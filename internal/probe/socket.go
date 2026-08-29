@@ -23,6 +23,11 @@ const (
 	protoICMPv6 = 58
 	// payload = magic + token; pings smaller than this are padded up.
 	minPayload = 12
+	// One socket carries every target of a family, and bursts from many
+	// targets can land at once: 100 targets × 20 replies is ~2000 packets in
+	// a few milliseconds, which overruns the usual ~200KB default. Ask for
+	// enough headroom that overflow means something is genuinely wrong.
+	wantRcvBuf = 4 << 20
 )
 
 var payloadMagic = [4]byte{'s', 'm', 'n', 'g'}
@@ -47,7 +52,17 @@ type conn struct {
 	late   *atomic.Int64
 	strays atomic.Int64
 	wg     sync.WaitGroup
+
+	// Cumulative kernel drop counter, polled from /proc/net. Measurements
+	// taken while this moves carry FlagSocketOverflow.
+	rxDrops   atomic.Uint64
+	dropsPath string
+	dropsNode string
 }
+
+// drops returns the cumulative count of replies the kernel discarded because
+// our receive queue was full. Always 0 where the kernel cannot report it.
+func (c *conn) drops() uint64 { return c.rxDrops.Load() }
 
 type pendingPing struct {
 	col     *collector
@@ -74,6 +89,20 @@ func openConn(family string, dscp int, late *atomic.Int64) (*conn, error) {
 		log.Printf("probe: %s datagram ICMP socket not permitted, using raw-socket fallback (degraded, flagged)", family)
 	}
 
+	// Bind explicitly. A datagram ICMP socket is otherwise only added to the
+	// kernel's ping table on its first send, and until then it does not
+	// appear in /proc/net/icmp — which is where the drop counter lives. For
+	// these sockets the "port" is the ICMP identifier; 0 lets the kernel
+	// assign one.
+	var bindAddr unix.Sockaddr = &unix.SockaddrInet4{}
+	if family == "v6" {
+		bindAddr = &unix.SockaddrInet6{}
+	}
+	if err := unix.Bind(fd, bindAddr); err != nil && !raw {
+		unix.Close(fd)
+		return nil, fmt.Errorf("probe: bind %s ICMP socket: %w", family, err)
+	}
+
 	if dscp != 0 {
 		tos := dscp << 2
 		var soErr error
@@ -94,6 +123,16 @@ func openConn(family string, dscp int, late *atomic.Int64) (*conn, error) {
 		return nil, err
 	}
 
+	// Enlarge the receive queue, then read back what the kernel granted: it
+	// silently caps at net.core.rmem_max, and an operator needs to know when
+	// the ceiling is lower than the load warrants.
+	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, wantRcvBuf)
+	if got, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF); err == nil && got < wantRcvBuf {
+		log.Printf("probe: %s socket receive buffer is %d bytes, asked for %d "+
+			"(raise net.core.rmem_max to allow more); replies may be dropped under load",
+			family, got, wantRcvBuf)
+	}
+
 	c := &conn{
 		fd:        fd,
 		family:    family,
@@ -102,6 +141,19 @@ func openConn(family string, dscp int, late *atomic.Int64) (*conn, error) {
 		pending:   map[uint16]*pendingPing{},
 		byCounter: map[uint32]*pendingPing{},
 		late:      late,
+	}
+	if inode, ok := socketInode(fd); ok {
+		path := procNetPath(family, raw)
+		if _, ok := readSocketDrops(path, inode); ok {
+			c.dropsPath, c.dropsNode = path, inode
+		}
+	}
+	if c.dropsPath == "" {
+		log.Printf("probe: %s socket drop counter unavailable; loss on this socket "+
+			"may include replies we failed to read in time, and cannot be told apart", family)
+	} else {
+		c.wg.Add(1)
+		go c.dropPollLoop()
 	}
 	var idBytes [2]byte
 	rand.Read(idBytes[:])
@@ -256,6 +308,21 @@ func (c *conn) handlePacket(b []byte, rx time.Time, kernel bool) {
 		return
 	}
 	p.col.onRX(p.idx, rx, kernel)
+}
+
+// dropPollLoop keeps the socket's drop counter fresh. Polling beats reading
+// it per bucket: one file read per socket per tick serves every target on
+// that socket, however many there are.
+func (c *conn) dropPollLoop() {
+	defer c.wg.Done()
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+	for !c.closed.Load() {
+		<-tick.C
+		if drops, ok := readSocketDrops(c.dropsPath, c.dropsNode); ok {
+			c.rxDrops.Store(drops)
+		}
+	}
 }
 
 // errQueueLoop drains kernel TX timestamps (Linux). The error queue never

@@ -14,12 +14,8 @@ crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that
 target tree and shows, per setting, whether a value is set here or inherited and from
 where. Still to come: OIDC and alerting (v0.3), remote agents (v0.4).
 
-Known gaps before this is trustworthy in production: the prober does not size or monitor
-its socket receive buffer, so buffer overflow would be recorded as packet loss; a
-measurement that mixes a kernel receive timestamp with a userspace send timestamp is
-computed on the wall clock and so is vulnerable to an NTP step mid-burst; and ICMP
-errors (unreachable, TTL exceeded) are collapsed into plain loss rather than kept
-distinct.
+Known gap before this is trustworthy in production: ICMP errors (unreachable, TTL
+exceeded) are collapsed into plain loss rather than kept distinct.
 
 ## Build
 
@@ -119,6 +115,38 @@ those measurements are stamped in userspace and carry `FlagUserspaceRX` — so e
 occasional flagged measurement right after startup, and on targets whose interval is long
 enough that the socket goes quiet between bursts. Nothing is silently mis-measured; the
 flag is the record.
+
+## Measurement quality
+
+Every measurement records the conditions it was taken under, because a number is only
+worth as much as the conditions behind it. The graphs badge any target whose window
+contains flagged measurements.
+
+| Flag | Meaning |
+|---|---|
+| `userspace TX` / `userspace RX` | Timestamps taken in userspace; scheduler jitter widens the smoke. |
+| `raw socket` | Unprivileged datagram ICMP was unavailable. |
+| `dropped replies` | The socket's receive queue overflowed: some loss shown is smokeng's, not the network's. |
+| `clock step` | The wall clock jumped during the interval, so its RTTs are unreliable. |
+
+Two of these deserve a note.
+
+**Dropped replies.** One socket carries every target of an address family, and
+simultaneous bursts can deliver thousands of packets at once — well past the usual
+~208KB default receive buffer. smokeng asks for 4MB and warns if `net.core.rmem_max`
+caps it lower. It then polls the kernel's per-socket drop counter from `/proc/net/icmp`
+(or `raw`/`icmp6`/`raw6`), and any interval during which that counter moves is flagged.
+Without this, a host that is merely busy reads as a lossy network. Note that the obvious
+mechanism, `SO_RXQ_OVFL`, does not work here: `setsockopt` accepts it on a ping socket
+and then never reports anything, because `ping_recvmsg` does not attach the counter.
+
+**Clock steps.** Kernel timestamps are `CLOCK_REALTIME`, so a clock jump lands directly
+in the RTTs and would be drawn as a latency spike that never happened. smokeng compares
+how far the wall clock and the monotonic clock advanced over each interval; a divergence
+beyond what NTP slewing could explain marks the measurement. The tolerance is rate-based
+because slew is a rate, and because platforms differ: Linux slews `CLOCK_MONOTONIC`
+alongside `CLOCK_REALTIME`, while macOS leaves `mach_absolute_time` untouched, so on
+macOS ordinary slewing shows up in this comparison and must not be mistaken for a step.
 
 Verified on Linux 7.1: aarch64 natively (full kernel path, plus an end-to-end run where
 every measurement was written with `flags=0`), and x86-64 under qemu-user, where the

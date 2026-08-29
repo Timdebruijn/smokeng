@@ -26,8 +26,9 @@ type Engine struct {
 	st  store.Store
 	dns *dnscache.Cache
 
-	results chan store.Measurement
-	late    atomic.Int64 // replies that arrived after their bucket finalized
+	results   chan store.Measurement
+	late      atomic.Int64 // replies that arrived after their bucket finalized
+	overflows atomic.Int64 // measurements taken while the receive queue dropped replies
 
 	mu       sync.Mutex
 	conns    map[connKey]*conn
@@ -240,6 +241,7 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 		}
 
 		col := newCollector(spec.Pings, &e.late)
+		dropsBefore := c.drops()
 		aborted := false
 		for i, at := range times {
 			if !sleepUntil(ctx, at) {
@@ -261,7 +263,14 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			// On shutdown this returns early: the bucket finalizes with
 			// whatever was measured, and the writer still flushes it.
 			sleepUntil(ctx, finalizeAt)
-			m := col.finalize(spec, bucket, c.raw)
+			// Drops are counted per socket, not per target, so any target
+			// sharing this socket during the overflow is suspect: its loss
+			// may be ours rather than the network's.
+			dropped := c.drops() != dropsBefore
+			if dropped {
+				e.overflows.Add(1)
+			}
+			m := col.finalize(spec, bucket, conditions{rawSocket: c.raw, overflowed: dropped})
 			c.forget(col)
 			select {
 			case e.results <- m:
@@ -336,3 +345,8 @@ func sleepUntil(ctx context.Context, t time.Time) bool {
 // LateReplies counts replies that arrived after their bucket finalized; it
 // feeds the upcoming /metrics endpoint.
 func (e *Engine) LateReplies() int64 { return e.late.Load() }
+
+// SocketOverflows counts measurements taken while the kernel was dropping
+// replies for want of receive-queue space — loss that is ours, not the
+// network's. A non-zero value means smokeng is behind, not the link.
+func (e *Engine) SocketOverflows() int64 { return e.overflows.Load() }

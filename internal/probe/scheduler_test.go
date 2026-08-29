@@ -96,7 +96,7 @@ func TestCollectorFinalize(t *testing.T) {
 	col.onRX(1, base.Add(5*time.Millisecond), true)
 	col.onRX(2, base.Add(1500*time.Millisecond), true)
 
-	m := col.finalize(spec, 1_756_400_100, false)
+	m := col.finalize(spec, 1_756_400_100, conditions{})
 	if m.Sent != 4 || m.Received != 2 {
 		t.Fatalf("sent=%d received=%d, want 4/2", m.Sent, m.Received)
 	}
@@ -117,14 +117,66 @@ func TestCollectorFinalize(t *testing.T) {
 		t.Fatalf("late = %d, want 1", late.Load())
 	}
 
-	// A raw-socket measurement carries the raw flag.
+	// A clean measurement carries no quality flags beyond timestamping.
+	if m.Flags&(store.FlagRawSocket|store.FlagSocketOverflow|store.FlagClockStep) != 0 {
+		t.Errorf("unexpected condition flags: %08b", m.Flags)
+	}
+
+	// A raw-socket measurement taken while the receive queue overflowed
+	// carries both, so loss here is not read as network loss.
 	col2 := newCollector(1, &late)
 	col2.markSent(0, 9, base)
-	m2 := col2.finalize(spec, 1_756_400_100, true)
+	m2 := col2.finalize(spec, 1_756_400_100, conditions{rawSocket: true, overflowed: true})
 	if m2.Flags&store.FlagRawSocket == 0 {
-		t.Fatal("expected FlagRawSocket")
+		t.Error("expected FlagRawSocket")
+	}
+	if m2.Flags&store.FlagSocketOverflow == 0 {
+		t.Error("expected FlagSocketOverflow")
 	}
 	if m2.Sent != 1 || m2.Received != 0 || len(m2.Samples) != 0 {
 		t.Fatalf("loss measurement = %+v", m2)
+	}
+}
+
+// A clock step lands directly in kernel (CLOCK_REALTIME) timestamps, so it
+// must be detectable; NTP slewing moves both clocks together and must not
+// register.
+func TestClockStepped(t *testing.T) {
+	cases := map[string]struct {
+		wall, mono time.Duration
+		want       bool
+	}{
+		"identical":           {60 * time.Second, 60 * time.Second, false},
+		"slew, both together": {60*time.Second + 30*time.Millisecond, 60*time.Second + 30*time.Millisecond, false},
+		"jitter":              {60*time.Second + 100*time.Microsecond, 60 * time.Second, false},
+		// 500ppm of slew over a minute is 30ms of divergence on a platform
+		// whose monotonic clock is not slewed alongside. It is not a step.
+		"slew, monotonic unaffected": {60*time.Second + 30*time.Millisecond, 60 * time.Second, false},
+		"slew over a short bucket":   {10*time.Second + 5*time.Millisecond, 10 * time.Second, false},
+		"step forward":               {60*time.Second + 500*time.Millisecond, 60 * time.Second, true},
+		"step backward":              {59 * time.Second, 60 * time.Second, true},
+		"step on a short bucket":     {10*time.Second + 128*time.Millisecond, 10 * time.Second, true},
+	}
+	for name, c := range cases {
+		if got := clockStepped(c.wall, c.mono); got != c.want {
+			t.Errorf("%s: clockStepped(%v, %v) = %v, want %v", name, c.wall, c.mono, got, c.want)
+		}
+	}
+}
+
+// A measurement taken across a real clock step must be flagged rather than
+// silently reporting the step as latency.
+func TestFinalizeFlagsClockStep(t *testing.T) {
+	var late atomic.Int64
+	spec := burstSpec()
+	spec.Pings = 1
+	col := newCollector(1, &late)
+	// Move the wall-clock reading without touching the monotonic one, which
+	// is exactly the shape of a clock step.
+	col.startWall = col.startWall.Add(-30 * time.Second)
+	col.markSent(0, 1, time.Now())
+	m := col.finalize(spec, 1_756_400_100, conditions{})
+	if m.Flags&store.FlagClockStep == 0 {
+		t.Fatalf("expected FlagClockStep, flags = %08b", m.Flags)
 	}
 }

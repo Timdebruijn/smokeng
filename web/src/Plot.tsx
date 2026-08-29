@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchSeries, type Target } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtUs, inferSpan } from './layout'
@@ -28,6 +28,35 @@ interface RowIndex {
 }
 
 /**
+ * Measurement-quality flags (store.Flag* in Go). A measurement is only worth
+ * as much as the conditions it was taken under, so anything that weakens it
+ * is surfaced next to the plot instead of being left to be inferred.
+ */
+const FLAGS: { bit: number; label: string; title: string }[] = [
+  { bit: 1 << 0, label: 'userspace TX', title: 'Send timestamps taken in userspace; scheduler jitter widens the smoke.' },
+  { bit: 1 << 1, label: 'userspace RX', title: 'Receive timestamps taken in userspace; scheduler jitter widens the smoke.' },
+  { bit: 1 << 2, label: 'raw socket', title: 'Unprivileged datagram ICMP was unavailable; running on raw sockets.' },
+  {
+    bit: 1 << 3,
+    label: 'dropped replies',
+    title: 'The receive queue overflowed: some loss shown here is ours, not the network’s.',
+  },
+  {
+    bit: 1 << 4,
+    label: 'clock step',
+    title: 'The wall clock jumped during these intervals; affected RTTs are unreliable.',
+  },
+]
+
+function flagCounts(flags: Uint8Array): { label: string; title: string; count: number }[] {
+  return FLAGS.map((f) => {
+    let count = 0
+    for (let i = 0; i < flags.length; i++) if (flags[i] & f.bit) count++
+    return { label: f.label, title: f.title, count }
+  }).filter((f) => f.count > 0)
+}
+
+/**
  * One smoke plot: a worker-owned canvas for the density, plus a main-thread
  * overlay canvas for the shared crosshair and the brush selection, so
  * interaction never waits on a render (DESIGN.md §8.2, §8.4).
@@ -42,6 +71,8 @@ export default function Plot({ target, from, to, refreshKey, logScale, onZoom }:
   const draggingRef = useRef(false)
   const rangeRef = useRef({ from, to })
   rangeRef.current = { from, to }
+  const [quality, setQuality] = useState<{ label: string; title: string; count: number }[]>([])
+  const [rowCount, setRowCount] = useState(0)
 
   // Pixel ↔ time mapping, in CSS pixels over the density area only.
   const xToTime = useCallback((xCss: number, widthCss: number): number | null => {
@@ -189,6 +220,8 @@ export default function Plot({ target, from, to, refreshKey, logScale, onZoom }:
           rows.loss[i] = series.sent[i] > 0 ? 1 - series.received[i] / series.sent[i] : NaN
         }
         rowsRef.current = rows
+        setQuality(flagCounts(series.flags))
+        setRowCount(n)
         workerRef.current.postMessage(
           {
             type: 'render',
@@ -255,6 +288,12 @@ export default function Plot({ target, from, to, refreshKey, logScale, onZoom }:
         <span className="host">
           {target.host} · {target.address_family}
         </span>
+        {quality.map((q) => (
+          <span key={q.label} className="quality" title={q.title}>
+            {q.label}
+            {rowCount > 0 && q.count < rowCount && <> ({q.count}/{rowCount})</>}
+          </span>
+        ))}
       </h2>
       <div
         className="plot-stack"

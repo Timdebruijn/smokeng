@@ -69,6 +69,19 @@ h1 {
   color: var(--fg-dim);
 }
 
+/* Measurement-quality warnings: visible, but not alarming — they qualify the
+   data rather than report an outage. */
+.plot h2 .quality {
+  margin-left: 0.4rem;
+  font-weight: 400;
+  font-size: 0.7rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, #d08700 55%, transparent);
+  color: #d08700;
+  cursor: help;
+}
+
 .plot-stack {
   position: relative;
   cursor: crosshair;

@@ -18,12 +18,23 @@ type Measurement struct {
 	Samples  []uint32 // RTTs in µs, sorted ascending
 }
 
-// Timestamp-degradation flags (DESIGN.md §3.4). Zero means full kernel
-// timestamping over a datagram ICMP socket.
+// Measurement-quality flags (DESIGN.md §3.4). Zero means a clean measurement:
+// full kernel timestamping over a datagram ICMP socket, no dropped packets,
+// no clock disturbance. Anything that could make the numbers mean less than
+// they appear to is recorded here rather than left to be inferred.
 const (
 	FlagUserspaceTX uint8 = 1 << 0 // TX timestamp taken in userspace
 	FlagUserspaceRX uint8 = 1 << 1 // RX timestamp taken in userspace
 	FlagRawSocket   uint8 = 1 << 2 // raw-socket fallback in use
+	// FlagSocketOverflow means the socket's receive queue overflowed during
+	// this interval: replies were dropped by the kernel before we could read
+	// them, so some of the loss recorded here is measurement error, not the
+	// network. Without this, a busy host looks like a lossy network.
+	FlagSocketOverflow uint8 = 1 << 3
+	// FlagClockStep means the wall clock jumped during this interval. Kernel
+	// timestamps are CLOCK_REALTIME, so a step lands directly in the RTTs and
+	// would otherwise be drawn as a latency spike that never happened.
+	FlagClockStep uint8 = 1 << 4
 )
 
 // LocalAgentID is the master's built-in prober (DESIGN.md §2).

@@ -65,6 +65,40 @@ type collector struct {
 	done  bool
 	pings []ping
 	late  *atomic.Int64
+	// The same instant held twice: once as a bare wall-clock reading, once
+	// carrying the monotonic reading. Comparing how far each has advanced by
+	// finalization is what reveals a clock step, since only the wall clock
+	// can jump.
+	startWall time.Time
+	startMono time.Time
+}
+
+// conditions describe how the measurement was taken, as opposed to what it
+// measured. They become the quality flags on the stored row.
+type conditions struct {
+	rawSocket  bool
+	overflowed bool // the socket's receive queue dropped replies
+}
+
+const (
+	// clockStepFloor covers readings taken microseconds apart.
+	clockStepFloor = 2 * time.Millisecond
+	// Slewing must not register as a step. Whether it shows up here at all
+	// is platform-dependent: Linux slews CLOCK_MONOTONIC along with
+	// CLOCK_REALTIME, so the two stay together, but macOS leaves
+	// mach_absolute_time untouched and the divergence lands squarely in this
+	// comparison. Tolerating 1000ppm is twice the maximum rate NTP
+	// implementations slew at, so only a genuine jump exceeds it.
+	clockSlewPPM = 1000
+)
+
+// clockStepped reports whether the wall clock moved differently from the
+// monotonic clock over the same span by more than slewing could account for.
+// The tolerance grows with the span, because slew is a rate.
+func clockStepped(wallDelta, monoDelta time.Duration) bool {
+	tolerance := clockStepFloor + time.Duration(int64(monoDelta)*clockSlewPPM/1_000_000)
+	d := wallDelta - monoDelta
+	return d > tolerance || d < -tolerance
 }
 
 type ping struct {
@@ -79,7 +113,9 @@ type ping struct {
 }
 
 func newCollector(n int, late *atomic.Int64) *collector {
-	c := &collector{pings: make([]ping, n), late: late}
+	now := time.Now()
+	// Round(0) strips the monotonic reading, leaving the wall clock alone.
+	c := &collector{pings: make([]ping, n), late: late, startWall: now.Round(0), startMono: now}
 	for i := range c.pings {
 		rand.Read(c.pings[i].token[:])
 	}
@@ -126,7 +162,7 @@ func (c *collector) onTXKernel(idx int, t time.Time) {
 // finalize closes the collector and builds the measurement. A reply that took
 // longer than the per-ping timeout counts as lost, matching the classic
 // semantics; replies after finalization are dropped and counted.
-func (c *collector) finalize(spec TargetSpec, bucket int64, rawSocket bool) store.Measurement {
+func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) store.Measurement {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.done = true
@@ -137,8 +173,15 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, rawSocket bool) stor
 		AgentID:  store.LocalAgentID,
 		TS:       bucket,
 	}
-	if rawSocket {
+	if cond.rawSocket {
 		m.Flags |= store.FlagRawSocket
+	}
+	if cond.overflowed {
+		m.Flags |= store.FlagSocketOverflow
+	}
+	now := time.Now()
+	if clockStepped(now.Round(0).Sub(c.startWall), now.Sub(c.startMono)) {
+		m.Flags |= store.FlagClockStep
 	}
 	for i := range c.pings {
 		p := &c.pings[i]
