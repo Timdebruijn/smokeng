@@ -365,11 +365,6 @@ button.link {
   max-width: 44rem;
 }
 
-h2.section {
-  font-size: 0.95rem;
-  margin: 1.5rem 0 0.4rem;
-}
-
 .alerts {
   border-collapse: collapse;
   font-size: 0.85rem;
@@ -729,6 +724,14 @@ a.button {
 .section-card-title {
   font-size: 14px;
   font-weight: 600;
+}
+
+/* A .dot beside the text it qualifies, inside a table cell — the same idea
+   as .plot-head's dot-then-title, just inline instead of in a flex row. */
+.dot-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ── Sign in ───────────────────────────────────────────────────────────── */
@@ -1267,4 +1270,23 @@ a.button {
   font-weight: 400;
   font-size: 11.5px;
   color: var(--dim);
+}
+
+.activity-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 0;
+  font-size: 13px;
+}
+
+.activity-what {
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-when {
+  color: var(--dim);
+  font-size: 12px;
+  white-space: nowrap;
 }

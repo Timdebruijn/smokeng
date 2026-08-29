@@ -12,6 +12,8 @@ import (
 // Alert is one outgoing notification.
 type Alert struct {
 	Rule       *Rule
+	TargetID   int64
+	AgentID    int64
 	TargetPath string
 	TargetHost string
 	AgentName  string

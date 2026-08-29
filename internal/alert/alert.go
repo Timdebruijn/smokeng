@@ -234,3 +234,20 @@ func (r *Rule) Describe() string {
 	}
 	return fmt.Sprintf("%s %s %g%s for %d intervals", r.Metric, r.Op, r.Threshold, unit, r.For)
 }
+
+// Event is one transition: a rule started firing, or stopped.
+//
+// The rule's name and description are copies, not references. A rule that is
+// renamed or deleted must not silently rewrite what the record says happened —
+// history whose meaning changes afterwards is not history.
+type Event struct {
+	ID        int64
+	TS        int64 // unix seconds
+	RuleID    int64
+	TargetID  int64
+	AgentID   int64
+	Firing    bool
+	RuleName  string
+	Describes string
+	Value     float64
+}

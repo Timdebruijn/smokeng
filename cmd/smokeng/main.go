@@ -243,13 +243,19 @@ func serve(args []string) error {
 		log.Printf("authentication enabled via %s", *oidcIssuer)
 	}
 
-	// Without a webhook there is nowhere to send alerts, so rules are not
-	// evaluated at all rather than firing into a void.
-	var alerts *alert.Manager
+	// Rules are always evaluated. They used to be skipped without a webhook,
+	// on the grounds that there was nowhere to send the result — but firing
+	// state and the transition log are both visible in the UI, so evaluating
+	// is useful on its own and a missing webhook now means only that nothing
+	// is posted anywhere.
+	var notifier alert.Notifier
 	if *webhook != "" {
-		alerts = alert.NewManager(st, &alert.Webhook{URL: *webhook})
+		notifier = &alert.Webhook{URL: *webhook}
 		log.Printf("alerting enabled, posting to %s", *webhook)
+	} else {
+		log.Printf("alerting evaluated but not delivered: no --alert-webhook is set")
 	}
+	alerts := alert.NewManager(st, notifier)
 
 	eng, err := probe.NewEngine(st, alerterOrNil(alerts))
 	if err != nil {

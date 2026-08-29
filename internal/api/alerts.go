@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -199,7 +200,9 @@ func (s *server) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 // it — the same view the webhook has been told about.
 func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 	if s.alerts == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"alerts": []any{}, "enabled": false})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"alerts": []any{}, "enabled": false, "delivering": false,
+		})
 		return
 	}
 	sc, _, ok := s.withScope(w, r)
@@ -226,5 +229,47 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, item)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"alerts": out, "enabled": true})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"alerts": out, "enabled": true, "delivering": s.alerts.Delivering(),
+	})
+}
+
+// EventStore is the slice of the store alert history needs. Optional, like the
+// rest: an instance whose store cannot keep history simply has no endpoint.
+type EventStore interface {
+	ListAlertEvents(ctx context.Context, limit int) ([]alert.Event, error)
+}
+
+// handleAlertEvents reports what alerting has done, as opposed to what it is
+// doing now. It is filtered by scope for the same reason the rule list is: an
+// event names the node it happened on.
+func (s *server) handleAlertEvents(w http.ResponseWriter, r *http.Request) {
+	sc, targets, ok := s.withScope(w, r)
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	events, err := s.events.ListAlertEvents(r.Context(), limit)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	paths := map[int64]string{}
+	for i := range targets {
+		if p, err := sc.PathIn(targets[i].ID); err == nil {
+			paths[targets[i].ID] = p
+		}
+	}
+	out := make([]map[string]any, 0, len(events))
+	for _, e := range events {
+		if !sc.Visible(e.TargetID) {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id": e.ID, "ts": e.TS, "firing": e.Firing,
+			"rule": e.RuleName, "describes": e.Describes, "value": e.Value,
+			"target": paths[e.TargetID], "agent_id": e.AgentID,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": out})
 }

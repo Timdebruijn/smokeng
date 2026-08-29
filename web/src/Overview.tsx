@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import {
   fetchAgents,
+  fetchAlertEvents,
   fetchFiringAlerts,
   fetchSeries,
   fetchTargets,
   type AgentInfo,
+  type AlertEvent,
   type FiringAlert,
   type Target,
 } from './api'
@@ -33,7 +35,8 @@ interface Row {
 export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
   const [rows, setRows] = useState<Row[] | null>(null)
   const [firing, setFiring] = useState<FiringAlert[]>([])
-  const [alertsEnabled, setAlertsEnabled] = useState(true)
+  const [delivering, setDelivering] = useState(true)
+  const [recent, setRecent] = useState<AlertEvent[]>([])
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -80,11 +83,14 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
     }
 
     void load()
+    void fetchAlertEvents(6)
+      .then((e) => !cancelled && setRecent(e))
+      .catch(() => undefined)
     void fetchFiringAlerts()
       .then((r) => {
         if (cancelled) return
         setFiring(r.alerts)
-        setAlertsEnabled(r.enabled)
+        setDelivering(r.delivering)
       })
       .catch(() => undefined)
 
@@ -113,8 +119,8 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
         <Kpi label="Series" value={rows ? String(rows.length) : '—'} sub={`${measured} reporting`} />
         <Kpi
           label="Firing"
-          value={alertsEnabled ? String(firing.length) : 'off'}
-          sub={alertsEnabled ? (firing.length === 0 ? 'all quiet' : 'needs attention') : 'no webhook'}
+          value={String(firing.length)}
+          sub={firing.length === 0 ? 'all quiet' : 'needs attention'}
           tone={firing.length > 0 ? 'bad' : undefined}
         />
         <Kpi
@@ -191,11 +197,12 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
         <div className="overview-side">
           <div className="card panel">
             <h2>Firing now</h2>
-            {!alertsEnabled ? (
+            {!delivering && (
               <p className="hint small">
-                Rules are stored but never evaluated: no <code>--alert-webhook</code> is configured.
+                Evaluated and recorded, but not posted anywhere: no <code>--alert-webhook</code>.
               </p>
-            ) : firing.length === 0 ? (
+            )}
+            {firing.length === 0 ? (
               <p className="quiet-line">
                 <span className="dot" style={{ background: 'var(--good)' }} />
                 All quiet — no alerts firing.
@@ -210,6 +217,29 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
                   <span className="hint small">
                     {a.describes} on <code>{a.target}</code>
                   </span>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="card panel">
+            <h2>Recent alert activity</h2>
+            {recent.length === 0 ? (
+              <p className="hint small">
+                Nothing has fired or cleared yet. Transitions are recorded as they happen.
+              </p>
+            ) : (
+              recent.map((e) => (
+                <div key={e.id} className="activity-line">
+                  <span
+                    className="dot"
+                    style={{ background: e.firing ? 'var(--bad)' : 'var(--good)' }}
+                  />
+                  <span className="activity-what">
+                    <strong>{e.firing ? 'fired' : 'cleared'}</strong> · {e.rule} on{' '}
+                    <code>{e.target}</code>
+                  </span>
+                  <span className="activity-when">{rel(e.ts)}</span>
                 </div>
               ))
             )}
@@ -311,6 +341,17 @@ function summarise(s: {
     flags,
     spark,
   }
+}
+
+/** Coarse and readable: this is a sense of when, not a timestamp. */
+function rel(ts: number): string {
+  const d = Math.floor(Date.now() / 1000) - ts
+  if (d < 60) return `${Math.max(d, 0)}s ago`
+  const m = Math.round(d / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.round(h / 24)}d ago`
 }
 
 function fmtUs(us: number): string {

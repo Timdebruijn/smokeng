@@ -26,6 +26,9 @@ type AlertStore interface {
 // configured, which the API reports rather than pretending nothing is wrong.
 type AlertView interface {
 	Firing() []alert.Alert
+	// Delivering reports whether transitions go anywhere beyond the log.
+	// Evaluation no longer depends on it, so the two are separate facts.
+	Delivering() bool
 }
 
 // Store is everything the API persists through: the measurement store plus
@@ -43,6 +46,7 @@ type server struct {
 	agents AgentStore
 	enrol  EnrolStore
 	grants GrantStore
+	events EventStore
 	routes *router
 	// defaultRole is what an authenticated caller with no grant gets. It is a
 	// setting rather than a consequence, so that adding the first grant does
@@ -89,6 +93,9 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	}
 	if gs, ok := st.(GrantStore); ok {
 		s.grants = gs
+	}
+	if es, ok := st.(EventStore); ok {
+		s.events = es
 	}
 	s.defaultRole = opts.DefaultRole
 	if s.defaultRole == "" {
@@ -145,6 +152,9 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	rt.handle(classScopedWrite, "PATCH /api/v1/alert-rules/{id}", s.handleUpdateAlertRule)
 	rt.handle(classScopedWrite, "DELETE /api/v1/alert-rules/{id}", s.handleDeleteAlertRule)
 	rt.handle(classScopedRead, "GET /api/v1/alerts", s.handleFiringAlerts)
+	if s.events != nil {
+		rt.handle(classScopedRead, "GET /api/v1/alert-events", s.handleAlertEvents)
+	}
 	rt.handle(classScopedRead, "GET /api/v1/agents", s.handleAgents)
 	rt.handle(classScopedRead, "GET /api/v1/paths", s.handlePaths)
 	if s.enrol != nil {

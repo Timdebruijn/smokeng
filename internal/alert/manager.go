@@ -2,7 +2,7 @@ package alert
 
 import (
 	"context"
-	"log"
+	stdlog "log"
 	"sync"
 	"time"
 
@@ -15,6 +15,12 @@ type Store interface {
 	ListAlertStates(ctx context.Context) ([]State, error)
 	SaveAlertStates(ctx context.Context, states []State) error
 	ListTargets(ctx context.Context) ([]tree.Target, error)
+}
+
+// EventLog records transitions. It is optional so a store that cannot keep
+// history still alerts; the manager simply has nothing to write to.
+type EventLog interface {
+	RecordAlertEvents(ctx context.Context, events []Event) error
 }
 
 type stateKey struct {
@@ -43,6 +49,9 @@ type Manager struct {
 	rules    map[int64]*Rule
 }
 
+// NewManager evaluates rules and, when notifier is non-nil, delivers the
+// transitions. A nil notifier is a supported configuration: the firing state
+// and the transition log are worth having on their own.
 func NewManager(st Store, notifier Notifier) *Manager {
 	return &Manager{
 		st:       st,
@@ -134,12 +143,11 @@ func (m *Manager) Reload(ctx context.Context) error {
 }
 
 // Observe evaluates a batch of finalized measurements and delivers whatever
-// changed. Notifications are best-effort: a webhook that is down must never
-// stop measurement, so a failure is logged and the state still advances.
+// changed. Evaluation happens whether or not anything is configured to receive
+// the result: the firing state and the transition log are read from the UI.
+// Notifications are best-effort: a webhook that is down must never stop
+// measurement, so a failure is logged and the state still advances.
 func (m *Manager) Observe(ctx context.Context, ms []Input) {
-	if m.notifier == nil {
-		return
-	}
 	var fired []Alert
 	var dirty []State
 
@@ -170,7 +178,7 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 
 	if len(dirty) > 0 {
 		if err := m.st.SaveAlertStates(ctx, dirty); err != nil {
-			log.Printf("alert: save state: %v", err)
+			stdlog.Printf("alert: save state: %v", err)
 		}
 	}
 	m.deliver(ctx, fired)
@@ -227,7 +235,8 @@ func (m *Manager) Firing() []Alert {
 // alertLocked builds a notification; the caller holds m.mu.
 func (m *Manager) alertLocked(r *Rule, st *State, app applicable, firing bool) Alert {
 	a := Alert{
-		Rule: r, TargetPath: app.path, TargetHost: app.host,
+		Rule: r, TargetID: st.TargetID, AgentID: st.AgentID,
+		TargetPath: app.path, TargetHost: app.host,
 		AgentName: "local", Firing: firing, Value: st.Value,
 	}
 	if st.Since != 0 {
@@ -240,7 +249,34 @@ func (m *Manager) deliver(ctx context.Context, alerts []Alert) {
 	if len(alerts) == 0 {
 		return
 	}
+	// Record before delivering. A transition that happened is a fact whether
+	// or not the webhook was reachable, and the log is the only place anyone
+	// can answer "when did this last fire" afterwards.
+	m.record(ctx, alerts)
+	if m.notifier == nil {
+		return
+	}
 	if err := m.notifier.Notify(ctx, alerts); err != nil {
-		log.Printf("alert: deliver %d alert(s): %v", len(alerts), err)
+		stdlog.Printf("alert: deliver %d alert(s): %v", len(alerts), err)
 	}
 }
+
+func (m *Manager) record(ctx context.Context, alerts []Alert) {
+	sink, ok := m.st.(EventLog)
+	if !ok {
+		return
+	}
+	events := make([]Event, 0, len(alerts))
+	for _, a := range alerts {
+		events = append(events, Event{
+			TS: a.Since.Unix(), RuleID: a.Rule.ID, TargetID: a.TargetID, AgentID: a.AgentID,
+			Firing: a.Firing, RuleName: a.Rule.Name, Describes: a.Rule.Describe(), Value: a.Value,
+		})
+	}
+	if err := sink.RecordAlertEvents(ctx, events); err != nil {
+		stdlog.Printf("alert: record %d transition(s): %v", len(events), err)
+	}
+}
+
+// Delivering reports whether transitions go anywhere beyond the log.
+func (m *Manager) Delivering() bool { return m.notifier != nil }

@@ -186,6 +186,27 @@ CREATE TABLE grants (
   UNIQUE (group_name, target_id)
 );
 `,
+	// v9: what alerting has done, as opposed to what it is doing now.
+	// alert_state holds only the present, so a transition was delivered to the
+	// webhook and then forgotten: nobody could answer "when did this last
+	// fire" from smokeng itself. The rule's name and description are copied in
+	// rather than referenced, so history survives the rule being renamed,
+	// re-thresholded or deleted — an entry that changes meaning afterwards is
+	// not a record of anything.
+	`
+CREATE TABLE alert_events (
+  id          INTEGER PRIMARY KEY,
+  ts          INTEGER NOT NULL,
+  rule_id     INTEGER NOT NULL,
+  target_id   INTEGER NOT NULL,
+  agent_id    INTEGER NOT NULL,
+  firing      INTEGER NOT NULL,
+  rule_name   TEXT NOT NULL,
+  describes   TEXT NOT NULL,
+  value       REAL NOT NULL
+);
+CREATE INDEX alert_events_ts ON alert_events (ts DESC);
+`,
 }
 
 func (s *SQLite) migrate() error {

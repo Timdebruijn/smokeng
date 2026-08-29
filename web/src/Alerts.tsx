@@ -9,6 +9,8 @@ import {
   type AlertRule,
   type FiringAlert,
   type Target,
+  fetchAlertEvents,
+  type AlertEvent,
 } from './api'
 
 const METRICS: { value: AlertRule['metric']; label: string; unit: string }[] = [
@@ -22,7 +24,7 @@ const REFRESH_MS = 15_000
 export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   const [rules, setRules] = useState<AlertRule[]>([])
   const [firing, setFiring] = useState<FiringAlert[]>([])
-  const [enabled, setEnabled] = useState(true)
+  const [delivering, setDelivering] = useState(true)
   const [targets, setTargets] = useState<Target[]>([])
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
@@ -32,7 +34,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
       const [r, f, t] = await Promise.all([fetchAlertRules(), fetchFiringAlerts(), fetchTargets()])
       setRules(r)
       setFiring(f.alerts ?? [])
-      setEnabled(f.enabled)
+      setDelivering(f.delivering)
       setTargets(t)
       setError(null)
     } catch (e) {
@@ -62,90 +64,181 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   return (
     <>
       {error && <p className="error">{error}</p>}
-      {!enabled && (
-        <p className="hint">
-          Alerting is off: rules are stored but not evaluated. Start smokeng with{' '}
-          <code>--alert-webhook URL</code> to enable it.
+      {!delivering && (
+        <p className="hint warn">
+          Rules are evaluated and their transitions recorded, but nothing is posted anywhere:
+          no <code>--alert-webhook</code> is set. Firing state and the history below are still
+          live.
         </p>
       )}
 
-      <h2 className="section">Firing</h2>
-      {firing.length === 0 ? (
-        <p className="hint">Nothing is firing.</p>
+      <section className="card section-card">
+        <div className="section-card-head">
+          <span className="section-card-title">Firing</span>
+        </div>
+        {firing.length === 0 ? (
+          <p className="hint">Nothing is firing.</p>
+        ) : (
+          <table className="alerts">
+            <tbody>
+              {firing.map((a) => (
+                <tr key={`${a.target}-${a.rule}`}>
+                  <td>
+                    <span className="dot-label">
+                      <span className="dot" style={{ background: 'var(--bad)' }} />
+                      <span className="chip firing">{a.rule}</span>
+                    </span>
+                  </td>
+                  <td>
+                    <code>{a.target}</code>
+                  </td>
+                  <td>
+                    {a.metric} is {a.value.toFixed(a.metric === 'loss' ? 0 : 2)}
+                    {a.metric === 'loss' ? '%' : 'ms'}
+                  </td>
+                  <td className="dim">
+                    {a.since ? (
+                      <>
+                        since <span className="mono">{new Date(a.since * 1000).toLocaleString()}</span>
+                      </>
+                    ) : (
+                      ''
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section className="card section-card">
+        <div className="section-card-head">
+          <span className="section-card-title">Rules</span>
+        </div>
+        <p className="hint">
+          A rule applies to the node it is defined on and everything below it. A node with its own
+          rules replaces the inherited set rather than adding to it. Rules only fire after the
+          condition has held for the given number of consecutive intervals, and only clear after it
+          has failed for as many — so a single bad interval never pages anyone.
+        </p>
+        {rules.length === 0 && <p className="hint">No rules defined.</p>}
+        {rules.length > 0 && (
+          <table className="alerts">
+            <tbody>
+              {rules.map((r) => (
+                <tr key={r.id} className={r.enabled ? '' : 'disabled-row'}>
+                  <td>
+                    <span className="dot-label">
+                      <span className="dot" style={{ background: r.enabled ? 'var(--good)' : 'var(--warn)' }} />
+                      {r.name}
+                    </span>
+                  </td>
+                  <td>
+                    <code>{pathOf(r.target_id)}</code>
+                  </td>
+                  <td>{r.describes}</td>
+                  <td className="dim">clears after {r.clear_intervals}</td>
+                  {isAdmin && (
+                    <td>
+                      <button
+                        className={r.enabled ? 'pill active' : 'pill'}
+                        onClick={() => void run(() => updateAlertRule(r.id, { enabled: !r.enabled }))}
+                      >
+                        {r.enabled ? 'Disable' : 'Enable'}
+                      </button>
+                      <button className="pill danger" onClick={() => void run(() => deleteAlertRule(r.id))}>
+                        Delete
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {isAdmin &&
+          (adding ? (
+            <RuleForm
+              targets={targets}
+              onCancel={() => setAdding(false)}
+              onSubmit={async (body) => {
+                if (await run(() => createAlertRule(body))) setAdding(false)
+              }}
+            />
+          ) : (
+            <div className="pill-row">
+              <button className="pill accent" onClick={() => setAdding(true)}>
+                Add rule…
+              </button>
+            </div>
+          ))}
+      </section>
+
+      <AlertHistory />
+    </>
+  )
+}
+
+/**
+ * What alerting has done, as opposed to what it is doing now.
+ *
+ * The rule name and description here are the ones recorded at the time, not
+ * looked up from the rule as it stands: renaming or re-thresholding a rule
+ * must not rewrite what the log says happened.
+ */
+function AlertHistory() {
+  const [events, setEvents] = useState<AlertEvent[]>([])
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    void fetchAlertEvents(50)
+      .then(setEvents)
+      .catch(() => setEvents([]))
+      .finally(() => setLoaded(true))
+  }, [])
+
+  return (
+    <section className="card section-card">
+      <div className="section-card-head">
+        <h2 className="section-card-title">History</h2>
+      </div>
+      {!loaded ? (
+        <p className="hint">Loading…</p>
+      ) : events.length === 0 ? (
+        <p className="hint">
+          Nothing has fired or cleared yet. Transitions are recorded as they happen, whether or not
+          a webhook was reachable.
+        </p>
       ) : (
         <table className="alerts">
           <tbody>
-            {firing.map((a) => (
-              <tr key={`${a.target}-${a.rule}`}>
+            {events.map((e) => (
+              <tr key={e.id}>
                 <td>
-                  <span className="chip firing">{a.rule}</span>
+                  <span className="dot-label">
+                    <span
+                      className="dot"
+                      style={{ background: e.firing ? 'var(--bad)' : 'var(--good)' }}
+                    />
+                    {e.firing ? 'fired' : 'cleared'}
+                  </span>
                 </td>
                 <td>
-                  <code>{a.target}</code>
+                  <strong>{e.rule}</strong>
                 </td>
+                <td className="hint">{e.describes}</td>
                 <td>
-                  {a.metric} is {a.value.toFixed(a.metric === 'loss' ? 0 : 2)}
-                  {a.metric === 'loss' ? '%' : 'ms'}
+                  <code>{e.target}</code>
                 </td>
-                <td className="dim">
-                  {a.since ? `since ${new Date(a.since * 1000).toLocaleString()}` : ''}
-                </td>
+                <td className="mono">{new Date(e.ts * 1000).toLocaleString()}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
-
-      <h2 className="section">Rules</h2>
-      <p className="hint">
-        A rule applies to the node it is defined on and everything below it. A node with its own
-        rules replaces the inherited set rather than adding to it. Rules only fire after the
-        condition has held for the given number of consecutive intervals, and only clear after it
-        has failed for as many — so a single bad interval never pages anyone.
-      </p>
-      {rules.length === 0 && <p className="hint">No rules defined.</p>}
-      {rules.length > 0 && (
-        <table className="alerts">
-          <tbody>
-            {rules.map((r) => (
-              <tr key={r.id} className={r.enabled ? '' : 'disabled-row'}>
-                <td>{r.name}</td>
-                <td>
-                  <code>{pathOf(r.target_id)}</code>
-                </td>
-                <td>{r.describes}</td>
-                <td className="dim">clears after {r.clear_intervals}</td>
-                {isAdmin && (
-                  <td>
-                    <button onClick={() => void run(() => updateAlertRule(r.id, { enabled: !r.enabled }))}>
-                      {r.enabled ? 'Disable' : 'Enable'}
-                    </button>
-                    <button className="danger" onClick={() => void run(() => deleteAlertRule(r.id))}>
-                      Delete
-                    </button>
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {isAdmin &&
-        (adding ? (
-          <RuleForm
-            targets={targets}
-            onCancel={() => setAdding(false)}
-            onSubmit={async (body) => {
-              if (await run(() => createAlertRule(body))) setAdding(false)
-            }}
-          />
-        ) : (
-          <div className="actions">
-            <button onClick={() => setAdding(true)}>Add rule…</button>
-          </div>
-        ))}
-    </>
+    </section>
   )
 }
 
@@ -169,7 +262,7 @@ function RuleForm({
 
   return (
     <form
-      className="rule-form"
+      className="card rule-form"
       onSubmit={(e) => {
         e.preventDefault()
         onSubmit({
@@ -232,11 +325,11 @@ function RuleForm({
           />
         </span>
       </label>
-      <div className="actions">
-        <button type="submit" disabled={!name}>
+      <div className="pill-row">
+        <button className="pill accent" type="submit" disabled={!name}>
           Create
         </button>
-        <button type="button" onClick={onCancel}>
+        <button className="pill" type="button" onClick={onCancel}>
           Cancel
         </button>
       </div>

@@ -51,10 +51,41 @@ export async function fetchAlertRules(): Promise<AlertRule[]> {
   return ((await r.json()) as { rules: AlertRule[] }).rules ?? []
 }
 
-export async function fetchFiringAlerts(): Promise<{ alerts: FiringAlert[]; enabled: boolean }> {
+export async function fetchFiringAlerts(): Promise<{
+  alerts: FiringAlert[]
+  /** Rules are being evaluated. */
+  enabled: boolean
+  /** Transitions are posted somewhere as well as recorded. */
+  delivering: boolean
+}> {
   const r = await fetch('/api/v1/alerts', { cache: 'no-store' })
   if (!r.ok) throw new Error(`alerts: HTTP ${r.status}`)
-  return (await r.json()) as { alerts: FiringAlert[]; enabled: boolean }
+  return (await r.json()) as {
+    alerts: FiringAlert[]
+    enabled: boolean
+    delivering: boolean
+  }
+}
+
+/** One transition: a rule started firing, or stopped. */
+export interface AlertEvent {
+  id: number
+  ts: number
+  firing: boolean
+  rule: string
+  describes: string
+  value: number
+  target: string
+  agent_id: number
+}
+
+export async function fetchAlertEvents(limit = 50): Promise<AlertEvent[]> {
+  const r = await fetch(`/api/v1/alert-events?limit=${limit}`, { cache: 'no-store' })
+  // Absent on an instance whose store cannot keep history; an empty list reads
+  // the same as "nothing has happened yet", which is the honest fallback.
+  if (r.status === 404) return []
+  if (!r.ok) throw new Error(`alert events: HTTP ${r.status}`)
+  return ((await r.json()) as { events: AlertEvent[] }).events ?? []
 }
 
 export function createAlertRule(body: Partial<AlertRule>): Promise<unknown> {

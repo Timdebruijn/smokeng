@@ -69,85 +69,93 @@ export default function Agents({ readOnly = false }: { readOnly?: boolean }) {
     <>
       {error && <p className="error">{error}</p>}
 
-      <h2 className="section">Agents</h2>
-      <p className="hint">
-        Each agent measures from its own vantage point, and each is its own series — two
-        vantage points that disagree is the finding, not something to average away. The local
-        prober is this master itself, and cannot be renamed, disabled or removed.
-      </p>
-      {agents.length === 0 ? (
-        <p className="hint">No agents.</p>
-      ) : (
-        <table className="alerts">
-          <tbody>
-            {agents.map((a) => (
-              <AgentRow
-                key={a.id}
-                agent={a}
-                readOnly={readOnly}
-                busy={busy}
-                onRename={(name) => run(() => updateAgent(a.id, { name }))}
-                onToggle={() => run(() => updateAgent(a.id, { enabled: !a.enabled }))}
-                onRemove={() => run(() => deleteAgent(a.id))}
-              />
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {!readOnly &&
-        (adding ? (
-          <AddAgentForm
-            busy={busy}
-            onCancel={() => setAdding(false)}
-            onSubmit={async (name, ttlS) => {
-              setBusy(true)
-              setError(null)
-              try {
-                const t = await createAgentToken(name, ttlS)
-                setMinted(t)
-                setAdding(false)
-                await reload()
-              } catch (e) {
-                setError((e as Error).message)
-              } finally {
-                setBusy(false)
-              }
-            }}
-          />
+      <section className="card section-card">
+        <div className="section-card-head">
+          <span className="section-card-title">Agents</span>
+        </div>
+        <p className="hint">
+          Each agent measures from its own vantage point, and each is its own series — two
+          vantage points that disagree is the finding, not something to average away. The local
+          prober is this master itself, and cannot be renamed, disabled or removed.
+        </p>
+        {agents.length === 0 ? (
+          <p className="hint">No agents.</p>
         ) : (
-          <div className="actions">
-            <button disabled={busy} onClick={() => setAdding(true)}>
-              Add an agent…
-            </button>
-          </div>
-        ))}
+          <table className="alerts">
+            <tbody>
+              {agents.map((a) => (
+                <AgentRow
+                  key={a.id}
+                  agent={a}
+                  readOnly={readOnly}
+                  busy={busy}
+                  onRename={(name) => run(() => updateAgent(a.id, { name }))}
+                  onToggle={() => run(() => updateAgent(a.id, { enabled: !a.enabled }))}
+                  onRemove={() => run(() => deleteAgent(a.id))}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
 
-      {minted && <TokenReveal token={minted} onDismiss={() => setMinted(null)} />}
+        {!readOnly &&
+          (adding ? (
+            <AddAgentForm
+              busy={busy}
+              onCancel={() => setAdding(false)}
+              onSubmit={async (name, ttlS) => {
+                setBusy(true)
+                setError(null)
+                try {
+                  const t = await createAgentToken(name, ttlS)
+                  setMinted(t)
+                  setAdding(false)
+                  await reload()
+                } catch (e) {
+                  setError((e as Error).message)
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            />
+          ) : (
+            <div className="pill-row">
+              <button className="pill accent" disabled={busy} onClick={() => setAdding(true)}>
+                Add an agent…
+              </button>
+            </div>
+          ))}
 
-      <h2 className="section">Enrolment tokens</h2>
-      <p className="hint">
-        A token is single-use: an agent spends it on its first connection. Unspent tokens expire
-        on their own; spent and expired ones are kept here as a record.
-      </p>
-      {tokens.length === 0 ? (
-        <p className="hint">No tokens.</p>
-      ) : (
-        <table className="alerts">
-          <tbody>
-            {tokens.map((t) => (
-              <TokenRow
-                key={t.id}
-                token={t}
-                agentName={agentName(t.agent_id)}
-                readOnly={readOnly}
-                busy={busy}
-                onRevoke={() => run(() => deleteAgentToken(t.id))}
-              />
-            ))}
-          </tbody>
-        </table>
-      )}
+        {minted && <TokenReveal token={minted} onDismiss={() => setMinted(null)} />}
+      </section>
+
+      <section className="card section-card">
+        <div className="section-card-head">
+          <span className="section-card-title">Enrolment tokens</span>
+        </div>
+        <p className="hint">
+          A token is single-use: an agent spends it on its first connection. Unspent tokens expire
+          on their own; spent and expired ones are kept here as a record.
+        </p>
+        {tokens.length === 0 ? (
+          <p className="hint">No tokens.</p>
+        ) : (
+          <table className="alerts">
+            <tbody>
+              {tokens.map((t) => (
+                <TokenRow
+                  key={t.id}
+                  token={t}
+                  agentName={agentName(t.agent_id)}
+                  readOnly={readOnly}
+                  busy={busy}
+                  onRevoke={() => run(() => deleteAgentToken(t.id))}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
     </>
   )
 }
@@ -174,19 +182,22 @@ function AgentRow({
   return (
     <tr className={agent.enabled ? '' : 'disabled-row'}>
       <td>
-        {agent.is_local ? (
-          <strong>{agent.name}</strong>
-        ) : readOnly ? (
-          agent.name
-        ) : (
-          <input
-            value={draft}
-            disabled={busy}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => draft.trim() && draft !== agent.name && void onRename(draft.trim())}
-            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-          />
-        )}
+        <span className="dot-label">
+          <span className="dot" style={{ background: agent.enabled ? 'var(--good)' : 'var(--warn)' }} />
+          {agent.is_local ? (
+            <strong>{agent.name}</strong>
+          ) : readOnly ? (
+            agent.name
+          ) : (
+            <input
+              value={draft}
+              disabled={busy}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => draft.trim() && draft !== agent.name && void onRename(draft.trim())}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+            />
+          )}
+        </span>
         {agent.is_local && <span className="badge">local prober</span>}
       </td>
       {/* The local prober does not report to anything — it is the master. A
@@ -197,24 +208,24 @@ function AgentRow({
       <td>
         {!agent.is_local && !readOnly && (
           <>
-            <button disabled={busy} onClick={() => void onToggle()}>
+            <button className={agent.enabled ? 'pill active' : 'pill'} disabled={busy} onClick={() => void onToggle()}>
               {agent.enabled ? 'Disable' : 'Enable'}
             </button>
             {confirming ? (
               <>
                 <button
-                  className="danger"
+                  className="pill danger"
                   disabled={busy}
                   onClick={() => void onRemove().then((ok) => ok && setConfirming(false))}
                 >
                   Confirm remove
                 </button>
-                <button disabled={busy} onClick={() => setConfirming(false)}>
+                <button className="pill" disabled={busy} onClick={() => setConfirming(false)}>
                   Cancel
                 </button>
               </>
             ) : (
-              <button className="danger" disabled={busy} onClick={() => setConfirming(true)}>
+              <button className="pill danger" disabled={busy} onClick={() => setConfirming(true)}>
                 Remove
               </button>
             )}
@@ -239,21 +250,42 @@ function TokenRow({
   onRevoke: () => Promise<boolean>
 }) {
   const state = token.used ? 'spent' : token.expired ? 'expired' : 'unspent'
+  const dotColour = state === 'unspent' ? 'var(--good)' : state === 'spent' ? 'var(--warn)' : 'var(--bad)'
   return (
     <tr className={state === 'unspent' ? '' : 'disabled-row'}>
-      <td>{token.name}</td>
+      <td>
+        <span className="dot-label">
+          <span className="dot" style={{ background: dotColour }} />
+          {token.name}
+        </span>
+      </td>
       <td className="dim">
-        {state === 'unspent' && `expires ${new Date(token.expires_at * 1000).toLocaleString()}`}
-        {state === 'spent' &&
-          `used by ${agentName ?? (token.agent_id !== undefined ? `agent ${token.agent_id}` : 'an agent')}${
-            token.used_at ? ` · ${new Date(token.used_at * 1000).toLocaleString()}` : ''
-          }`}
-        {state === 'expired' && `expired ${new Date(token.expires_at * 1000).toLocaleString()}`}
+        {state === 'unspent' && (
+          <>
+            expires <span className="mono">{new Date(token.expires_at * 1000).toLocaleString()}</span>
+          </>
+        )}
+        {state === 'spent' && (
+          <>
+            used by {agentName ?? (token.agent_id !== undefined ? `agent ${token.agent_id}` : 'an agent')}
+            {token.used_at && (
+              <>
+                {' · '}
+                <span className="mono">{new Date(token.used_at * 1000).toLocaleString()}</span>
+              </>
+            )}
+          </>
+        )}
+        {state === 'expired' && (
+          <>
+            expired <span className="mono">{new Date(token.expires_at * 1000).toLocaleString()}</span>
+          </>
+        )}
       </td>
       <td>{state !== 'unspent' && <span className="badge">{state}</span>}</td>
       <td>
         {state === 'unspent' && !readOnly && (
-          <button className="danger" disabled={busy} onClick={() => void onRevoke()}>
+          <button className="pill danger" disabled={busy} onClick={() => void onRevoke()}>
             Revoke
           </button>
         )}
@@ -275,7 +307,7 @@ function AddAgentForm({
   const [ttlS, setTtlS] = useState(3600)
   return (
     <form
-      className="rule-form"
+      className="card rule-form"
       onSubmit={(e) => {
         e.preventDefault()
         onSubmit(name.trim(), ttlS)
@@ -295,11 +327,11 @@ function AddAgentForm({
           ))}
         </select>
       </label>
-      <div className="actions">
-        <button type="submit" disabled={busy || !name.trim()}>
+      <div className="pill-row">
+        <button className="pill accent" type="submit" disabled={busy || !name.trim()}>
           Create token
         </button>
-        <button type="button" disabled={busy} onClick={onCancel}>
+        <button className="pill" type="button" disabled={busy} onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -347,9 +379,13 @@ function TokenReveal({ token, onDismiss }: { token: NewAgentToken; onDismiss: ()
           you do not trust.
         </p>
       )}
-      <div className="actions">
-        <button onClick={() => void copy()}>{copied ? 'Copied' : 'Copy command'}</button>
-        <button onClick={onDismiss}>I have saved it — dismiss</button>
+      <div className="pill-row">
+        <button className="pill accent" onClick={() => void copy()}>
+          {copied ? 'Copied' : 'Copy command'}
+        </button>
+        <button className="pill" onClick={onDismiss}>
+          I have saved it — dismiss
+        </button>
       </div>
     </div>
   )

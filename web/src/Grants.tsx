@@ -77,74 +77,78 @@ export default function Grants({
     <>
       {error && <p className="error">{error}</p>}
 
-      <h2 className="section">Access</h2>
-      <p className="hint">
-        A grant gives an OIDC group a role on a target and everything beneath it. A group scoped
-        this way sees that subtree as though it were the whole installation — there is no way for
-        it to learn that anything else exists. <code>admin</code> is not offered as a role here:
-        it is a global role assigned by the identity provider, not something granted per target.
-      </p>
-      {!authEnabled && (
-        <p className="hint warn">
-          This instance runs without authentication, so there is nobody to grant anything to:
-          every request is treated as an admin. Grants written here are stored and have no
-          effect until <code>--oidc-issuer</code> is configured.
+      <section className="card section-card">
+        <div className="section-card-head">
+          <span className="section-card-title">Access</span>
+        </div>
+        <p className="hint">
+          A grant gives an OIDC group a role on a target and everything beneath it. A group scoped
+          this way sees that subtree as though it were the whole installation — there is no way for
+          it to learn that anything else exists. <code>admin</code> is not offered as a role here:
+          it is a global role assigned by the identity provider, not something granted per target.
         </p>
-      )}
-      {authEnabled && defaultRole === 'viewer' && (
-        <p className="hint warn">
-          These grants are not in force yet. This instance runs with{' '}
-          <code>--default-role viewer</code>, so every authenticated user can already read
-          everything and a grant only ever adds. Write the grants you want, check them, then
-          restart with <code>--default-role none</code> — at which point access comes from
-          this list alone.
-        </p>
-      )}
+        {!authEnabled && (
+          <p className="hint warn">
+            This instance runs without authentication, so there is nobody to grant anything to:
+            every request is treated as an admin. Grants written here are stored and have no
+            effect until <code>--oidc-issuer</code> is configured.
+          </p>
+        )}
+        {authEnabled && defaultRole === 'viewer' && (
+          <p className="hint warn">
+            These grants are not in force yet. This instance runs with{' '}
+            <code>--default-role viewer</code>, so every authenticated user can already read
+            everything and a grant only ever adds. Write the grants you want, check them, then
+            restart with <code>--default-role none</code> — at which point access comes from
+            this list alone.
+          </p>
+        )}
 
-      {grouped.length === 0 ? (
-        <p className="hint">No grants.</p>
-      ) : (
-        <table className="alerts">
-          <tbody>
-            {grouped.map(([group, list]) => (
-              <Fragment key={group}>
-                <tr>
-                  <th colSpan={3} className="group-heading">
-                    {group}
-                  </th>
-                </tr>
-                {list.map((g) => (
-                  <GrantRow
-                    key={g.id}
-                    grant={g}
-                    readOnly={readOnly}
-                    busy={busy}
-                    onRemove={() => run(() => deleteGrant(g.id))}
-                  />
-                ))}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {!readOnly &&
-        (adding ? (
-          <AddGrantForm
-            targets={targets}
-            busy={busy}
-            onCancel={() => setAdding(false)}
-            onSubmit={async (group, targetId, role) => {
-              if (await run(() => createGrant({ group, target_id: targetId, role }))) setAdding(false)
-            }}
-          />
+        {grouped.length === 0 ? (
+          <p className="hint">No grants.</p>
         ) : (
-          <div className="actions">
-            <button disabled={busy} onClick={() => setAdding(true)}>
-              Add a grant…
-            </button>
-          </div>
-        ))}
+          <table className="alerts">
+            <tbody>
+              {grouped.map(([group, list]) => (
+                <Fragment key={group}>
+                  <tr>
+                    <th colSpan={3} className="group-heading">
+                      {group}
+                    </th>
+                  </tr>
+                  {list.map((g) => (
+                    <GrantRow
+                      key={g.id}
+                      grant={g}
+                      readOnly={readOnly}
+                      busy={busy}
+                      onRemove={() => run(() => deleteGrant(g.id))}
+                    />
+                  ))}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {!readOnly &&
+          (adding ? (
+            <AddGrantForm
+              targets={targets}
+              busy={busy}
+              onCancel={() => setAdding(false)}
+              onSubmit={async (group, targetId, role) => {
+                if (await run(() => createGrant({ group, target_id: targetId, role }))) setAdding(false)
+              }}
+            />
+          ) : (
+            <div className="pill-row">
+              <button className="pill accent" disabled={busy} onClick={() => setAdding(true)}>
+                Add a grant…
+              </button>
+            </div>
+          ))}
+      </section>
     </>
   )
 }
@@ -167,24 +171,26 @@ function GrantRow({
         <code>{grant.path === '' ? '/' : grant.path}</code>{' '}
         <span className="badge">+ subtree</span>
       </td>
-      <td>{grant.role}</td>
+      <td>
+        <span className="badge">{grant.role}</span>
+      </td>
       <td>
         {!readOnly &&
           (confirming ? (
             <>
               <button
-                className="danger"
+                className="pill danger"
                 disabled={busy}
                 onClick={() => void onRemove().then((ok) => ok && setConfirming(false))}
               >
                 Confirm remove
               </button>
-              <button disabled={busy} onClick={() => setConfirming(false)}>
+              <button className="pill" disabled={busy} onClick={() => setConfirming(false)}>
                 Cancel
               </button>
             </>
           ) : (
-            <button className="danger" disabled={busy} onClick={() => setConfirming(true)}>
+            <button className="pill danger" disabled={busy} onClick={() => setConfirming(true)}>
               Remove
             </button>
           ))}
@@ -238,7 +244,7 @@ function AddGrantForm({
 
   return (
     <form
-      className="rule-form"
+      className="card rule-form"
       onSubmit={(e) => {
         e.preventDefault()
         const trimmed = group.trim()
@@ -284,11 +290,11 @@ function AddGrantForm({
         Applies to the target and everything beneath it. Adding a grant for a group and target
         that already has one replaces its role rather than adding a second grant.
       </p>
-      <div className="actions">
-        <button type="submit" disabled={busy || !group.trim() || targetId === ''}>
+      <div className="pill-row">
+        <button className="pill accent" type="submit" disabled={busy || !group.trim() || targetId === ''}>
           Add grant
         </button>
-        <button type="button" disabled={busy} onClick={onCancel}>
+        <button className="pill" type="button" disabled={busy} onClick={onCancel}>
           Cancel
         </button>
       </div>
