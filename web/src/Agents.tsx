@@ -217,7 +217,7 @@ function AgentRow({
       {/* A fleet upgrades one host at a time, so which version each agent is
           running is the difference between "measured" and "measured by a
           version that predates the timestamp fix". */}
-      <td className="mono dim">{agent.is_local ? '—' : (agent.version ?? 'unknown')}</td>
+      <td className="mono dim">{agent.version ?? 'unknown'}</td>
       <td>{agent.enabled ? '' : <span className="badge">disabled</span>}</td>
       <td>
         {!agent.is_local && !readOnly && (

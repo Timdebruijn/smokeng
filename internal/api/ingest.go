@@ -250,7 +250,13 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		// What the agent said it was running when it last reported. A fleet
 		// upgrades one host at a time, and this is how an operator sees which
 		// agents still predate a fix to the measurement path.
-		if a.Version != "" {
+		// The local prober is this process, so its version is known for
+		// certain rather than reported — it never submits over the wire, and
+		// would otherwise read as unknown on the one agent we cannot be
+		// mistaken about.
+		if a.ID == store.LocalAgentID {
+			item["version"] = s.version
+		} else if a.Version != "" {
 			item["version"] = a.Version
 		}
 		// The public key is enrolment material, and belongs to whoever
