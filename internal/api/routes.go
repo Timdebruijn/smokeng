@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"sort"
 
 	"github.com/timdebruijn/smokeng/internal/auth"
 )
@@ -81,16 +80,6 @@ func (rt *router) classified() map[string]routeClass {
 	for k, v := range rt.classes {
 		out[k] = v
 	}
-	return out
-}
-
-// patterns lists the registered routes, sorted, for a test's failure message.
-func (rt *router) patterns() []string {
-	out := make([]string, 0, len(rt.classes))
-	for k := range rt.classes {
-		out = append(out, k)
-	}
-	sort.Strings(out)
 	return out
 }
 

@@ -16,9 +16,6 @@ export function setCursor(t: number | null): void {
   for (const l of listeners) l(cursor)
 }
 
-export function getCursor(): number | null {
-  return cursor
-}
 
 export function subscribeCursor(l: Listener): () => void {
   listeners.add(l)

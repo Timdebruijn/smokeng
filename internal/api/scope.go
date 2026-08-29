@@ -219,17 +219,6 @@ func (s *server) requireWrite(w http.ResponseWriter, r *http.Request, id int64) 
 	return sc, true
 }
 
-// visibleIDs is the set of nodes this caller may know about.
-func (sc *Scope) visibleIDs(targets []tree.Target) map[int64]bool {
-	out := make(map[int64]bool, len(targets))
-	for i := range targets {
-		if sc.Visible(targets[i].ID) {
-			out[targets[i].ID] = true
-		}
-	}
-	return out
-}
-
 // requireVisible resolves the scope and checks the caller may know the node
 // exists. A node outside their scope is answered as absent, never as
 // forbidden: "you may not read that" confirms there is something to read.
