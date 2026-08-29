@@ -198,4 +198,18 @@ func TestDeleteKeepsMeasurements(t *testing.T) {
 	}
 }
 
+// The tree changes under the caller's feet, so responses must not be cached.
+// Without this the admin UI shows state that no longer exists — a browser is
+// free to serve a heuristically cached copy of a response with no directives.
+func TestResponsesAreNotCacheable(t *testing.T) {
+	h, _ := newTestServer(t)
+	for _, path := range []string{"/api/v1/targets", "/api/v1/measurements?target_id=1"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store", path, got)
+		}
+	}
+}
+
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }

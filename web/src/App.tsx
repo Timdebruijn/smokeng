@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchTargets, type Target } from './api'
+import Admin from './Admin'
 import Plot from './Plot'
+import { fetchTargets, type Target } from './api'
 
 const RANGES: { label: string; seconds: number }[] = [
   { label: '15m', seconds: 15 * 60 },
@@ -10,7 +11,29 @@ const RANGES: { label: string; seconds: number }[] = [
 ]
 const REFRESH_MS = 10_000
 
+type View = 'graphs' | 'targets'
+
 export default function App() {
+  const [view, setView] = useState<View>('graphs')
+  return (
+    <main>
+      <header>
+        <h1>smokeng</h1>
+        <nav className="controls">
+          <button className={view === 'graphs' ? 'active' : ''} onClick={() => setView('graphs')}>
+            Graphs
+          </button>
+          <button className={view === 'targets' ? 'active' : ''} onClick={() => setView('targets')}>
+            Targets
+          </button>
+        </nav>
+      </header>
+      {view === 'graphs' ? <Graphs /> : <Admin />}
+    </main>
+  )
+}
+
+function Graphs() {
   const [targets, setTargets] = useState<Target[]>([])
   const [error, setError] = useState<string | null>(null)
   const [rangeS, setRangeS] = useState(3600)
@@ -52,9 +75,17 @@ export default function App() {
   const spanLabel = `${fmtSpan(to - from)} · ${new Date(from * 1000).toLocaleTimeString()} → ${new Date(to * 1000).toLocaleTimeString()}`
 
   return (
-    <main>
-      <header>
-        <h1>smokeng</h1>
+    <>
+      <div className="subbar">
+        <p className="range">
+          {spanLabel}
+          {zoom && (
+            <button className="link" onClick={() => setZoom(null)}>
+              reset zoom
+            </button>
+          )}
+          {!zoom && <span className="hint">drag on a plot to zoom</span>}
+        </p>
         <div className="controls">
           {RANGES.map((r) => (
             <button
@@ -78,20 +109,12 @@ export default function App() {
             {live && !zoom ? '● live' : '○ paused'}
           </button>
         </div>
-      </header>
-      <p className="range">
-        {spanLabel}
-        {zoom && (
-          <button className="link" onClick={() => setZoom(null)}>
-            reset zoom
-          </button>
-        )}
-        {!zoom && <span className="hint">drag on a plot to zoom</span>}
-      </p>
+      </div>
       {error && <p className="error">{error}</p>}
       {!error && leaves.length === 0 && (
         <p>
-          No targets yet — import some with <code>smokeng config import targets.toml</code>.
+          No targets yet — add them under <strong>Targets</strong>, or import a SmokePing config with{' '}
+          <code>smokeng config import-smokeping</code>.
         </p>
       )}
       {leaves.map((t) => (
@@ -105,7 +128,7 @@ export default function App() {
           onZoom={onZoom}
         />
       ))}
-    </main>
+    </>
   )
 }
 

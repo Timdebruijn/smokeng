@@ -113,3 +113,202 @@ button.link {
 .error {
   color: #c0392b;
 }
+
+.subbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+/* Admin: tree on the left, detail on the right. */
+.admin {
+  display: grid;
+  grid-template-columns: minmax(200px, 20rem) 1fr;
+  gap: 1.5rem;
+  margin-top: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .admin {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tree {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.tree-row:last-child {
+  border-bottom: none;
+}
+
+.tree-row.selected {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.tree-row .group {
+  font-weight: 600;
+}
+
+.tree-row .dim,
+.detail .dim {
+  color: var(--fg-dim);
+  font-size: 0.8rem;
+}
+
+.badge {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-dim);
+}
+
+.detail h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 1rem;
+  margin: 0 0 0.75rem;
+}
+
+.detail h3 {
+  font-size: 0.9rem;
+  margin: 1.5rem 0 0.35rem;
+}
+
+.fields {
+  display: grid;
+  gap: 0.4rem;
+  max-width: 32rem;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.field.checkbox {
+  grid-template-columns: auto 1fr;
+}
+
+.field input[type='text'],
+.field input:not([type]),
+.field select,
+.settings input,
+.add-child input,
+.add-child select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+}
+
+.settings {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.settings th {
+  text-align: left;
+  font-weight: 500;
+  padding: 0.25rem 0.75rem 0.25rem 0;
+  white-space: nowrap;
+}
+
+.settings td {
+  padding: 0.25rem 0.75rem 0.25rem 0;
+}
+
+.settings input:disabled {
+  color: var(--fg-dim);
+  border-color: transparent;
+}
+
+.unit {
+  margin-left: 0.3rem;
+  color: var(--fg-dim);
+}
+
+.chip {
+  font-size: 0.78rem;
+  color: var(--fg-dim);
+}
+
+.chip.local {
+  color: var(--accent);
+}
+
+.settings button,
+.actions button,
+.add-child button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.settings button:hover:not(:disabled),
+.actions button:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.actions .danger {
+  color: #c0392b;
+  border-color: color-mix(in srgb, #c0392b 40%, transparent);
+}
+
+.add-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+  margin: 0.25rem 0;
+  max-width: 40rem;
+}

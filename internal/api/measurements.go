@@ -64,6 +64,8 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/vnd.apache.arrow.stream")
+	// A trailing window's contents change every interval; never cache it.
+	w.Header().Set("Cache-Control", "no-store")
 	writer := ipc.NewWriter(w, ipc.WithSchema(measurementsSchema))
 	defer writer.Close()
 

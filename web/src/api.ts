@@ -1,20 +1,95 @@
 import { tableFromIPC } from '@uwdata/flechette'
 
+/** Where an effective setting came from: this node, or the ancestor that set it. */
+export type Provenance = 'local' | { id: number; name: string; path: string }
+
+/**
+ * One resolved setting (DESIGN.md §4.2). `local` is null when the value is
+ * inherited, which is exactly what the override and revert controls act on —
+ * the server never flattens this away.
+ */
+export interface SettingValue<T> {
+  local: T | null
+  effective: T
+  source: Provenance
+}
+
+export interface TargetSettings {
+  interval_s: SettingValue<number>
+  pings_per_interval: SettingValue<number>
+  probe_mode: SettingValue<string>
+  burst_gap_ms: SettingValue<number>
+  timeout_ms: SettingValue<number>
+  packet_size: SettingValue<number>
+  dscp: SettingValue<number>
+  agents: SettingValue<string>
+}
+
+export type SettingKey = keyof TargetSettings
+
 export interface Target {
   id: number
+  parent_id: number | null
+  name: string
   path: string
   host: string | null
   address_family: string | null
   title: string | null
+  notes: string | null
   hidden: boolean
   enabled: boolean
+  sort_order: number
+  is_group: boolean
+  settings: TargetSettings
 }
 
 export async function fetchTargets(): Promise<Target[]> {
-  const r = await fetch('/api/v1/targets')
+  const r = await fetch('/api/v1/targets', { cache: 'no-store' })
   if (!r.ok) throw new Error(`targets: HTTP ${r.status}`)
   const body = (await r.json()) as { targets: Target[] }
   return body.targets
+}
+
+/** Surfaces the server's validation message, which names the offending field. */
+async function mutate(url: string, method: string, body?: unknown): Promise<unknown> {
+  const r = await fetch(url, {
+    method,
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  const text = await r.text()
+  const parsed: unknown = text ? JSON.parse(text) : null
+  if (!r.ok) {
+    const msg = (parsed as { error?: string } | null)?.error
+    throw new Error(msg ?? `HTTP ${r.status}`)
+  }
+  return parsed
+}
+
+export interface TargetPatch {
+  parent_id?: number
+  name?: string
+  host?: string | null
+  address_family?: string | null
+  title?: string | null
+  notes?: string | null
+  hidden?: boolean
+  enabled?: boolean
+  sort_order?: number
+  // A setting set to null is cleared, reverting the node to inheritance.
+  settings?: Partial<Record<SettingKey, number | string | null>>
+}
+
+export function createTarget(body: TargetPatch): Promise<unknown> {
+  return mutate('/api/v1/targets', 'POST', body)
+}
+
+export function updateTarget(id: number, body: TargetPatch): Promise<unknown> {
+  return mutate(`/api/v1/targets/${id}`, 'PATCH', body)
+}
+
+export function deleteTarget(id: number, recursive: boolean): Promise<unknown> {
+  return mutate(`/api/v1/targets/${id}${recursive ? '?recursive=true' : ''}`, 'DELETE')
 }
 
 /**
@@ -32,7 +107,9 @@ export interface Series {
 }
 
 export async function fetchSeries(targetId: number, from: number, to: number): Promise<Series> {
-  const r = await fetch(`/api/v1/measurements?target_id=${targetId}&from=${from}&to=${to}`)
+  const r = await fetch(`/api/v1/measurements?target_id=${targetId}&from=${from}&to=${to}`, {
+    cache: 'no-store',
+  })
   if (!r.ok) throw new Error(`measurements: HTTP ${r.status}`)
   const table = tableFromIPC(new Uint8Array(await r.arrayBuffer()))
   const n = table.numRows

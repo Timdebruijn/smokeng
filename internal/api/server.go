@@ -39,6 +39,10 @@ func notImplemented(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
+	// The target tree changes under the caller's feet — an admin edit, a TOML
+	// import, the prober's own writes. Without this, a browser is free to
+	// serve a heuristically cached copy and show state that no longer exists.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(body)
 }
