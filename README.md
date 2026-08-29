@@ -5,12 +5,21 @@ rebuilt from scratch. The one thing that makes it worth existing: it keeps the *
 distribution per measurement interval, forever, at full resolution**, and renders it as
 actual density — no rollup, no consolidation, no single-value-per-check.
 
-**Status: v0.1 feature-complete, unreleased.** The design is agreed and frozen in
+**Status: v0.2 feature-complete, unreleased.** The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the ICMP prober (burst and spread, kernel
 timestamping with observable fallback), the SQLite store, TOML import/export of the
-target tree, the Arrow measurements API, and the browser renderer — density smoke,
-pooled median, loss rail, stacked plots with a shared crosshair, brush-zoom to free time
-ranges, and a log y-axis. Still to come: admin UI and OIDC (v0.3), remote agents (v0.4).
+target tree, a SmokePing `Targets` importer, the Arrow measurements API, the browser
+renderer — density smoke, pooled median, loss rail, stacked plots with a shared
+crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that edits the
+target tree and shows, per setting, whether a value is set here or inherited and from
+where. Still to come: OIDC and alerting (v0.3), remote agents (v0.4).
+
+Known gaps before this is trustworthy in production: the prober does not size or monitor
+its socket receive buffer, so buffer overflow would be recorded as packet loss; a
+measurement that mixes a kernel receive timestamp with a userspace send timestamp is
+computed on the wall clock and so is vulnerable to an NTP step mid-burst; and ICMP
+errors (unreachable, TTL exceeded) are collapsed into plain loss rather than kept
+distinct.
 
 ## Build
 
@@ -45,6 +54,18 @@ address_family = "v4"
 Settings cascade down the tree; an unset key means "inherit". `config export` writes the
 tree back out, round-tripping exactly, and `config import --prune` deletes targets absent
 from the file instead of merely disabling them.
+
+Coming from SmokePing, import its `Targets` file directly:
+
+```bash
+smokeng config import-smokeping --db smokeng.db --dry-run /etc/smokeping/config.d/Targets
+```
+
+The `+`/`++`/`+++` hierarchy becomes the target tree, per-node keys become local settings
+so inheritance survives, and `probe = FPing6` or a literal address decides the address
+family that smokeng insists on stating. Anything smokeng deliberately does not implement
+— alert definitions, alternative hierarchies, multi-host overlay graphs, `DYNAMIC` hosts
+— is reported as a warning rather than dropped in silence. Drop `--dry-run` to write it.
 
 There is no authentication before v0.3 (OIDC). `serve` therefore refuses to listen on a
 non-loopback address unless you pass `--i-know-this-is-unauthenticated`.
