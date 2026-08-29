@@ -42,4 +42,4 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             --title "smokeng ${{ github.ref_name }}" \
             --generate-notes \
-            dist/smokeng-* dist/SHA256SUMS
+            dist/smokeng-* dist/LICENSE dist/THIRD-PARTY-NOTICES dist/SHA256SUMS

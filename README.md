@@ -5,14 +5,14 @@ rebuilt from scratch. The one thing that makes it worth existing: it keeps the *
 distribution per measurement interval, forever, at full resolution**, and renders it as
 actual density — no rollup, no consolidation, no single-value-per-check.
 
-**Status: v0.4 feature-complete, unreleased.** The design is agreed and frozen in
+**Status: v0.5, unreleased.** The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the ICMP prober (burst and spread, kernel
 timestamping with observable fallback), the SQLite store, TOML import/export of the
 target tree, a SmokePing `Targets` importer, the Arrow measurements API, the browser
 renderer — density smoke, pooled median, loss rail, stacked plots with a shared
 crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that edits the
 target tree and shows, per setting, whether a value is set here or inherited and from
-where; alerting with webhook delivery; OIDC login with viewer and admin roles; and remote
+where; alerting with webhook delivery; OIDC login with viewer and admin roles; remote
 agents pushing signed measurements; and path correlation. That is the whole roadmap.
 
 
@@ -109,8 +109,9 @@ family that smokeng insists on stating. Anything smokeng deliberately does not i
 — alert definitions, alternative hierarchies, multi-host overlay graphs, `DYNAMIC` hosts
 — is reported as a warning rather than dropped in silence. Drop `--dry-run` to write it.
 
-There is no authentication before v0.3 (OIDC). `serve` therefore refuses to listen on a
-non-loopback address unless you pass `--i-know-this-is-unauthenticated`.
+Without `--oidc-issuer` there is no authentication, so `serve` refuses to listen on
+anything but loopback unless you pass `--i-know-this-is-unauthenticated`. See
+**Authentication** below.
 
 ## Unprivileged ICMP (Linux)
 
@@ -364,3 +365,12 @@ builds for linux/amd64, arm64, 386, arm and riscv64.
 
 See [DESIGN.md](DESIGN.md) for the data model, rendering pipeline, agent protocol and
 the explicit non-goals.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). `SPDX-License-Identifier: MIT`.
+
+The released binaries statically link their dependencies, so each release ships a
+`THIRD-PARTY-NOTICES` file with the licences of every module linked into it, generated
+from the module cache by `make notices`. Everything smokeng depends on is permissively
+licensed (MIT, BSD or Apache-2.0); nothing copyleft is linked in.

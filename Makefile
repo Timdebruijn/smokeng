@@ -6,7 +6,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 # runtime rather than hidden.
 PLATFORMS := linux/amd64 linux/arm64 linux/arm linux/386 darwin/amd64 darwin/arm64
 
-.PHONY: all build web test check dist clean
+.PHONY: all build web test check notices dist clean
 
 all: web build
 
@@ -27,6 +27,12 @@ check:
 	go test ./...
 	cd web && npm run typecheck
 
+# The licences of everything statically linked into the binary. smokeng is
+# MIT, but its dependencies travel inside the released file and most of them
+# require their notice to travel with it.
+notices:
+	@./scripts/notices.sh THIRD-PARTY-NOTICES
+
 # Release binaries. Static and CGO-free, so one file drops onto any host.
 dist: web
 	@rm -rf dist && mkdir -p dist
@@ -36,9 +42,11 @@ dist: web
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
 			go build -trimpath -ldflags "$(LDFLAGS)" -o dist/smokeng-$$os-$$arch ./cmd/smokeng || exit 1; \
 	done
-	@cd dist && shasum -a 256 smokeng-* > SHA256SUMS
+	@./scripts/notices.sh dist/THIRD-PARTY-NOTICES
+	@cp LICENSE dist/
+	@cd dist && shasum -a 256 smokeng-* LICENSE THIRD-PARTY-NOTICES > SHA256SUMS
 	@echo "--- dist/"
 	@ls -1 dist
 
 clean:
-	rm -rf bin dist
+	rm -rf bin dist THIRD-PARTY-NOTICES
