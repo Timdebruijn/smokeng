@@ -15,9 +15,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"smokeng/internal/agent"
-	"smokeng/internal/probe"
-	"smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/agent"
+	"github.com/timdebruijn/smokeng/internal/probe"
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 func agentCmd(args []string) error {

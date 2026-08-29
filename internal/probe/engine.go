@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"smokeng/internal/alert"
-	"smokeng/internal/probe/dnscache"
-	"smokeng/internal/probe/trace"
-	"smokeng/internal/store"
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/alert"
+	"github.com/timdebruijn/smokeng/internal/probe/dnscache"
+	"github.com/timdebruijn/smokeng/internal/probe/trace"
+	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 const (

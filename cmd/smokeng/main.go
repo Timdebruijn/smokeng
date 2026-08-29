@@ -18,13 +18,13 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"smokeng/internal/alert"
-	"smokeng/internal/api"
-	"smokeng/internal/auth"
-	"smokeng/internal/config"
-	"smokeng/internal/probe"
-	"smokeng/internal/store"
-	"smokeng/web"
+	"github.com/timdebruijn/smokeng/internal/alert"
+	"github.com/timdebruijn/smokeng/internal/api"
+	"github.com/timdebruijn/smokeng/internal/auth"
+	"github.com/timdebruijn/smokeng/internal/config"
+	"github.com/timdebruijn/smokeng/internal/probe"
+	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/web"
 )
 
 const version = "0.1.0-dev"

@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"smokeng/internal/auth"
+	"github.com/timdebruijn/smokeng/internal/auth"
 )
 
 // Authenticator is the part of OIDC the API needs. Nil means smokeng is

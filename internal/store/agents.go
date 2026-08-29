@@ -6,7 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"smokeng/internal/store/enc"
+	"github.com/timdebruijn/smokeng/internal/store/enc"
 )
 
 // AgentRecord is an enrolled measurement node. The master stores only the

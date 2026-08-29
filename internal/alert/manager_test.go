@@ -13,9 +13,9 @@ import (
 	"sync"
 	"testing"
 
-	"smokeng/internal/alert"
-	"smokeng/internal/store"
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/alert"
+	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 func ptr[T any](v T) *T { return &v }

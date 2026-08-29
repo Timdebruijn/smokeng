@@ -6,7 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"smokeng/internal/alert"
+	"github.com/timdebruijn/smokeng/internal/alert"
 )
 
 // SessionKey returns the persisted session signing key, generating one on

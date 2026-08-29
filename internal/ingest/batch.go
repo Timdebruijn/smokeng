@@ -9,7 +9,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 
-	"smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 // BatchSchema is the wire format for a submission: the measurement schema the

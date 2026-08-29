@@ -1,4 +1,4 @@
-module smokeng
+module github.com/timdebruijn/smokeng
 
 go 1.27.0
 

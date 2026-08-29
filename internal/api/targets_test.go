@@ -10,7 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 func newTestServer(t *testing.T) (http.Handler, *store.SQLite) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 func burstSpec() TargetSpec {

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"smokeng/internal/ingest"
-	"smokeng/internal/store"
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/ingest"
+	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // maxIngestBody caps a submission. A batch is a few tens of bytes per

@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	"smokeng/internal/ingest"
-	"smokeng/internal/store"
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/ingest"
+	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // Config is how an agent is told who it is and where to report.

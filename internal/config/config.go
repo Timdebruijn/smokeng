@@ -25,9 +25,9 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"smokeng/internal/alert"
-	"smokeng/internal/store"
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/alert"
+	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // Values are the inheritable settings as they appear in TOML; nil = inherit.

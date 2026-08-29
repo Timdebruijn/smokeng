@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 // handlePaths returns the route changes for one series over a window, so the

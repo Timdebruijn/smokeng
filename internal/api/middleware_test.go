@@ -8,8 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"smokeng/internal/auth"
-	"smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/auth"
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 // fakeAuth stands in for the OIDC flow: the flow itself is the provider's to

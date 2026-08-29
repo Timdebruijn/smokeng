@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"smokeng/internal/alert"
+	"github.com/timdebruijn/smokeng/internal/alert"
 )
 
 // handleAlertRules lists every rule with the node it is defined on. Which

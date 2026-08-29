@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"smokeng/internal/metrics"
-	"smokeng/internal/probe"
-	"smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/metrics"
+	"github.com/timdebruijn/smokeng/internal/probe"
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 // ProbeStats exposes the prober's own health.

@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 func ptr[T any](v T) *T { return &v }

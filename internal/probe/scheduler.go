@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 // bucketStart returns the wall-clock-aligned interval start containing t

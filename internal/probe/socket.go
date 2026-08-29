@@ -15,7 +15,7 @@ import (
 	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
 
-	"smokeng/internal/probe/timestamp"
+	"github.com/timdebruijn/smokeng/internal/probe/timestamp"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // Store is the slice of persistence the manager needs.

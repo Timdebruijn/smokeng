@@ -11,7 +11,7 @@ import (
 	"golang.org/x/net/ipv4"
 	"golang.org/x/sys/unix"
 
-	"smokeng/internal/probe/timestamp"
+	"github.com/timdebruijn/smokeng/internal/probe/timestamp"
 )
 
 // TestICMPErrorReachesTheErrorQueue provokes a real ICMP error and follows it

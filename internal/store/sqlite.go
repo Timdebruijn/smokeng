@@ -8,8 +8,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"smokeng/internal/store/enc"
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/store/enc"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // Schema version 1 (DESIGN.md §3.1). The root target row and the 'local'

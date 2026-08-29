@@ -14,9 +14,9 @@ import (
 	"testing/fstest"
 	"time"
 
-	"smokeng/internal/ingest"
-	"smokeng/internal/store"
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/ingest"
+	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 func p[T any](v T) *T { return &v }

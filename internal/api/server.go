@@ -8,10 +8,10 @@ import (
 	"log"
 	"net/http"
 
-	"smokeng/internal/alert"
-	"smokeng/internal/auth"
-	"smokeng/internal/ingest"
-	"smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/alert"
+	"github.com/timdebruijn/smokeng/internal/auth"
+	"github.com/timdebruijn/smokeng/internal/ingest"
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 // AlertStore is the persistence the alert endpoints need, on top of Store.

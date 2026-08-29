@@ -4,8 +4,8 @@ package store
 import (
 	"context"
 
-	"smokeng/internal/alert"
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/alert"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // Measurement is one finalized interval for one (target, agent) series.

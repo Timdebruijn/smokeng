@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"smokeng/internal/tree"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // handleTargets returns the full tree. Every inheritable setting is a
