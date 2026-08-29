@@ -18,6 +18,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"smokeng/internal/alert"
 	"smokeng/internal/api"
 	"smokeng/internal/config"
 	"smokeng/internal/probe"
@@ -147,6 +148,8 @@ func serve(args []string) error {
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	insecure := fs.Bool("i-know-this-is-unauthenticated", false,
 		"allow listening on a non-loopback address without authentication (DESIGN.md §7.1)")
+	webhook := fs.String("alert-webhook", "",
+		"POST firing and resolved alerts to this URL in Alertmanager's v2 format")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -165,7 +168,15 @@ func serve(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	eng, err := probe.NewEngine(st)
+	// Without a webhook there is nowhere to send alerts, so rules are not
+	// evaluated at all rather than firing into a void.
+	var alerts *alert.Manager
+	if *webhook != "" {
+		alerts = alert.NewManager(st, &alert.Webhook{URL: *webhook})
+		log.Printf("alerting enabled, posting to %s", *webhook)
+	}
+
+	eng, err := probe.NewEngine(st, alerterOrNil(alerts))
 	if err != nil {
 		return err
 	}
@@ -181,7 +192,7 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	srv := &http.Server{Addr: *listen, Handler: api.New(st, dist)}
+	srv := &http.Server{Addr: *listen, Handler: api.New(st, alertViewOrNil(alerts), dist)}
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
@@ -200,6 +211,22 @@ func serve(args []string) error {
 		<-engDone // engine flushes its last batch before the store closes
 	}
 	return nil
+}
+
+// A nil *alert.Manager is not a nil interface, so the conversion has to be
+// explicit or every "is alerting configured" check silently succeeds.
+func alerterOrNil(m *alert.Manager) probe.Alerter {
+	if m == nil {
+		return nil
+	}
+	return m
+}
+
+func alertViewOrNil(m *alert.Manager) api.AlertView {
+	if m == nil {
+		return nil
+	}
+	return m
 }
 
 func isLoopback(addr string) bool {

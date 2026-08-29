@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"smokeng/internal/alert"
 	"smokeng/internal/probe/dnscache"
 	"smokeng/internal/store"
 	"smokeng/internal/tree"
@@ -17,14 +18,27 @@ const (
 	specRefresh    = 30 * time.Second
 	writerFlush    = time.Second
 	writerMaxBatch = 512 // measurements per transaction at most
+	// Alertmanager expires an alert it stops hearing about, so a firing alert
+	// is repeated rather than announced once.
+	alertRepeat = time.Minute
 )
+
+// Alerter consumes finalized measurements and delivers alert notifications.
+// The engine depends on the behaviour, not the implementation, so probing
+// keeps working when alerting is not configured.
+type Alerter interface {
+	Reload(ctx context.Context) error
+	Observe(ctx context.Context, ms []alert.Input)
+	Repeat(ctx context.Context)
+}
 
 // Engine runs the local agent: it schedules every enabled leaf target whose
 // effective agent list includes "local", probes it per bucket, and batches
 // finalized measurements into the store (single writer, DESIGN.md §6).
 type Engine struct {
-	st  store.Store
-	dns *dnscache.Cache
+	st      store.Store
+	dns     *dnscache.Cache
+	alerter Alerter
 
 	results   chan store.Measurement
 	late      atomic.Int64 // replies that arrived after their bucket finalized
@@ -46,7 +60,9 @@ type runningTarget struct {
 	cancel context.CancelFunc
 }
 
-func NewEngine(st store.Store) (*Engine, error) {
+// NewEngine builds the local prober. alerter may be nil, in which case
+// measurements are still taken and stored, just never evaluated.
+func NewEngine(st store.Store, alerter Alerter) (*Engine, error) {
 	dns, err := dnscache.New()
 	if err != nil {
 		return nil, err
@@ -54,6 +70,7 @@ func NewEngine(st store.Store) (*Engine, error) {
 	return &Engine{
 		st:      st,
 		dns:     dns,
+		alerter: alerter,
 		results: make(chan store.Measurement, 1024),
 		conns:   map[connKey]*conn{},
 		running: map[int64]*runningTarget{},
@@ -74,6 +91,8 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.reload(ctx)
 	tick := time.NewTicker(specRefresh)
 	defer tick.Stop()
+	repeat := time.NewTicker(alertRepeat)
+	defer repeat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -96,6 +115,10 @@ func (e *Engine) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-tick.C:
 			e.reload(ctx)
+		case <-repeat.C:
+			if e.alerter != nil {
+				e.alerter.Repeat(ctx)
+			}
 		}
 	}
 }
@@ -107,6 +130,13 @@ func (e *Engine) reload(ctx context.Context) {
 	if err != nil {
 		log.Printf("probe: reload targets: %v", err)
 		return
+	}
+	// Rules and their inheritance follow the same tree, so they are refreshed
+	// on the same tick: an edit to either takes effect without a restart.
+	if e.alerter != nil {
+		if err := e.alerter.Reload(ctx); err != nil {
+			log.Printf("alert: reload rules: %v", err)
+		}
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -293,9 +323,18 @@ func (e *Engine) writer(stop <-chan struct{}) {
 		if len(batch) == 0 {
 			return
 		}
-		wctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		wctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := e.st.WriteMeasurements(wctx, batch); err != nil {
 			log.Printf("probe: write %d measurements: %v", len(batch), err)
+		}
+		// Evaluate only what was stored, and only after storing it: an alert
+		// that outlives its evidence would be unexplainable.
+		if e.alerter != nil {
+			inputs := make([]alert.Input, len(batch))
+			for i := range batch {
+				inputs[i] = batch[i].AlertInput()
+			}
+			e.alerter.Observe(wctx, inputs)
 		}
 		cancel()
 		batch = batch[:0]

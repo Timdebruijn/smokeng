@@ -107,6 +107,34 @@ var migrations = []string{
 	// v2: record the ICMP error that explains a failed ping, so refusal is
 	// distinguishable from silence.
 	`ALTER TABLE measurements ADD COLUMN icmp_error INTEGER`,
+	// v3: alert rules, attached to tree nodes and inherited by subtree, plus
+	// the per-series state that makes hysteresis survive a restart.
+	`
+CREATE TABLE alert_rules (
+  id              INTEGER PRIMARY KEY,
+  target_id       INTEGER NOT NULL REFERENCES targets(id),
+  name            TEXT NOT NULL,
+  metric          TEXT NOT NULL CHECK (metric IN ('loss','median','p95','spread')),
+  op              TEXT NOT NULL CHECK (op IN ('>','<')),
+  threshold       REAL NOT NULL,
+  for_intervals   INTEGER NOT NULL DEFAULT 3,
+  clear_intervals INTEGER NOT NULL DEFAULT 3,
+  enabled         INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (target_id, name)
+);
+
+CREATE TABLE alert_state (
+  rule_id   INTEGER NOT NULL REFERENCES alert_rules(id),
+  target_id INTEGER NOT NULL,
+  agent_id  INTEGER NOT NULL,
+  firing    INTEGER NOT NULL DEFAULT 0,
+  since     INTEGER,
+  streak    INTEGER NOT NULL DEFAULT 0,
+  last_ts   INTEGER,
+  value     REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (rule_id, target_id, agent_id)
+) WITHOUT ROWID;
+`,
 }
 
 func (s *SQLite) migrate() error {

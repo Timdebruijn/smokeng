@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 
+	"smokeng/internal/alert"
 	"smokeng/internal/tree"
 )
 
@@ -51,6 +52,23 @@ const (
 	// one, and must not render as an empty graph.
 	FlagSendFailed uint8 = 1 << 6
 )
+
+// AlertInput narrows a measurement to what alerting reads, translating the
+// quality flags into whether each kind of question can be answered honestly.
+// The mapping lives here, next to the flags themselves, so there is one place
+// that decides what a flag means.
+func (m *Measurement) AlertInput() alert.Input {
+	return alert.Input{
+		TargetID:    m.TargetID,
+		AgentID:     m.AgentID,
+		TS:          m.TS,
+		Sent:        m.Sent,
+		Received:    m.Received,
+		Samples:     m.Samples,
+		LossTrusted: m.Flags&FlagSocketOverflow == 0,
+		RTTTrusted:  m.Flags&FlagClockStep == 0,
+	}
+}
 
 // ICMPError packs an ICMP type and code into one value for storage.
 func ICMPError(icmpType, code uint8) uint16 { return uint16(icmpType)<<8 | uint16(code) }
