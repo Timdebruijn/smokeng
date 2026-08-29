@@ -387,16 +387,10 @@ h2.section {
   opacity: 0.5;
 }
 
-.alerts button {
-  font: inherit;
-  font-size: 0.8rem;
+/* Buttons in these tables are .pill now; give them the same right-margin
+   the old plain buttons had so a row of them doesn't touch. */
+.alerts .pill {
   margin-right: 0.35rem;
-  padding: 0.15rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--dim);
-  cursor: pointer;
 }
 
 .alerts th.group-heading {
@@ -414,14 +408,14 @@ h2.section {
   font-size: 0.78rem;
 }
 
+/* Combined with .card in markup — the card supplies the surface/border,
+   this supplies the form's own layout. */
 .rule-form {
   display: grid;
   gap: 0.5rem;
   max-width: 40rem;
   margin-top: 0.75rem;
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  padding: 0.9rem 1rem;
 }
 
 .rule-form .inline {
@@ -464,10 +458,12 @@ a.button {
 /* Agents: the minted token is shown once, so this box is deliberately louder
    than the rest of the page — accent border, not just another bordered card. */
 .token-reveal {
-  margin: 0.75rem 0;
+  margin: 0.9rem 0;
   padding: 0.9rem 1rem;
   border: 1px solid var(--accent);
-  border-radius: 6px;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  background: var(--card);
   max-width: 44rem;
 }
 
@@ -710,17 +706,19 @@ a.button {
 }
 
 /* A card built around a table or a form instead of a plot — same shell,
-   same heading row as .plot/.plot-head, for the admin screens. */
-.panel {
+   same heading row as .plot/.plot-head, for the Alerts/Agents/Grants
+   screens. (Named distinctly from .panel, which is the target-detail
+   sidebar's own card convention.) */
+.section-card {
   margin-top: 12px;
   padding: 14px 16px 16px;
 }
 
-.panel + .panel {
+.section-card + .section-card {
   margin-top: 16px;
 }
 
-.panel-head {
+.section-card-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -728,7 +726,7 @@ a.button {
   margin-bottom: 10px;
 }
 
-.panel-title {
+.section-card-title {
   font-size: 14px;
   font-weight: 600;
 }
@@ -893,6 +891,17 @@ a.button {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.pill.danger {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 40%, transparent);
+}
+
+.pill.danger:hover {
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  border-color: var(--bad);
+  color: var(--bad);
 }
 
 .pill.wide {
@@ -1083,4 +1092,179 @@ a.button {
 
 .link-title:hover {
   color: var(--accent);
+}
+
+/* ── Overview ──────────────────────────────────────────────────────────── */
+
+.page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 16px;
+}
+
+.page-head h1 {
+  font-size: 21px;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.live-note {
+  font-size: 13px;
+  color: var(--dim);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dot.pulse {
+  animation: pulse-dot 2.4s infinite;
+}
+
+.stat-sub {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--dim);
+  margin-left: 8px;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+.stat-value .bad {
+  color: var(--bad);
+}
+
+.stat-value .warn {
+  color: var(--warn);
+}
+
+.overview-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(430px, 100%), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.overview-side {
+  display: grid;
+  gap: 12px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-head h2 {
+  font-size: 14px;
+  margin: 0;
+  font-weight: 600;
+}
+
+.panel-pad {
+  padding: 14px 16px;
+}
+
+.health-row,
+.health-legend {
+  display: grid;
+  grid-template-columns: 10px minmax(90px, 1.3fr) 72px repeat(3, minmax(0, 0.6fr));
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.health-row {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  cursor: pointer;
+  color: var(--fg);
+  font: inherit;
+}
+
+.health-row:hover {
+  background: var(--card2);
+}
+
+.health-name {
+  min-width: 0;
+}
+
+.health-title {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health-host {
+  display: block;
+  font-size: 12px;
+  color: var(--dim);
+  font-family: var(--mono);
+}
+
+.health-legend {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--dim);
+  padding-top: 8px;
+  padding-bottom: 10px;
+}
+
+.spark {
+  width: 72px;
+  height: 26px;
+  display: block;
+}
+
+.mono.dimmed {
+  color: var(--dim);
+}
+
+.mono.bad {
+  color: var(--bad);
+}
+
+.quiet-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--dim);
+}
+
+.firing-card {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+  background: color-mix(in srgb, var(--bad) 7%, transparent);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.firing-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.from-agent {
+  margin-left: 6px;
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--dim);
 }

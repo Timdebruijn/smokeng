@@ -3,6 +3,7 @@ import Admin from './Admin'
 import Agents from './Agents'
 import Alerts from './Alerts'
 import Detail from './Detail'
+import Overview from './Overview'
 import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
@@ -15,10 +16,10 @@ const RANGES: { label: string; seconds: number }[] = [
 ]
 const REFRESH_MS = 10_000
 
-type View = 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
+type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 
 export default function App() {
-  const [view, setView] = useState<View>('graphs')
+  const [view, setView] = useState<View>('overview')
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   // Which target the detail screen is showing. Detail is reached from a plot,
   // never from the tab bar, so it is not one of the tabs.
@@ -38,8 +39,8 @@ export default function App() {
   // Grant management is global-admin only, both here and on the server — a
   // viewer must not even see the tab exists.
   const views: View[] = isAdmin
-    ? ['graphs', 'targets', 'alerts', 'agents', 'access']
-    : ['graphs', 'targets', 'alerts', 'agents']
+    ? ['overview', 'graphs', 'targets', 'alerts', 'agents', 'access']
+    : ['overview', 'graphs', 'targets', 'alerts', 'agents']
 
   if (needsLogin) return <SignIn />
 
@@ -54,7 +55,14 @@ export default function App() {
         onToggleUser={() => setUserMenuOpen((v) => !v)}
       />
       <main>
-      {view === 'detail' && detailId !== null ? (
+      {view === 'overview' ? (
+        <Overview
+          onOpenDetail={(id) => {
+            setDetailId(id)
+            setView('detail')
+          }}
+        />
+      ) : view === 'detail' && detailId !== null ? (
         <DetailRoute
           targetId={detailId}
           onBack={() => setView('graphs')}
@@ -130,7 +138,7 @@ function AppHeader({
   return (
     <header className="appbar">
       <div className="appbar-inner">
-        <button className="brand" onClick={() => onView('graphs')}>
+        <button className="brand" onClick={() => onView('overview')}>
           <span className="brand-mark">s</span>
           <span className="brand-name">smokeng</span>
         </button>
