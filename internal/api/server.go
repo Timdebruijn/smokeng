@@ -10,6 +10,7 @@ import (
 
 	"smokeng/internal/alert"
 	"smokeng/internal/auth"
+	"smokeng/internal/ingest"
 	"smokeng/internal/store"
 )
 
@@ -27,18 +28,43 @@ type AlertView interface {
 	Firing() []alert.Alert
 }
 
+// Store is everything the API persists through: the measurement store plus
+// the alert and agent tables.
+type Store interface {
+	AlertStore
+	AgentStore
+}
+
 type server struct {
-	st     AlertStore
-	alerts AlertView
-	auth   Authenticator
+	st       Store
+	alerts   AlertView
+	auth     Authenticator
+	agents   AgentStore
+	verifier *ingest.Verifier
 }
 
 // New builds the HTTP handler: API routes plus the embedded frontend.
 // authenticator may be nil, in which case every request is treated as an
 // admin — permitted only on loopback, which serve enforces.
 // /metrics (Prometheus self-observability, §7.1) is still to come.
-func New(st AlertStore, alerts AlertView, authenticator Authenticator, webFS fs.FS) http.Handler {
-	s := &server{st: st, alerts: alerts, auth: authenticator}
+func New(st Store, alerts AlertView, authenticator Authenticator, webFS fs.FS) http.Handler {
+	s := &server{st: st, alerts: alerts, auth: authenticator, agents: st}
+	// Agents authenticate with their own Ed25519 signatures, never with a
+	// browser session, so the verifier reads the same enrolment table the
+	// admin CLI writes.
+	s.verifier = &ingest.Verifier{Lookup: func(id int64) (ingest.Agent, bool) {
+		records, err := st.ListAgents(context.Background())
+		if err != nil {
+			log.Printf("ingest: agent lookup: %v", err)
+			return ingest.Agent{}, false
+		}
+		for _, a := range records {
+			if a.ID == id && len(a.PubKey) > 0 {
+				return ingest.Agent{ID: a.ID, Name: a.Name, PubKey: a.PubKey, Enabled: a.Enabled}, true
+			}
+		}
+		return ingest.Agent{}, false
+	}}
 	viewer := func(h http.HandlerFunc) http.HandlerFunc { return s.requireRole(auth.RoleViewer, h) }
 	admin := func(h http.HandlerFunc) http.HandlerFunc { return s.requireRole(auth.RoleAdmin, h) }
 
@@ -63,9 +89,11 @@ func New(st AlertStore, alerts AlertView, authenticator Authenticator, webFS fs.
 	mux.HandleFunc("PATCH /api/v1/alert-rules/{id}", admin(s.handleUpdateAlertRule))
 	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", admin(s.handleDeleteAlertRule))
 	mux.HandleFunc("GET /api/v1/alerts", viewer(s.handleFiringAlerts))
-	// Signed agent ingest (§9); v0.4. Agents authenticate with their own
-	// Ed25519 signatures, not with a browser session.
-	mux.HandleFunc("POST /api/v1/ingest", notImplemented)
+	mux.HandleFunc("GET /api/v1/agents", viewer(s.handleAgents))
+	// Signed agent endpoints (§9). These carry their own authentication, so
+	// they are deliberately outside the session middleware.
+	mux.HandleFunc("POST /api/v1/ingest", s.handleIngest)
+	mux.HandleFunc("GET /api/v1/agent/targets", s.handleAgentTargets)
 	mux.Handle("/", http.FileServerFS(webFS))
 	return mux
 }

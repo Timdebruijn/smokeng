@@ -5,6 +5,10 @@ import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtUs, inferSpan } from '
 
 interface Props {
   target: Target
+  /** Which agent measured this series; 0 is the master's own prober. */
+  agentId: number
+  /** Shown only when more than one agent measures the target. */
+  agentName?: string
   from: number
   to: number
   refreshKey: number
@@ -89,7 +93,16 @@ function flagCounts(
  * overlay canvas for the shared crosshair and the brush selection, so
  * interaction never waits on a render (DESIGN.md §8.2, §8.4).
  */
-export default function Plot({ target, from, to, refreshKey, logScale, onZoom }: Props) {
+export default function Plot({
+  target,
+  agentId,
+  agentName,
+  from,
+  to,
+  refreshKey,
+  logScale,
+  onZoom,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const workerRef = useRef<Worker | null>(null)
@@ -230,7 +243,7 @@ export default function Plot({ target, from, to, refreshKey, logScale, onZoom }:
     const dpr = window.devicePixelRatio || 1
     const cssW = canvas.clientWidth
     const dark = matchMedia('(prefers-color-scheme: dark)').matches
-    fetchSeries(target.id, from, to)
+    fetchSeries(target.id, agentId, from, to)
       .then((series) => {
         if (cancelled || !workerRef.current) return
         const n = series.ts.length
@@ -274,7 +287,7 @@ export default function Plot({ target, from, to, refreshKey, logScale, onZoom }:
     return () => {
       cancelled = true
     }
-  }, [target.id, target.path, from, to, refreshKey, logScale, drawOverlay])
+  }, [target.id, target.path, agentId, from, to, refreshKey, logScale, drawOverlay])
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -319,6 +332,7 @@ export default function Plot({ target, from, to, refreshKey, logScale, onZoom }:
         <span className="host">
           {target.host} · {target.address_family}
         </span>
+        {agentName && <span className="agent">from {agentName}</span>}
         {quality.map((q) => (
           <span key={q.label} className="quality" title={q.title}>
             {q.label}

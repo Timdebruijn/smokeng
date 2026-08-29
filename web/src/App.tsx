@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Admin from './Admin'
 import Alerts from './Alerts'
 import Plot from './Plot'
-import { fetchMe, fetchTargets, logout, type Me, type Target } from './api'
+import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
 
 const RANGES: { label: string; seconds: number }[] = [
   { label: '15m', seconds: 15 * 60 },
@@ -71,6 +71,7 @@ export default function App() {
 
 function Graphs() {
   const [targets, setTargets] = useState<Target[]>([])
+  const [agents, setAgents] = useState<AgentInfo[]>([])
   const [error, setError] = useState<string | null>(null)
   const [rangeS, setRangeS] = useState(3600)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -84,6 +85,11 @@ function Graphs() {
     fetchTargets()
       .then(setTargets)
       .catch((e: Error) => setError(e.message))
+    // An unenrolled deployment has only the local agent; failing to list them
+    // must not stop the graphs rendering.
+    fetchAgents()
+      .then(setAgents)
+      .catch(() => setAgents([]))
   }, [])
 
   useEffect(() => {
@@ -109,6 +115,22 @@ function Graphs() {
 
   const leaves = targets.filter((t) => t.host !== null && t.enabled && !t.hidden)
   const spanLabel = `${fmtSpan(to - from)} · ${new Date(from * 1000).toLocaleTimeString()} → ${new Date(to * 1000).toLocaleTimeString()}`
+
+  // One plot per (target, agent) pair: the same target seen from two vantage
+  // points is two different measurements, and averaging them would destroy
+  // the very thing that makes a second vantage point worth having.
+  const byID = new Map(agents.map((a) => [a.name, a.id]))
+  const series = leaves.flatMap((t) => {
+    const names = (t.settings.agents.effective || 'local').split(/\s+/).filter(Boolean)
+    const resolved = names.map((n) => ({ name: n, id: byID.get(n) })).filter((a) => a.id !== undefined)
+    // Fall back to the local agent when the names cannot be resolved yet.
+    if (resolved.length === 0) return [{ target: t, agentId: 0, agentName: undefined }]
+    return resolved.map((a) => ({
+      target: t,
+      agentId: a.id as number,
+      agentName: resolved.length > 1 ? a.name : undefined,
+    }))
+  })
 
   return (
     <>
@@ -153,10 +175,12 @@ function Graphs() {
           <code>smokeng config import-smokeping</code>.
         </p>
       )}
-      {leaves.map((t) => (
+      {series.map((s) => (
         <Plot
-          key={t.id}
-          target={t}
+          key={`${s.target.id}-${s.agentId}`}
+          target={s.target}
+          agentId={s.agentId}
+          agentName={s.agentName}
           from={from}
           to={to}
           refreshKey={refreshKey}

@@ -71,6 +71,16 @@ h1 {
 
 /* Measurement-quality warnings: visible, but not alarming — they qualify the
    data rather than report an outage. */
+.plot h2 .agent {
+  margin-left: 0.4rem;
+  font-weight: 400;
+  font-size: 0.75rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+}
+
 .plot h2 .quality {
   margin-left: 0.4rem;
   font-weight: 400;

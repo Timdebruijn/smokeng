@@ -5,15 +5,15 @@ rebuilt from scratch. The one thing that makes it worth existing: it keeps the *
 distribution per measurement interval, forever, at full resolution**, and renders it as
 actual density — no rollup, no consolidation, no single-value-per-check.
 
-**Status: v0.3 feature-complete, unreleased.** The design is agreed and frozen in
+**Status: v0.4 feature-complete, unreleased.** The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the ICMP prober (burst and spread, kernel
 timestamping with observable fallback), the SQLite store, TOML import/export of the
 target tree, a SmokePing `Targets` importer, the Arrow measurements API, the browser
 renderer — density smoke, pooled median, loss rail, stacked plots with a shared
 crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that edits the
 target tree and shows, per setting, whether a value is set here or inherited and from
-where; alerting with webhook delivery; and OIDC login with viewer and admin roles. Still
-to come: remote agents (v0.4).
+where; alerting with webhook delivery; OIDC login with viewer and admin roles; and remote
+agents pushing signed measurements. Still to come: traceroute correlation (v0.5).
 
 
 ## Build
@@ -140,6 +140,48 @@ hearing about. Grouping, silencing, escalation and notification channels are
 Alertmanager's job; smokeng does not reimplement them. Without `--alert-webhook`, rules
 are stored but never evaluated, which the UI says plainly rather than pretending to
 watch.
+
+## Remote agents
+
+A target can be measured from more than one place. Assign it with the inheritable
+`agents` setting — `agents = "local ams rtm"` — and each vantage point becomes its own
+series, drawn as its own plot. They are never averaged: two views of a path that disagree
+are the finding, and averaging them destroys it.
+
+Agents push to the master, so only the master needs to be reachable and an agent works
+behind NAT with no inbound rules. Enrolment is manual, and takes one round trip:
+
+```bash
+# On the agent: generates a key on first run and prints its public half.
+smokeng agent run --key /etc/smokeng/probe.key
+
+# On the master:
+smokeng agent add --db smokeng.db --name ams --pubkey <the printed key>
+
+# Back on the agent, with the id the master just assigned:
+smokeng agent run --master https://smokeng.example.org --agent-id 1 \
+  --key /etc/smokeng/probe.key --db /var/lib/smokeng/agent.db
+```
+
+`smokeng agent list`, `enable`, `disable` and `remove` manage them afterwards. Removing
+an agent keeps the measurements it submitted, as removing a target does.
+
+Every request carries an Ed25519 signature over a canonical string that binds the method,
+path, agent, timestamp, nonce and a hash of the body — so a captured signature cannot be
+replayed against another endpoint or with another payload. The master holds only public
+keys, so compromising its database does not let an attacker impersonate an agent. A
+submission is refused unless every target in it is assigned to that agent, and writes
+upsert on `(target, agent, interval)`, which makes a replayed batch a byte-identical
+no-op. That idempotency, not the nonce cache, is the real replay defense: the cache is
+in-memory and empty after a restart.
+
+Agents pull their assignments from `GET /api/v1/agent/targets` — resolved settings and
+nothing else. Pure data, pull-only, never code. (SmokePing's equivalent has slaves
+*evaluate Perl sent by the master*; this shares none of that.) Results are written to the
+agent's own database first and only forgotten once the master confirms them, so an
+unreachable master costs latency rather than measurements.
+
+TLS is expected; `--insecure-allow-http` exists for local development and says so.
 
 ## Authentication
 

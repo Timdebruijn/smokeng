@@ -138,6 +138,11 @@ CREATE TABLE alert_state (
 	// v4: server-side secrets that must outlive a restart, starting with the
 	// session signing key — a fresh key on every start would log everyone out.
 	`CREATE TABLE settings (key TEXT PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID`,
+	// v5: an agent's outbox marker. A remote agent writes measurements to its
+	// own database first and only forgets them once the master has confirmed
+	// receipt, so an unreachable master costs latency rather than data. The
+	// column is unused on a master, where nothing ever reads it.
+	`ALTER TABLE measurements ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *SQLite) migrate() error {

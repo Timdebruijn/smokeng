@@ -44,6 +44,10 @@ func main() {
 		if err := configCmd(os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}
+	case "agent":
+		if err := agentCmd(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 	case "version":
 		fmt.Printf("smokeng %s (%s)\n", version, runtime.Version())
 	default:
@@ -60,6 +64,10 @@ commands:
   config import [--prune] FILE           sync the target tree from a TOML file
   config import-smokeping FILE           import a SmokePing Targets file
   config export                          write the target tree as TOML to stdout
+  agent add --name N --pubkey K          enrol a remote agent on the master
+  agent list                             list enrolled agents
+  agent enable|disable|remove ID         change an agent's standing
+  agent run --master URL --agent-id ID   run as a remote measurement node
   version                                print version`)
 }
 

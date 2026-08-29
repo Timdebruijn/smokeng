@@ -197,10 +197,31 @@ export function icmpErrorName(packed: number): string {
   return ICMP_NAMES[packed] ?? `ICMP type ${packed >> 8} code ${packed & 0xff}`
 }
 
-export async function fetchSeries(targetId: number, from: number, to: number): Promise<Series> {
-  const r = await fetch(`/api/v1/measurements?target_id=${targetId}&from=${from}&to=${to}`, {
-    cache: 'no-store',
-  })
+export interface AgentInfo {
+  id: number
+  name: string
+  enabled: boolean
+  is_local: boolean
+  last_seen?: number
+  pubkey?: string
+}
+
+export async function fetchAgents(): Promise<AgentInfo[]> {
+  const r = await fetch('/api/v1/agents', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`agents: HTTP ${r.status}`)
+  return ((await r.json()) as { agents: AgentInfo[] }).agents ?? []
+}
+
+export async function fetchSeries(
+  targetId: number,
+  agentId: number,
+  from: number,
+  to: number,
+): Promise<Series> {
+  const r = await fetch(
+    `/api/v1/measurements?target_id=${targetId}&agent_id=${agentId}&from=${from}&to=${to}`,
+    { cache: 'no-store' },
+  )
   if (!r.ok) throw new Error(`measurements: HTTP ${r.status}`)
   const table = tableFromIPC(new Uint8Array(await r.arrayBuffer()))
   const n = table.numRows
