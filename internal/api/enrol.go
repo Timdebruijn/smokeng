@@ -189,6 +189,11 @@ func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.enrol.RemoveAgent(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrAgentHasHistory) {
+			badRequestMsg(w, "this agent has reported measurements; removing it would leave "+
+				"a series nothing can name. Disable it instead — probing stops, the history stays.")
+			return
+		}
 		badRequest(w, err)
 		return
 	}

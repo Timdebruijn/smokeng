@@ -303,3 +303,89 @@ func TestRenameAgentRewritesAssignments(t *testing.T) {
 }
 
 func ptrTo[T any](v T) *T { return &v }
+
+// An agent that has reported cannot be removed: its measurements would become
+// a series nothing can name. Disabling is the reversible equivalent, and is
+// what the error points at.
+func TestRemoveAgentRefusesToOrphanMeasurements(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	now := time.Unix(1_800_000_000, 0)
+
+	tok, err := s.MintEnrolmentToken(ctx, "ams-01", time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := s.RedeemEnrolmentToken(ctx, tok.Plaintext, testKey(t), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// An agent that never reported is just a mistake; it may go.
+	spare, err := s.AddAgent(ctx, "rtd-01", testKey(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveAgent(ctx, spare.ID); err != nil {
+		t.Fatalf("removing an agent with no history: %v", err)
+	}
+
+	root := int64(1)
+	n := tree.Target{
+		ParentID: &root, Name: "t", Enabled: true,
+		Host: ptrTo("1.1.1.1"), AddressFamily: ptrTo("v4"),
+	}
+	if err := s.UpsertTarget(ctx, &n); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMeasurements(ctx, []Measurement{{
+		TargetID: n.ID, AgentID: agent.ID, TS: now.Unix(),
+		Sent: 1, Received: 1, Samples: []uint32{1000},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RemoveAgent(ctx, agent.ID); !errors.Is(err, ErrAgentHasHistory) {
+		t.Fatalf("removing an agent with measurements returned %v, want ErrAgentHasHistory", err)
+	}
+	// …and it is still there to be disabled instead.
+	if err := s.SetAgentEnabled(ctx, agent.ID, false); err != nil {
+		t.Fatalf("disabling it instead: %v", err)
+	}
+}
+
+// The token that created an agent is its paper trail, and must not be what
+// stops the agent from being removed.
+func TestRemoveAgentClearsItsEnrolmentRecord(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	now := time.Unix(1_800_000_000, 0)
+
+	tok, err := s.MintEnrolmentToken(ctx, "ams-01", time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := s.RedeemEnrolmentToken(ctx, tok.Plaintext, testKey(t), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveAgent(ctx, agent.ID); err != nil {
+		t.Fatalf("removing a freshly enrolled agent: %v", err)
+	}
+	listed, err := s.ListEnrolmentTokens(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept bool
+	for _, l := range listed {
+		if l.ID == tok.ID {
+			kept = true
+			if l.UsedAt == 0 {
+				t.Error("the token no longer records that it was spent")
+			}
+		}
+	}
+	if !kept {
+		t.Error("removing the agent destroyed the record of how it was enrolled")
+	}
+}

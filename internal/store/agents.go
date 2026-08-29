@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/timdebruijn/smokeng/internal/store/enc"
@@ -86,15 +87,44 @@ func (s *SQLite) RemoveAgent(ctx context.Context, id int64) error {
 	if id == LocalAgentID {
 		return fmt.Errorf("store: the local agent cannot be removed")
 	}
-	res, err := s.db.ExecContext(ctx, "DELETE FROM agents WHERE id = ?", id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Measurements are labelled by agent, so removing one that has reported
+	// would leave a series nothing can name. This project disables targets
+	// rather than deleting them for the same reason: the measurement was true
+	// when it was taken and the history is the product.
+	var measurements int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM measurements WHERE agent_id = ?)", id).Scan(&measurements); err != nil {
+		return err
+	}
+	if measurements != 0 {
+		return fmt.Errorf("%w: agent %d has reported measurements", ErrAgentHasHistory, id)
+	}
+	// A spent enrolment token records how an agent came to exist; keep the row
+	// but drop the reference, so removing the agent is not blocked by its own
+	// paper trail.
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE enrolment_tokens SET agent_id = NULL WHERE agent_id = ?", id); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, "DELETE FROM agents WHERE id = ?", id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("store: no agent with id %d", id)
 	}
-	return nil
+	return tx.Commit()
 }
+
+// ErrAgentHasHistory reports an agent that cannot be removed because its
+// measurements would be orphaned. Disabling it is the reversible equivalent.
+var ErrAgentHasHistory = errors.New("store: agent has measurement history")
 
 // TouchAgent records that an agent was heard from, so an operator can tell a
 // silent agent from a busy one.
