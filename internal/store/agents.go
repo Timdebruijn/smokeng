@@ -48,7 +48,7 @@ func (s *SQLite) ListAgents(ctx context.Context) ([]AgentRecord, error) {
 // manual: a bootstrap-token flow is more moving parts than a handful of
 // agents warrants, and each one is added once.
 func (s *SQLite) AddAgent(ctx context.Context, name string, pub ed25519.PublicKey) (AgentRecord, error) {
-	if name == "" || name == "local" {
+	if name == "" || name == LocalAgentName {
 		return AgentRecord{}, fmt.Errorf("store: %q is not a usable agent name", name)
 	}
 	if len(pub) != ed25519.PublicKeySize {

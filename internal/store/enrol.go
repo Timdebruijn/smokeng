@@ -48,7 +48,7 @@ func hashToken(tok string) []byte {
 // taken. The plaintext is returned once and never stored.
 func (s *SQLite) MintEnrolmentToken(ctx context.Context, name string, ttl time.Duration, now time.Time) (EnrolmentToken, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || name == "local" {
+	if name == "" || name == LocalAgentName {
 		return EnrolmentToken{}, fmt.Errorf("store: %q is not a usable agent name", name)
 	}
 	if ttl <= 0 {
@@ -193,32 +193,89 @@ func (s *SQLite) RevokeEnrolmentToken(ctx context.Context, id int64) error {
 	return nil
 }
 
-// RenameAgent changes an agent's name. Targets refer to agents by name, so the
-// caller is responsible for rewriting any `agents` list that names the old one
-// — which is why the API does that in the same request.
-func (s *SQLite) RenameAgent(ctx context.Context, id int64, name string) error {
+// RenameAgent changes an agent's name and rewrites every `agents` list that
+// referred to it, in one transaction.
+//
+// The rewrite is the point. Targets refer to agents by name, so a rename that
+// left the lists alone would turn every target assigned to this agent into one
+// measured by nobody — silently, which is the exact failure the referential
+// check in config exists to prevent (DESIGN.md §4.4). A rename must not be able
+// to reintroduce it.
+func (s *SQLite) RenameAgent(ctx context.Context, id int64, name string) (int, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || name == "local" {
-		return fmt.Errorf("store: %q is not a usable agent name", name)
+	if name == "" || name == LocalAgentName {
+		return 0, fmt.Errorf("store: %q is not a usable agent name", name)
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
 	var taken int
-	if err := s.db.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM agents WHERE name = ? AND id <> ?", name, id).Scan(&taken); err != nil {
-		return err
+		return 0, err
 	}
 	if taken > 0 {
-		return ErrNameTaken
+		return 0, ErrNameTaken
 	}
-	res, err := s.db.ExecContext(ctx, "UPDATE agents SET name = ? WHERE id = ?", name, id)
+	var old string
+	err = tx.QueryRowContext(ctx, "SELECT name FROM agents WHERE id = ?", id).Scan(&old)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("store: no agent with id %d", id)
+	}
 	if err != nil {
-		return err
+		return 0, err
 	}
-	n, err := res.RowsAffected()
+	if old == name {
+		return 0, tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE agents SET name = ? WHERE id = ?", name, id); err != nil {
+		return 0, err
+	}
+
+	// The stored form is space-separated, so rewriting means splitting each
+	// list rather than a substring replace: "ams" must not match "ams-01".
+	rows, err := tx.QueryContext(ctx,
+		"SELECT id, agents FROM targets WHERE agents IS NOT NULL")
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if n == 0 {
-		return fmt.Errorf("store: no agent with id %d", id)
+	type change struct {
+		id   int64
+		list string
 	}
-	return nil
+	var changes []change
+	for rows.Next() {
+		var tid int64
+		var list string
+		if err := rows.Scan(&tid, &list); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		names := strings.Fields(list)
+		hit := false
+		for i, n := range names {
+			if n == old {
+				names[i] = name
+				hit = true
+			}
+		}
+		if hit {
+			changes = append(changes, change{tid, strings.Join(names, " ")})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	for _, c := range changes {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE targets SET agents = ? WHERE id = ?", c.list, c.id); err != nil {
+			return 0, err
+		}
+	}
+	return len(changes), tx.Commit()
 }

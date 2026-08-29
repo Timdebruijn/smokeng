@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/timdebruijn/smokeng/internal/tree"
 	"time"
 )
 
@@ -231,13 +233,73 @@ func TestRenameAgent(t *testing.T) {
 	if _, err := s.AddAgent(ctx, "rtd-01", testKey(t)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RenameAgent(ctx, a.ID, "ams-02"); err != nil {
+	if _, err := s.RenameAgent(ctx, a.ID, "ams-02"); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	if err := s.RenameAgent(ctx, a.ID, "rtd-01"); !errors.Is(err, ErrNameTaken) {
+	if _, err := s.RenameAgent(ctx, a.ID, "rtd-01"); !errors.Is(err, ErrNameTaken) {
 		t.Error("renaming onto another agent's name should be refused")
 	}
-	if err := s.RenameAgent(ctx, a.ID, "local"); err == nil {
+	if _, err := s.RenameAgent(ctx, a.ID, "local"); err == nil {
 		t.Error("renaming to the reserved name 'local' should be refused")
 	}
 }
+
+// A rename that left the assignments behind would turn every target using the
+// agent into one measured by nobody — the exact silent failure the referential
+// check exists to prevent.
+func TestRenameAgentRewritesAssignments(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	a, err := s.AddAgent(ctx, "ams", testKey(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mk := func(name, agents string) int64 {
+		t.Helper()
+		root := int64(1)
+		n := tree.Target{
+			ParentID: &root, Name: name, Enabled: true,
+			Host: ptrTo("1.1.1.1"), AddressFamily: ptrTo("v4"),
+			Settings: tree.Settings{Agents: ptrTo(agents)},
+		}
+		if err := s.UpsertTarget(ctx, &n); err != nil {
+			t.Fatal(err)
+		}
+		return n.ID
+	}
+	both := mk("both", "local ams")
+	// "ams-01" must not be caught by a rename of "ams": the stored form is
+	// space-separated, not a substring soup.
+	similar := mk("similar", "local ams-01")
+
+	n, err := s.RenameAgent(ctx, a.ID, "ams-02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("rename rewrote %d assignments, want 1", n)
+	}
+
+	targets, err := s.ListTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range targets {
+		if tg.Settings.Agents == nil {
+			continue
+		}
+		switch tg.ID {
+		case both:
+			if *tg.Settings.Agents != "local ams-02" {
+				t.Errorf("assignment = %q, want the renamed agent", *tg.Settings.Agents)
+			}
+		case similar:
+			if *tg.Settings.Agents != "local ams-01" {
+				t.Errorf("a similarly-named agent was rewritten: %q", *tg.Settings.Agents)
+			}
+		}
+	}
+}
+
+func ptrTo[T any](v T) *T { return &v }

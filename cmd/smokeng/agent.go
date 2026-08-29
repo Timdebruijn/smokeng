@@ -160,8 +160,11 @@ func agentRun(args []string) error {
 	agentID := fs.Int64("agent-id", 0, "this agent's id, as printed by 'smokeng agent add'")
 	keyPath := fs.String("key", "probe.key", "path to this agent's private key")
 	dbPath := fs.String("db", "smokeng-agent.db", "local buffer database")
+	token := fs.String("token", "",
+		"one-time enrolment token from the master; enrols this agent and records its id")
 	insecure := fs.Bool("insecure-allow-http", false,
-		"allow a plain-HTTP master URL; local development only")
+		"allow a plain-HTTP master URL; local development only. Note an enrolment "+
+			"token is a usable credential, so this is not merely a transport preference")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -173,13 +176,35 @@ func agentRun(args []string) error {
 	if created {
 		fmt.Printf("generated a new key in %s\n", *keyPath)
 	}
-	// Always print it: an operator enrolling this agent needs it, and it is
-	// public by definition.
+	// Always print it: an operator enrolling this agent by hand needs it, and
+	// it is public by definition.
 	fmt.Printf("public key: %s\n", agent.PublicKey(key))
+
+	// An id already recorded by a previous enrolment wins over the flag being
+	// absent, so a unit file that carries --token does not try to spend it
+	// again on every restart.
+	if *agentID == 0 {
+		if id, ok, err := agent.LoadAgentID(*keyPath); err != nil {
+			return err
+		} else if ok {
+			*agentID = id
+		}
+	}
+	if *master != "" && *agentID == 0 && *token != "" {
+		id, err := agent.EnrolOnce(context.Background(), *master, *token, *keyPath, key, *insecure)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("enrolled with id %d; recorded in %s, so --token is not needed again\n",
+			id, agent.IDPath(*keyPath))
+		*agentID = id
+	}
 	if *master == "" || *agentID == 0 {
-		return errors.New("enrol this key on the master with:\n" +
+		return errors.New("this agent is not enrolled yet. Either:\n" +
+			"  mint a token in the UI under Agents, then rerun with --master URL --token smk_...\n" +
+			"or enrol the key by hand on the master:\n" +
 			"  smokeng agent add --name NAME --pubkey <the key above>\n" +
-			"then rerun with --master URL --agent-id ID")
+			"  then rerun with --master URL --agent-id ID")
 	}
 
 	st, err := store.Open(*dbPath)

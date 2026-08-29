@@ -12,7 +12,7 @@ import (
 
 // LocalAgent is the master's own prober. It is reserved: no enrolled agent may
 // be called this, so a name in an `agents` list always means exactly one thing.
-const LocalAgent = "local"
+const LocalAgent = store.LocalAgentName
 
 // AgentList is the set of vantage points that measure a node and its subtree
 // (DESIGN.md §4.4).

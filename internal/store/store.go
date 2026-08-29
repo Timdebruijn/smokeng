@@ -76,6 +76,11 @@ func ICMPError(icmpType, code uint8) uint16 { return uint16(icmpType)<<8 | uint1
 // LocalAgentID is the master's built-in prober (DESIGN.md §2).
 const LocalAgentID int64 = 0
 
+// LocalAgentName is what an `agents` list calls the master's own prober. It is
+// reserved: no enrolled agent may take it, so a name in such a list always
+// means exactly one thing.
+const LocalAgentName = "local"
+
 // Store is the narrow persistence interface (DESIGN.md §6). It is the
 // migration seam to a different backend; keep it exactly as small as its
 // callers require.

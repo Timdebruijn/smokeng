@@ -1,13 +1,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/timdebruijn/smokeng/internal/store"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
@@ -102,6 +105,10 @@ func (s *server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
+	if err := s.checkAgentNames(r.Context(), n.Settings.Agents); err != nil {
+		badRequest(w, err)
+		return
+	}
 	if n.ParentID == nil {
 		badRequest(w, errors.New("parent_id is required; there is exactly one root and it already exists"))
 		return
@@ -161,6 +168,10 @@ func (s *server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 
 	updated := targets[idx]
 	if err := applyPatch(&updated, body); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if err := s.checkAgentNames(r.Context(), updated.Settings.Agents); err != nil {
 		badRequest(w, err)
 		return
 	}
@@ -262,6 +273,41 @@ func (s *server) respondTarget(w http.ResponseWriter, r *http.Request, id int64,
 // leaves the field alone; a key explicitly set to null clears it. That
 // distinction is the whole point of the override UI, so the payload is
 // decoded key-by-key rather than into a struct.
+// checkAgentNames refuses an `agents` list that names an agent nobody enrolled.
+// The UI offers a picker so it cannot happen there, but the API is the API, and
+// the failure it prevents is a target measured by nobody (DESIGN.md §4.4).
+func (s *server) checkAgentNames(ctx context.Context, agents *string) error {
+	if agents == nil {
+		return nil
+	}
+	records, err := s.agents.ListAgents(ctx)
+	if err != nil {
+		return err
+	}
+	known := map[string]bool{store.LocalAgentName: true}
+	names := make([]string, 0, len(records)+1)
+	names = append(names, store.LocalAgentName)
+	for _, a := range records {
+		if a.ID == store.LocalAgentID {
+			continue
+		}
+		known[a.Name] = true
+		names = append(names, a.Name)
+	}
+	var unknown []string
+	for _, want := range strings.Fields(*agents) {
+		if !known[want] {
+			unknown = append(unknown, strconv.Quote(want))
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(names)
+		return fmt.Errorf("no enrolled agent named %s; enrolled agents are: %s",
+			strings.Join(unknown, ", "), strings.Join(names, ", "))
+	}
+	return nil
+}
+
 func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 	if raw, ok := body["parent_id"]; ok {
 		if isNull(raw) {
@@ -330,6 +376,16 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 			"agents":     &n.Settings.Agents,
 		}
 		for key, raw := range settings {
+			// The UI sends agents as an array; a string still works and means
+			// the same thing.
+			if key == "agents" && !isNull(raw) {
+				var list []string
+				if err := json.Unmarshal(raw, &list); err == nil {
+					joined := strings.Join(list, " ")
+					n.Settings.Agents = &joined
+					continue
+				}
+			}
 			switch {
 			case ints[key] != nil:
 				if isNull(raw) {

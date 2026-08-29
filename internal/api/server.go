@@ -41,6 +41,7 @@ type server struct {
 	alerts   AlertView
 	auth     Authenticator
 	agents   AgentStore
+	enrol    EnrolStore
 	verifier *ingest.Verifier
 	probe    ProbeStats
 	ingest   IngestStats
@@ -69,6 +70,12 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	s := &server{
 		st: st, alerts: opts.Alerts, auth: authenticator, agents: st,
 		probe: opts.Probe, version: opts.Version,
+	}
+	// Enrolment is optional in the same way the local prober is: a store that
+	// cannot mint tokens simply does not get the routes, rather than forcing
+	// every implementation of Store to grow seven methods it may not want.
+	if es, ok := st.(EnrolStore); ok {
+		s.enrol = es
 	}
 	if s.version == "" {
 		s.version = "unknown"
@@ -123,6 +130,16 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", admin(s.handleDeleteAlertRule))
 	mux.HandleFunc("GET /api/v1/alerts", viewer(s.handleFiringAlerts))
 	mux.HandleFunc("GET /api/v1/agents", viewer(s.handleAgents))
+	if s.enrol != nil {
+		mux.HandleFunc("PATCH /api/v1/agents/{id}", admin(s.handleUpdateAgent))
+		mux.HandleFunc("DELETE /api/v1/agents/{id}", admin(s.handleDeleteAgent))
+		mux.HandleFunc("GET /api/v1/agent-tokens", admin(s.handleListEnrolTokens))
+		mux.HandleFunc("POST /api/v1/agent-tokens", admin(s.handleMintEnrolToken))
+		mux.HandleFunc("DELETE /api/v1/agent-tokens/{id}", admin(s.handleRevokeEnrolToken))
+		// Enrolment carries its own credential, so like the signed agent
+		// endpoints it sits outside the session middleware.
+		mux.HandleFunc("POST /api/v1/agent/enrol", s.handleEnrol)
+	}
 	mux.HandleFunc("GET /api/v1/paths", viewer(s.handlePaths))
 	// Signed agent endpoints (§9). These carry their own authentication, so
 	// they are deliberately outside the session middleware.
