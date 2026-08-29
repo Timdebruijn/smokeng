@@ -125,8 +125,12 @@ export default function Detail({
       <div className="card detail-plot">
         <div className="detail-plot-head">
           <span className="hint small">
-            {agentNames.length > 1 ? `from ${agentNames[0]}` : 'measured'} · pooled over the window
-            below
+            {/* Not "measured" when nobody is measuring it: the notice below
+                says the assigned agent is not enrolled, and a header claiming
+                a measurement over it would contradict it. */}
+            {agentId === null
+              ? 'not measured'
+              : `${agentNames.length > 1 ? `from ${agentNames[0]}` : 'measured'} · pooled over the window below`}
           </span>
           <span className="spacer" />
           {RANGES.map((r) => (
@@ -145,15 +149,15 @@ export default function Detail({
             measuring this target.
           </p>
         ) : (
-        <Plot
-          target={target}
-          agentId={agentId}
-          from={from}
-          to={to}
-          refreshKey={refreshKey}
-          logScale
-          onZoom={() => undefined}
-        />
+          <Plot
+            target={target}
+            agentId={agentId}
+            from={from}
+            to={to}
+            refreshKey={refreshKey}
+            logScale
+            onZoom={() => undefined}
+          />
         )}
       </div>
 

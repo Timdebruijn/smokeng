@@ -212,10 +212,24 @@ function AppHeader({
   )
 }
 
+interface PlotSeries {
+  target: Target
+  /**
+   * Null when the target's configured agent name(s) name nobody enrolled:
+   * there is no series to draw, and that absence is itself the thing to show.
+   */
+  agentId: number | null
+  /** The agent to attribute the series to, or the unresolved names verbatim. */
+  agentName?: string
+}
+
 function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
   const [targets, setTargets] = useState<Target[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [error, setError] = useState<string | null>(null)
+  // Set only when listing agents failed outright, which is a different thing
+  // from a list that came back without the name a target asked for.
+  const [agentsError, setAgentsError] = useState<string | null>(null)
   const [rangeS, setRangeS] = useState(3600)
   const [refreshKey, setRefreshKey] = useState(0)
   const [live, setLive] = useState(true)
@@ -229,10 +243,19 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
       .then(setTargets)
       .catch((e: Error) => setError(e.message))
     // An unenrolled deployment has only the local agent; failing to list them
-    // must not stop the graphs rendering.
+    // must not stop the graphs rendering. It does have to be remembered,
+    // though: with no list, nothing resolves, and every target would otherwise
+    // be reported as assigned to an agent nobody enrolled — a claim this
+    // screen has no evidence for.
     fetchAgents()
-      .then(setAgents)
-      .catch(() => setAgents([]))
+      .then((a) => {
+        setAgents(a)
+        setAgentsError(null)
+      })
+      .catch((e: Error) => {
+        setAgents([])
+        setAgentsError(e.message)
+      })
   }, [])
 
   useEffect(() => {
@@ -277,7 +300,7 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
   // points is two different measurements, and averaging them would destroy
   // the very thing that makes a second vantage point worth having.
   const byID = new Map(agents.map((a) => [a.name, a.id]))
-  const series = shown.flatMap((t) => {
+  const series = shown.flatMap((t): PlotSeries[] => {
     const names = (t.settings.agents.effective || 'local').split(/\s+/).filter(Boolean)
     const resolved = names.map((n) => ({ name: n, id: byID.get(n) })).filter((a) => a.id !== undefined)
     // No fallback to the local agent. Querying agent 0 for a target assigned
@@ -285,7 +308,14 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
     // which is the one thing this project will not do — and it made a target
     // nobody measures look measured. The server counts these in
     // smokeng_targets_unmeasured; the screen should agree with it.
-    if (resolved.length === 0) return []
+    //
+    // Dropping the target instead would only move the lie: a missing plot
+    // reads as "not selected", and the misconfiguration that nothing measures
+    // this target is precisely what the operator needs to see. So it keeps its
+    // place in the stack, with no series and a reason.
+    if (resolved.length === 0) {
+      return [{ target: t, agentId: null, agentName: names.join(' ') }]
+    }
     return resolved.map((a) => ({
       target: t,
       agentId: a.id as number,
@@ -356,27 +386,85 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
           </p>
         )}
         {!error && leaves.length > 0 && series.length === 0 && (
-          <div className="card empty">
-            {shown.length === 0
-              ? 'No targets selected — check some in the target list.'
-              : 'The selected targets are assigned to agents that are not enrolled, so nothing measures them.'}
-          </div>
+          <div className="card empty">No targets selected — check some in the target list.</div>
         )}
-        {series.map((s) => (
-          <Plot
-            key={`${s.target.id}-${s.agentId}`}
-            target={s.target}
-            agentId={s.agentId}
-            agentName={s.agentName}
-            from={from}
-            to={to}
-            refreshKey={refreshKey}
-            logScale={logScale}
-            onZoom={onZoom}
-            onOpenDetail={() => onOpenDetail(s.target.id)}
-          />
-        ))}
+        {series.map((s) =>
+          s.agentId === null ? (
+            <Unmeasured
+              key={`${s.target.id}-unresolved`}
+              target={s.target}
+              names={s.agentName ?? ''}
+              listFailed={agentsError}
+              onOpenDetail={() => onOpenDetail(s.target.id)}
+            />
+          ) : (
+            <Plot
+              key={`${s.target.id}-${s.agentId}`}
+              target={s.target}
+              agentId={s.agentId}
+              agentName={s.agentName}
+              from={from}
+              to={to}
+              refreshKey={refreshKey}
+              logScale={logScale}
+              onZoom={onZoom}
+              onOpenDetail={() => onOpenDetail(s.target.id)}
+            />
+          ),
+        )}
       </div>
+    </section>
+  )
+}
+
+/**
+ * A target's place in the stack when nothing is measuring it. Same card as a
+ * plot, deliberately: the operator scanning the column should find the target
+ * where they expect it and read why it is blank, rather than notice later that
+ * it was never there.
+ *
+ * A failed agent listing is said as such. Calling the target unenrolled in
+ * that case would be a stronger claim than the screen can support — the name
+ * may well be fine, and only the check failed.
+ */
+function Unmeasured({
+  target,
+  names,
+  listFailed,
+  onOpenDetail,
+}: {
+  target: Target
+  names: string
+  listFailed: string | null
+  onOpenDetail: () => void
+}) {
+  return (
+    <section className="card plot">
+      <div className="plot-head">
+        <span className="dot" style={{ background: 'var(--dim)' }} />
+        <button className="plot-title link-title" onClick={onOpenDetail}>
+          {target.title ?? target.path}
+        </button>
+        <span className="host">
+          {target.host} · {target.address_family}
+        </span>
+        <span className="agent">not enrolled</span>
+        <span className="spacer" />
+        <button className="pill" onClick={onOpenDetail}>
+          Detail →
+        </button>
+      </div>
+      {listFailed ? (
+        <p className="hint">
+          Assigned to <code>{names}</code>, which could not be checked: listing agents failed (
+          {listFailed}).
+        </p>
+      ) : (
+        <p className="hint">
+          Assigned to <code>{names}</code>, which is not enrolled — so nothing is measuring this
+          target.
+        </p>
+      )}
     </section>
   )
 }
