@@ -63,12 +63,20 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"authenticated": true,
 		"auth_enabled":  true,
 		"subject":       sess.Subject,
 		"email":         sess.Email,
 		"name":          sess.Name,
 		"role":          string(sess.Role),
-	})
+	}
+	// Only for an admin, and only because the grants page would otherwise be
+	// lying by omission: adding a grant changes nothing at all while every
+	// authenticated user can already read everything. It is a configuration
+	// detail, so it is not told to anyone who cannot act on it.
+	if sess.Role == auth.RoleAdmin {
+		body["default_role"] = string(s.defaultRole)
+	}
+	writeJSON(w, http.StatusOK, body)
 }

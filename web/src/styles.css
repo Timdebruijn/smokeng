@@ -375,6 +375,13 @@ h2.section {
   border-color: color-mix(in srgb, #c0392b 40%, transparent);
 }
 
+.alerts th.group-heading {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.7rem 0.75rem 0.2rem 0;
+}
+
 .chip.firing {
   color: #c0392b;
   border: 1px solid color-mix(in srgb, #c0392b 45%, transparent);
@@ -486,4 +493,10 @@ a.button {
   color: #c0392b;
   white-space: normal;
   max-width: 22rem;
+}
+
+/* A hint that is a caveat rather than an explanation. */
+.hint.warn {
+  border-left: 3px solid #d97706;
+  padding-left: 0.6rem;
 }

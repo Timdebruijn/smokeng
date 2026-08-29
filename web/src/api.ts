@@ -1,6 +1,8 @@
 import { tableFromIPC } from '@uwdata/flechette'
 
 export interface Me {
+  /** Only present for an admin: what an authenticated user with no grant may do. */
+  default_role?: 'viewer' | 'none'
   authenticated: boolean
   auth_enabled: boolean
   role?: 'viewer' | 'admin'
@@ -158,6 +160,40 @@ export function updateTarget(id: number, body: TargetPatch): Promise<unknown> {
 
 export function deleteTarget(id: number, recursive: boolean): Promise<unknown> {
   return mutate(`/api/v1/targets/${id}${recursive ? '?recursive=true' : ''}`, 'DELETE')
+}
+
+/**
+ * A grant gives an OIDC group a role on `target_id` and everything beneath
+ * it — isolation is total, so a group scoped to a subtree cannot learn that
+ * anything outside it exists. `path` is the target's full path, for display.
+ * The global `admin` role is separate: it comes from the identity provider
+ * and is never granted here.
+ */
+export interface Grant {
+  id: number
+  group: string
+  target_id: number
+  role: 'viewer' | 'editor'
+  path: string
+}
+
+export async function fetchGrants(): Promise<Grant[]> {
+  const r = await fetch('/api/v1/grants', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`grants: HTTP ${r.status}`)
+  return ((await r.json()) as { grants: Grant[] }).grants ?? []
+}
+
+/** Posting the same (group, target_id) again re-roles the existing grant rather than duplicating it. */
+export function createGrant(body: {
+  group: string
+  target_id: number
+  role: 'viewer' | 'editor'
+}): Promise<unknown> {
+  return mutate('/api/v1/grants', 'POST', body)
+}
+
+export function deleteGrant(id: number): Promise<unknown> {
+  return mutate(`/api/v1/grants/${id}`, 'DELETE')
 }
 
 /**

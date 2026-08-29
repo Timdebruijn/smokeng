@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Admin from './Admin'
 import Agents from './Agents'
 import Alerts from './Alerts'
+import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
 
@@ -13,7 +14,7 @@ const RANGES: { label: string; seconds: number }[] = [
 ]
 const REFRESH_MS = 10_000
 
-type View = 'graphs' | 'targets' | 'alerts' | 'agents'
+type View = 'graphs' | 'targets' | 'alerts' | 'agents' | 'access'
 
 export default function App() {
   const [view, setView] = useState<View>('graphs')
@@ -29,13 +30,18 @@ export default function App() {
   // to be refused is worse than showing them a moment late.
   const isAdmin = me?.role === 'admin'
   const needsLogin = me?.auth_enabled === true && !me.authenticated
+  // Grant management is global-admin only, both here and on the server — a
+  // viewer must not even see the tab exists.
+  const views: View[] = isAdmin
+    ? ['graphs', 'targets', 'alerts', 'agents', 'access']
+    : ['graphs', 'targets', 'alerts', 'agents']
 
   return (
     <main>
       <header>
         <h1>smokeng</h1>
         <nav className="controls">
-          {(['graphs', 'targets', 'alerts', 'agents'] as View[]).map((v) => (
+          {views.map((v) => (
             <button key={v} className={view === v ? 'active' : ''} onClick={() => setView(v)}>
               {v[0].toUpperCase() + v.slice(1)}
             </button>
@@ -65,8 +71,14 @@ export default function App() {
         <Admin readOnly={!isAdmin} />
       ) : view === 'alerts' ? (
         <Alerts isAdmin={isAdmin} />
-      ) : (
+      ) : view === 'agents' ? (
         <Agents readOnly={!isAdmin} />
+      ) : (
+        <Grants
+            readOnly={!isAdmin}
+            defaultRole={me?.default_role}
+            authEnabled={me?.auth_enabled !== false}
+          />
       )}
     </main>
   )
