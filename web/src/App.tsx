@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import Admin from './Admin'
 import Agents from './Agents'
 import Alerts from './Alerts'
@@ -198,13 +198,27 @@ function Graphs() {
   }
 
   const leaves = targets.filter((t) => t.host !== null && t.enabled && !t.hidden)
+
+  // Which targets are on screen. Everything, until someone narrows it: a
+  // monitoring page that starts empty is a page that hides a problem.
+  const [hidden, setHidden] = useState<Set<number>>(new Set())
+  const [graphSearch, setGraphSearch] = useState('')
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const shown = leaves.filter((t) => !hidden.has(t.id))
+  const toggleShown = (id: number) =>
+    setHidden((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   const spanLabel = `${fmtSpan(to - from)} · ${new Date(from * 1000).toLocaleTimeString()} → ${new Date(to * 1000).toLocaleTimeString()}`
 
   // One plot per (target, agent) pair: the same target seen from two vantage
   // points is two different measurements, and averaging them would destroy
   // the very thing that makes a second vantage point worth having.
   const byID = new Map(agents.map((a) => [a.name, a.id]))
-  const series = leaves.flatMap((t) => {
+  const series = shown.flatMap((t) => {
     const names = (t.settings.agents.effective || 'local').split(/\s+/).filter(Boolean)
     const resolved = names.map((n) => ({ name: n, id: byID.get(n) })).filter((a) => a.id !== undefined)
     // Fall back to the local agent when the names cannot be resolved yet.
@@ -217,32 +231,43 @@ function Graphs() {
   })
 
   return (
-    <>
-      <div className="subbar">
-        <p className="range">
-          {spanLabel}
-          {zoom && (
-            <button className="link" onClick={() => setZoom(null)}>
-              reset zoom
-            </button>
-          )}
-          {!zoom && <span className="hint">drag on a plot to zoom</span>}
-        </p>
-        <div className="controls">
+    <section className="graphs">
+      {sidebarOpen && (
+        <TargetSidebar
+          leaves={leaves}
+          hidden={hidden}
+          search={graphSearch}
+          onSearch={setGraphSearch}
+          onToggle={toggleShown}
+          onAll={(on) => setHidden(on ? new Set() : new Set(leaves.map((t) => t.id)))}
+        />
+      )}
+      <div className="graphs-main">
+        <div className="card toolbar">
+          <button
+            className="icon-button"
+            title="Toggle target list"
+            onClick={() => setSidebarOpen((v) => !v)}
+          >
+            ☰
+          </button>
           {RANGES.map((r) => (
             <button
               key={r.label}
-              className={!zoom && r.seconds === rangeS ? 'active' : ''}
+              className={!zoom && r.seconds === rangeS ? 'pill active' : 'pill'}
               onClick={() => pickRange(r.seconds)}
             >
               {r.label}
             </button>
           ))}
-          <button className={logScale ? 'active' : ''} onClick={() => setLogScale(!logScale)}>
+          <button
+            className={logScale ? 'pill active' : 'pill'}
+            onClick={() => setLogScale(!logScale)}
+          >
             log
           </button>
           <button
-            className={live && !zoom ? 'active' : ''}
+            className={live && !zoom ? 'pill active' : 'pill'}
             onClick={() => {
               setZoom(null)
               setLive(!live)
@@ -250,29 +275,102 @@ function Graphs() {
           >
             {live && !zoom ? '● live' : '○ paused'}
           </button>
+          <span className="spacer" />
+          <span className="span-label">{spanLabel}</span>
+          {zoom ? (
+            <button className="pill accent" onClick={() => setZoom(null)}>
+              reset zoom
+            </button>
+          ) : (
+            <span className="hint small">drag on a plot to zoom</span>
+          )}
         </div>
+        {error && <p className="error">{error}</p>}
+        {!error && leaves.length === 0 && (
+          <p className="hint">
+            No targets yet — add them under <strong>Targets</strong>, or import a SmokePing config
+            with <code>smokeng config import-smokeping</code>.
+          </p>
+        )}
+        {!error && leaves.length > 0 && series.length === 0 && (
+          <div className="card empty">No targets selected — check some in the target list.</div>
+        )}
+        {series.map((s) => (
+          <Plot
+            key={`${s.target.id}-${s.agentId}`}
+            target={s.target}
+            agentId={s.agentId}
+            agentName={s.agentName}
+            from={from}
+            to={to}
+            refreshKey={refreshKey}
+            logScale={logScale}
+            onZoom={onZoom}
+          />
+        ))}
       </div>
-      {error && <p className="error">{error}</p>}
-      {!error && leaves.length === 0 && (
-        <p>
-          No targets yet — add them under <strong>Targets</strong>, or import a SmokePing config with{' '}
-          <code>smokeng config import-smokeping</code>.
-        </p>
-      )}
-      {series.map((s) => (
-        <Plot
-          key={`${s.target.id}-${s.agentId}`}
-          target={s.target}
-          agentId={s.agentId}
-          agentName={s.agentName}
-          from={from}
-          to={to}
-          refreshKey={refreshKey}
-          logScale={logScale}
-          onZoom={onZoom}
-        />
+    </section>
+  )
+}
+
+// The target list. Group headings come from the path, so the tree the operator
+// built is the tree they filter with.
+function TargetSidebar({
+  leaves,
+  hidden,
+  search,
+  onSearch,
+  onToggle,
+  onAll,
+}: {
+  leaves: Target[]
+  hidden: Set<number>
+  search: string
+  onSearch: (v: string) => void
+  onToggle: (id: number) => void
+  onAll: (on: boolean) => void
+}) {
+  const q = search.trim().toLowerCase()
+  const matching = leaves.filter(
+    (t) => q === '' || t.path.toLowerCase().includes(q) || (t.host ?? '').includes(q),
+  )
+  const rows: { group: string; items: Target[] }[] = []
+  for (const t of matching) {
+    const group = t.path.slice(0, t.path.lastIndexOf('/')) || '/'
+    const last = rows[rows.length - 1]
+    if (last && last.group === group) last.items.push(t)
+    else rows.push({ group, items: [t] })
+  }
+  const allShown = leaves.every((t) => !hidden.has(t.id))
+
+  return (
+    <aside className="card sidebar">
+      <input
+        className="filter"
+        value={search}
+        onChange={(e) => onSearch(e.target.value)}
+        placeholder="Filter targets…"
+      />
+      {rows.map((r) => (
+        <Fragment key={r.group}>
+          <p className="side-group">{r.group}</p>
+          {r.items.map((t) => (
+            <label key={t.id} className="side-leaf">
+              <input
+                type="checkbox"
+                checked={!hidden.has(t.id)}
+                onChange={() => onToggle(t.id)}
+              />
+              <span className="side-name">{t.title ?? t.name}</span>
+            </label>
+          ))}
+        </Fragment>
       ))}
-    </>
+      {matching.length === 0 && <p className="hint small">Nothing matches that filter.</p>}
+      <button className="pill wide" onClick={() => onAll(!allShown)}>
+        {allShown ? 'Hide all' : 'Show all'}
+      </button>
+    </aside>
   )
 }
 

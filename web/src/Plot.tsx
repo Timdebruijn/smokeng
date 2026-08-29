@@ -391,9 +391,10 @@ export default function Plot({
   }
 
   return (
-    <section className="plot">
-      <h2>
-        {target.title ?? target.path}
+    <section className="card plot">
+      <div className="plot-head">
+        <span className="dot" style={{ background: dotColour(quality.length) }} />
+        <span className="plot-title">{target.title ?? target.path}</span>
         <span className="host">
           {target.host} · {target.address_family}
         </span>
@@ -404,7 +405,7 @@ export default function Plot({
             {rowCount > 0 && q.count < rowCount && <> ({q.count}/{rowCount})</>}
           </span>
         ))}
-      </h2>
+      </div>
       <div
         ref={stackRef}
         className="plot-stack"
@@ -419,4 +420,11 @@ export default function Plot({
       </div>
     </section>
   )
+}
+
+// The status dot beside a plot's name. It reports whether smokeng could measure
+// cleanly, not whether the network is fast: a widened band with a flag on it
+// has an attributable cause, and that is what the colour is for.
+function dotColour(flagged: number): string {
+  return flagged === 0 ? 'var(--good)' : 'var(--warn)'
 }
