@@ -1290,3 +1290,69 @@ a.button {
   font-size: 12px;
   white-space: nowrap;
 }
+
+/* ── Modal ─────────────────────────────────────────────────────────────── */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: light-dark(rgba(20, 32, 44, 0.35), rgba(0, 0, 0, 0.55));
+  z-index: 80;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.modal {
+  width: min(640px, 100%);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  padding: 18px 20px;
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal h2 {
+  font-size: 15px;
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.modal textarea {
+  flex: 1;
+  min-height: 260px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card2);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  outline: none;
+  margin-top: 8px;
+}
+
+.modal textarea:focus {
+  border-color: var(--accent);
+}
+
+.import-result {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--card2);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+
+.modal .pill-row {
+  margin-top: 12px;
+}

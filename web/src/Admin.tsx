@@ -1,3 +1,4 @@
+import TomlDialog from './TomlDialog'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   createTarget,
@@ -50,6 +51,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [toml, setToml] = useState<'export' | 'import' | null>(null)
   // A viewer may look at the tree but not change it. The server enforces this
   // regardless; disabling the controls only saves them a refused request.
   const busy = saving || readOnly
@@ -114,7 +116,28 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
   const selected = targets.find((t) => t.id === selectedId) ?? null
 
   return (
-    <div className="admin">
+    <>
+      {!readOnly && (
+        <div className="page-head">
+          <h1>Targets</h1>
+          <div className="pill-row">
+            <button className="pill" onClick={() => setToml('export')}>
+              Export TOML
+            </button>
+            <button className="pill" onClick={() => setToml('import')}>
+              Import TOML
+            </button>
+          </div>
+        </div>
+      )}
+      {toml && (
+        <TomlDialog
+          mode={toml}
+          onClose={() => setToml(null)}
+          onImported={() => void reload()}
+        />
+      )}
+      <div className="admin">
       <aside className="tree">
         {ordered.map(({ target, depth }) => (
           <button
@@ -154,6 +177,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
         )}
       </section>
     </div>
+    </>
   )
 }
 

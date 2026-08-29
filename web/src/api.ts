@@ -397,3 +397,32 @@ export async function fetchSeries(
   for (let i = 0; i < n; i++) values.set(rows[i], offsets[i])
   return { ts, sent, received, flags, offsets, values, icmpErrors }
 }
+
+/** The whole target tree as TOML — the same text `config export` writes. */
+export async function exportConfig(): Promise<string> {
+  const r = await fetch('/api/v1/config', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`config export: HTTP ${r.status}`)
+  return r.text()
+}
+
+export interface ImportResult {
+  summary: string
+  warnings?: string[]
+}
+
+/**
+ * Apply a TOML file declaratively. Never prunes: absence disables here, which
+ * is recoverable by importing again. Pruning deletes, and stays on the command
+ * line.
+ */
+export async function importConfig(toml: string, allowUnknownAgents = false): Promise<ImportResult> {
+  const r = await fetch(`/api/v1/config${allowUnknownAgents ? '?allow_unknown_agents=1' : ''}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/toml' },
+    body: toml,
+    cache: 'no-store',
+  })
+  const body = (await r.json().catch(() => ({}))) as { error?: string } & ImportResult
+  if (!r.ok) throw new Error(body.error ?? `config import: HTTP ${r.status}`)
+  return body
+}

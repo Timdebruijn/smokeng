@@ -43,6 +43,8 @@ func TestEveryRouteIsClassified(t *testing.T) {
 		"POST /api/v1/agent-tokens":        classGlobalAdmin,
 		"DELETE /api/v1/agent-tokens/{id}": classGlobalAdmin,
 		"POST /api/v1/agent/enrol":         classAgentSigned,
+		"GET /api/v1/config":               classGlobalAdmin,
+		"PUT /api/v1/config":               classGlobalAdmin,
 		"GET /api/v1/grants":               classGlobalAdmin,
 		"POST /api/v1/grants":              classGlobalAdmin,
 		"DELETE /api/v1/grants/{id}":       classGlobalAdmin,

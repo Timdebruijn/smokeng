@@ -47,6 +47,7 @@ type server struct {
 	enrol  EnrolStore
 	grants GrantStore
 	events EventStore
+	config ConfigStore
 	routes *router
 	// defaultRole is what an authenticated caller with no grant gets. It is a
 	// setting rather than a consequence, so that adding the first grant does
@@ -96,6 +97,9 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	}
 	if es, ok := st.(EventStore); ok {
 		s.events = es
+	}
+	if cs, ok := st.(ConfigStore); ok {
+		s.config = cs
 	}
 	s.defaultRole = opts.DefaultRole
 	if s.defaultRole == "" {
@@ -166,6 +170,12 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 		// Enrolment carries its own credential, so like the signed agent
 		// endpoints it sits outside the session middleware.
 		rt.handle(classAgentSigned, "POST /api/v1/agent/enrol", s.handleEnrol)
+	}
+	if s.config != nil {
+		// Declarative over the whole tree, so there is no scoped form of
+		// either: global admin, the same as the command line.
+		rt.handle(classGlobalAdmin, "GET /api/v1/config", s.handleConfigExport)
+		rt.handle(classGlobalAdmin, "PUT /api/v1/config", s.handleConfigImport)
 	}
 	if s.grants != nil {
 		rt.handle(classGlobalAdmin, "GET /api/v1/grants", s.handleGrants)
