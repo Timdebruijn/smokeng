@@ -28,6 +28,25 @@ func irttServer(t *testing.T) int {
 
 	cfg := irtt.NewServerConfig()
 	cfg.Addrs = []string{net.JoinHostPort("127.0.0.1", strconv.Itoa(port))}
+
+	// Wait for the server's own ListenerStart event.
+	//
+	// The obvious check — dial the address and see whether it connects — is
+	// worthless for UDP: connect performs no handshake, so it succeeds
+	// immediately whether or not anything is bound. A readiness loop built on
+	// it returns at once and tests nothing, which is how this arrived in CI as
+	// an intermittent "0 of 5 received over loopback".
+	ready := make(chan struct{})
+	cfg.Handler = handlerFunc(func(e *irtt.Event) {
+		if e.Code == irtt.ListenerStart {
+			select {
+			case <-ready:
+			default:
+				close(ready)
+			}
+		}
+	})
+
 	srv := irtt.NewServer(cfg)
 	go func() {
 		// Returns when Shutdown is called; a failure here surfaces as the
@@ -36,14 +55,11 @@ func irttServer(t *testing.T) int {
 	}()
 	t.Cleanup(srv.Shutdown)
 
-	// Wait for the listener rather than sleeping a fixed amount.
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if conn, err := net.DialTimeout("udp", cfg.Addrs[0], 50*time.Millisecond); err == nil {
-			conn.Close()
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-ready:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the irtt server never reported a listener; the test would otherwise " +
+			"measure a server that is not there")
 	}
 	return port
 }
@@ -112,3 +128,8 @@ func TestProbeIRTTUnreachableServerIsTotalLoss(t *testing.T) {
 			m.Sent, m.Received)
 	}
 }
+
+// handlerFunc adapts a function to irtt.Handler.
+type handlerFunc func(*irtt.Event)
+
+func (f handlerFunc) OnEvent(e *irtt.Event) { f(e) }
