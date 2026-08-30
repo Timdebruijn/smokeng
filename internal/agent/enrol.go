@@ -44,9 +44,16 @@ func saveAgentID(keyPath string, id int64) error {
 // refused here as firmly as it is for the signed endpoints: this is the
 // request that would leak something usable.
 func Enrol(ctx context.Context, master, token string, key ed25519.PrivateKey, insecure bool) (int64, string, error) {
-	if !strings.HasPrefix(master, "https://") && !insecure {
-		return 0, "", fmt.Errorf("agent: refusing to send an enrolment token to %q over plain HTTP; "+
-			"pass --insecure-allow-http only for local development", master)
+	// A loopback master is exempt for the same reason agent.New is: the token
+	// is a credential, but over a literal loopback address it never reaches a
+	// network interface, so there is nothing to intercept it. Without this the
+	// token path was stricter than the pull/push path and than this flag's own
+	// help text, which already says loopback needs no flag — so `agent run
+	// --master http://127.0.0.1:8080 --token …`, the ordinary same-host
+	// enrolment, failed where the --agent-id form on the same URL succeeded.
+	if !strings.HasPrefix(master, "https://") && !insecure && !masterIsLoopback(master) {
+		return 0, "", fmt.Errorf("agent: refusing to send an enrolment token to %q over plain HTTP "+
+			"that is not on loopback; pass --insecure-allow-http only for local development", master)
 	}
 	body, err := json.Marshal(map[string]string{
 		"token":  token,

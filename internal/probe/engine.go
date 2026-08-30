@@ -321,7 +321,7 @@ func (e *Engine) connFor(family string, dscp int) (*conn, error) {
 	if c, ok := e.conns[key]; ok {
 		return c, nil
 	}
-	c, err := openConn(family, dscp, &e.late)
+	c, err := openConn(family, dscp, &e.late, &e.panics)
 	if err != nil {
 		return nil, err
 	}

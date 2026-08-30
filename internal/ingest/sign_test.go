@@ -241,3 +241,31 @@ func TestParseCapsBodySize(t *testing.T) {
 		t.Error("accepted a body over the cap")
 	}
 }
+
+// M1 regression: an unauthenticated flood carrying a real agent's id but a
+// signature that does not verify must not spend that agent's rate budget or
+// burn its nonces. Before the fix, the per-agent token bucket was drained
+// before verification, so a stranger who guessed the id could silently reject
+// the genuine agent's signed submissions.
+func TestUnsignedFloodDoesNotStarveTheAgent(t *testing.T) {
+	agent, key := newAgent(t, 7, "ams")
+	_, wrongKey := newAgent(t, 8, "attacker") // valid key, wrong agent
+	now := time.Unix(1_756_400_000, 0)
+	v := verifierFor(agent)
+
+	// Flood far past the bucket size with junk signed by the wrong key but
+	// carrying the victim's id. Every one must be rejected...
+	for range burstSize * 5 {
+		s := parse(t, signedRequest(t, "POST", "/api/v1/ingest", agent.ID, wrongKey, []byte("junk"), now))
+		if _, err := v.Check(s, now); err == nil {
+			t.Fatal("a request with a non-verifying signature was accepted")
+		}
+	}
+
+	// ...and the genuine agent, signing correctly, must still get through — its
+	// bucket was never touched by the flood.
+	s := parse(t, signedRequest(t, "POST", "/api/v1/ingest", agent.ID, key, []byte("real"), now))
+	if _, err := v.Check(s, now); err != nil {
+		t.Fatalf("the genuine agent was rejected after an unauthenticated flood: %v", err)
+	}
+}

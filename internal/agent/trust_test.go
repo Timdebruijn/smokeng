@@ -107,3 +107,28 @@ func selfSigned(t *testing.T) ([]byte, tls.Certificate) {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
 		tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
+
+// M3: the loopback exemption must apply to the enrolment (--token) path too,
+// not only to the pull/push client. A token over a literal loopback address
+// never reaches an interface, so `agent run --master http://127.0.0.1 --token`
+// — the ordinary same-host enrolment — must not require --insecure-allow-http,
+// while a non-loopback plain-HTTP master must still be refused.
+func TestEnrolLoopbackExemption(t *testing.T) {
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A loopback master with no --insecure flag must get past the transport
+	// guard. It will then fail to connect (nothing is listening), which is a
+	// different error than the plain-HTTP refusal.
+	_, _, err = Enrol(context.Background(), "http://127.0.0.1:8080", "smk_x", key, false)
+	if err != nil && strings.Contains(err.Error(), "refusing to send an enrolment token") {
+		t.Fatalf("loopback enrolment was refused for being plain HTTP: %v", err)
+	}
+	// A non-loopback plain-HTTP master with no flag must still be refused
+	// before any token leaves.
+	_, _, err = Enrol(context.Background(), "http://smokeng.example.org", "smk_x", key, false)
+	if err == nil || !strings.Contains(err.Error(), "refusing to send an enrolment token") {
+		t.Fatalf("a non-loopback plain-HTTP master should refuse the token, got: %v", err)
+	}
+}

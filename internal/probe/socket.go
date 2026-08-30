@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/netip"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -59,6 +60,10 @@ type conn struct {
 
 	closed atomic.Bool
 	late   *atomic.Int64
+	// panics counts a panic contained inside a receive goroutine — the engine's
+	// own counter, shared so a bad packet shows up in the same metric as any
+	// other contained panic.
+	panics *atomic.Int64
 	strays atomic.Int64
 	wg     sync.WaitGroup
 
@@ -85,7 +90,7 @@ type pendingPing struct {
 	counter uint32
 }
 
-func openConn(family string, dscp int, late *atomic.Int64) (*conn, error) {
+func openConn(family string, dscp int, late, panics *atomic.Int64) (*conn, error) {
 	domain, proto := unix.AF_INET, unix.IPPROTO_ICMP
 	if family == "v6" {
 		domain, proto = unix.AF_INET6, unix.IPPROTO_ICMPV6
@@ -156,6 +161,7 @@ func openConn(family string, dscp int, late *atomic.Int64) (*conn, error) {
 		pending:   map[uint16]*pendingPing{},
 		byCounter: map[uint32]*pendingPing{},
 		late:      late,
+		panics:    panics,
 	}
 	if inode, ok := socketInode(fd); ok {
 		path := procNetPath(family, raw)
@@ -313,7 +319,27 @@ func (c *conn) recvLoop() {
 	}
 }
 
+// recoverReceive contains a panic to the single packet that caused it. The
+// receive goroutines parse untrusted input off the wire and the kernel error
+// queue, and this socket is shared by every target of its (family, DSCP) pair —
+// so a panic here would end the whole process and stop measurement for every
+// one of them. Dropping one packet is the proportionate outcome, and it is
+// counted in the same metric as any other contained panic. This holds no lock
+// when it runs, so recovering cannot leave a mutex held.
+func (c *conn) recoverReceive(what string) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	if c.panics != nil {
+		c.panics.Add(1)
+	}
+	log.Printf("probe: %s ICMP socket: %s panicked on a packet: %v\n%s",
+		c.family, what, r, debug.Stack())
+}
+
 func (c *conn) handlePacket(b []byte, rx time.Time, kernel bool) {
+	defer c.recoverReceive("reply parsing")
 	proto := protoICMPv4
 	if c.family == "v6" {
 		proto = protoICMPv6
@@ -411,6 +437,7 @@ func (c *conn) errQueueLoop() {
 // error queue returns the offending datagram — for a ping socket, our own
 // echo request — so its sequence number identifies the ping exactly.
 func (c *conn) handleICMPError(e *timestamp.ICMPError) {
+	defer c.recoverReceive("ICMP-error parsing")
 	proto := protoICMPv4
 	if c.family == "v6" {
 		proto = protoICMPv6

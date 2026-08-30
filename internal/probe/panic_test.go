@@ -85,3 +85,22 @@ func TestCollectorPanicDoesNotWedgeFinalize(t *testing.T) {
 			"which wedges the prober instead of crashing it")
 	}
 }
+
+// M2: a panic while parsing a packet off the wire or the error queue must be
+// contained and counted, not allowed to end the process. The receive socket is
+// shared by every target of its (family, DSCP) pair, so an uncontained panic
+// here would stop measurement for all of them — the "one probe takes down the
+// prober" outcome the design forbids, driven by untrusted network input.
+func TestRecoverReceiveContainsAPanic(t *testing.T) {
+	quietLog(t)
+	var panics atomic.Int64
+	c := &conn{family: "v4", panics: &panics}
+	func() {
+		defer c.recoverReceive("reply parsing")
+		panic("a malformed reply")
+	}()
+	if n := panics.Load(); n != 1 {
+		t.Fatalf("panics counter is %d, want 1 — a contained receive panic that is not counted "+
+			"is invisible", n)
+	}
+}

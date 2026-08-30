@@ -149,8 +149,18 @@ func (v *Verifier) Stats() (accepted, rejected int64) {
 var ErrRejected = errors.New("rejected")
 
 // Check verifies a parsed request and returns the agent it belongs to.
-// The order is fixed by the design: cheap and non-cryptographic checks first,
-// so a flood of junk cannot make the master do signature maths.
+//
+// Order matters, and it was wrong. The two checks that mutate per-agent state —
+// the rate-limit token bucket and the nonce cache — must run only after the
+// signature verifies, because the agent id and nonce come from the request and
+// are not proven to belong to the agent until then. Spending them before
+// verification let an unauthenticated caller who merely guessed an agent id (a
+// small integer) drain that agent's bucket at half a request a second, which
+// silently rejected the real agent's signed submissions — the graphs going
+// dark on demand. The cheap, stateless checks (known agent, enabled, clock
+// skew) still run first; shedding an unauthenticated flood before the signature
+// maths is the reverse proxy's job, not something to buy by keying a limiter on
+// an attacker-suppliable id.
 func (v *Verifier) Check(s Signed, now time.Time) (Agent, error) {
 	agent, err := v.check(s, now)
 	if err != nil {
@@ -169,20 +179,29 @@ func (v *Verifier) check(s Signed, now time.Time) (Agent, error) {
 	if !agent.Enabled {
 		return agent, fmt.Errorf("%w: agent %q is disabled", ErrRejected, agent.Name)
 	}
-	if !v.limits.allow(s.AgentID, now) {
-		return agent, fmt.Errorf("%w: agent %q is over its rate limit", ErrRejected, agent.Name)
-	}
+	// Stateless and cheap: reject a bad clock before doing crypto, but touch no
+	// per-agent state — this runs on unauthenticated input.
 	skew := now.Sub(time.Unix(s.Timestamp, 0))
 	if skew < -MaxSkew || skew > MaxSkew {
 		return agent, fmt.Errorf("%w: agent %q timestamp is %s away (check its clock)",
 			ErrRejected, agent.Name, skew.Round(time.Second))
 	}
-	if !v.nonces.remember(s.Nonce, now) {
-		return agent, fmt.Errorf("%w: agent %q reused a nonce", ErrRejected, agent.Name)
-	}
+	// The signature is the gate. Nothing below it may run on a request whose
+	// origin is not yet proven.
 	msg := []byte(CanonicalString(s.Method, s.Path, s.AgentID, s.Timestamp, s.Nonce, s.Body))
 	if !ed25519.Verify(agent.PubKey, msg, s.Signature) {
 		return agent, fmt.Errorf("%w: agent %q signature does not verify", ErrRejected, agent.Name)
+	}
+	// Now the request is provably from this agent: spend its nonce and its rate
+	// budget. The nonce cache still catches a replay (a second copy of a valid
+	// request verifies too, then finds its nonce already remembered), and the
+	// bucket still caps how fast a genuine agent may submit — but neither can be
+	// exhausted by anyone who cannot sign as this agent.
+	if !v.nonces.remember(s.Nonce, now) {
+		return agent, fmt.Errorf("%w: agent %q reused a nonce", ErrRejected, agent.Name)
+	}
+	if !v.limits.allow(s.AgentID, now) {
+		return agent, fmt.Errorf("%w: agent %q is over its rate limit", ErrRejected, agent.Name)
 	}
 	return agent, nil
 }
