@@ -79,6 +79,13 @@ smokeng serve --db smokeng.db --listen 127.0.0.1:8080
 Open <http://127.0.0.1:8080>. The first measurements appear after one interval; the smoke
 becomes readable after a few.
 
+![The overview: cards for series, firing alerts, worst loss and flagged measurements above
+a per-target list with sparklines, next to a panel of firing alerts and recent alert
+activity](images/overview.png)
+
+*The overview is the landing page: one row per series with its sparkline, median, p95 and
+loss, and the alert state alongside.*
+
 smokeng refuses to listen on a non-loopback address unless you either configure OIDC (see
 [Authentication](authentication.md)) or pass `--i-know-this-is-unauthenticated`. That is
 deliberate: an unauthenticated instance on `0.0.0.0` lets anyone edit your targets.

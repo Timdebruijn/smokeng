@@ -5,8 +5,8 @@ rebuilt from scratch. The one thing that makes it worth existing: it keeps the *
 distribution per measurement interval, forever, at full resolution**, and renders it as
 actual density — no rollup, no consolidation, no single-value-per-check.
 
-![Three targets in the smokeng UI: the density smoke, the pooled median line and the loss
-rail, stacked on a shared time axis](docs/images/smokeng.png)
+![The smokeng graphs view: a target's RTT distribution drawn as density smoke, with the
+pooled median line and the loss rail beneath it on a shared time axis](docs/images/smokeng.png)
 
 **Status: released, [v0.9.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.9.0).**
 The design is agreed and frozen in
