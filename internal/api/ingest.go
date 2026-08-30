@@ -164,15 +164,22 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 			// tree, the UI and the exported TOML all said the target was
 			// measured some other way — the same measurement labelled two
 			// different things depending on where you read it.
-			"probe_type":  res.ProbeType.Effective,
-			"probe_port":  res.ProbePort.Effective,
-			"dns_query":   res.DNSQuery.Effective,
-			"dns_rr_type": res.DNSRRType.Effective,
+			"probe_type":      res.ProbeType.Effective,
+			"probe_port":      res.ProbePort.Effective,
+			"dns_query":       res.DNSQuery.Effective,
+			"dns_rr_type":     res.DNSRRType.Effective,
 			"http_path":       res.HTTPPath.Effective,
 			"tls_skip_verify": res.TLSSkipVerify.Effective,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"targets": out})
+	// The CAs travel with the assignments rather than on an endpoint of their
+	// own: an agent that has its targets but not the trust to verify them
+	// would measure a wall of loss until its next poll.
+	cas := make([]string, 0, len(s.agentCAs))
+	for _, pem := range s.agentCAs {
+		cas = append(cas, string(pem))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"targets": out, "ca_certificates": cas})
 }
 
 // assignedTargets is the set a given agent may submit for.

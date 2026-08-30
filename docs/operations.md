@@ -75,10 +75,46 @@ It does not have to be. `smokeng agent run` is the probing engine without the UI
 nothing about it requires the far end to be far away — pointed at loopback it is a
 separate prober on the same machine as the master. Reasons to want that:
 
+- **the tail of the distribution gets cleaner** for the userspace-timed probe types —
+  measured, see below;
 - restart or upgrade the UI without interrupting measurement, and the reverse;
 - keep the unprivileged-ICMP permission on the half that needs it, off the half that
   serves a web page;
 - contain a prober that is misbehaving without taking the API down with it.
+
+### What it does to accuracy
+
+`icmp` on Linux is **not affected**, and this is structural rather than a measurement:
+the timestamps are taken by the kernel as the packet crosses the wire, so nothing
+userspace does — GC, an expensive Arrow query, another process — can move them. That
+guarantee is the reason kernel timestamping is there.
+
+Every other type is timed around a userspace call, so its RTT includes whatever delayed
+the goroutine between the reply arriving and `time.Now()` running. Sharing a process with
+an allocating HTTP and Arrow workload is exactly the thing that delays it.
+
+TCP-connect against a listener on loopback, so the network contributes almost nothing and
+what is left is the measurement overhead. The machine was equally busy in both columns;
+only the prober's location differs:
+
+| | prober in the master process | prober as its own process |
+| --- | --- | --- |
+| median | 311 µs | 276 µs |
+| p95 | 1128 µs | **417 µs** |
+| p99 | 3431 µs | **831 µs** |
+| max | 11 160 µs | 5825 µs |
+| spread within an interval | 529 µs | **304 µs** |
+
+The median barely moves; the tail improves by 3–4×. That is the signature of GC pauses and
+scheduler contention rather than of anything on the network — and on a tool whose whole
+premise is keeping the distribution, an inflated p99 of your own making is smoke that is
+not there.
+
+Treat this as indicative, not as a benchmark: one machine, macOS, roughly 500 samples per
+column, under load applied deliberately hard. It says the effect is real and which
+direction it goes, not what it will be on your hardware. An earlier run that varied load
+*and* left the machine idle in one arm measured the opposite sign, because CPU frequency
+scaling swamped everything — which is its own lesson about this kind of comparison.
 
 The cost is real and worth stating: measurements travel over signed HTTP instead of going
 straight to the writer, there are two units to run and upgrade, and there are two ways to

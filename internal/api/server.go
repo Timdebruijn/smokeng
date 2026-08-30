@@ -59,6 +59,10 @@ type server struct {
 	probe       ProbeStats
 	ingest      IngestStats
 	version     string
+	// agentCAs are the PEM blocks this master was given on the command line,
+	// handed down to agents so a CA rotates in one place. Never anything an
+	// agent supplied: a master relays its own operator's decision.
+	agentCAs [][]byte
 }
 
 // Options are the parts of the server that are optional or supplied later.
@@ -86,6 +90,10 @@ type Options struct {
 	// Empty means viewer, which is what smokeng did before grants existed.
 	// Set it to "none" once grants describe who may see what.
 	DefaultRole auth.Role
+	// AgentCAs are the CA certificates agents should trust when probing
+	// https targets, as PEM. Handing them down means a rotation happens on
+	// the master rather than on every agent host.
+	AgentCAs [][]byte
 }
 
 // New builds the HTTP handler: API routes plus the embedded frontend.
@@ -96,7 +104,7 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	authenticator := opts.Auth
 	s := &server{
 		st: st, alerts: opts.Alerts, auth: authenticator, agents: st,
-		probe: opts.Probe, version: opts.Version,
+		probe: opts.Probe, version: opts.Version, agentCAs: opts.AgentCAs,
 	}
 	// Enrolment is optional in the same way the local prober is: a store that
 	// cannot mint tokens simply does not get the routes, rather than forcing

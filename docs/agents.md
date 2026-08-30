@@ -162,15 +162,35 @@ The agent verifies the **master's** certificate the way any HTTP client does, so
 behind an internally-issued certificate needs that CA in the agent host's system trust
 store.
 
-Separately, an agent measuring an `https` **target** verifies that target's certificate
-itself, and needs the same `--tls-ca-file` the master was given:
+Separately, an agent measuring an `https` **target** verifies that target's certificate.
+Those CAs **come down with the assignments**, so `--tls-ca-file` on the master is the only
+place a private root has to be placed, and rotating it reaches every agent within a poll.
 
-```bash
-smokeng agent run --master https://smokeng.example.org --agent-id 3 \
-    --tls-ca-file /etc/ssl/certs/gemeentex-root.pem
+The set is replaced on each poll rather than added to, because withdrawing a CA has to
+reach the agents too — a pool that only ever grew would keep trusting a root long after it
+was retired. Anything given to the agent with its own `--tls-ca-file` survives regardless:
+a local decision is not the master's to revoke.
+
+Every certificate an agent accepts this way is logged with its subject and SHA-256
+fingerprint when the set changes, so what an agent was told to trust is auditable after
+the fact rather than silent:
+
+```
+probe: trusting CA from master: CN=GemeenteX Root (sha256:9f2c…)
 ```
 
-The master does not distribute CAs. It could — they are public certificates, not secrets —
-but an agent that trusted whatever the master sent would have a wider relationship with it
-than the design gives it anywhere else: assignments are pure data, never anything that
-changes what the agent trusts. See [Configuration](configuration.md#internal-certificates).
+`--no-remote-cas` refuses them, for an operator who would rather place every trust
+decision on the agent host itself.
+
+### Why this is narrower than it sounds
+
+These CAs reach https **probes** and nothing else. They are never used for the agent's own
+connection to the master — that verifies against the host's trust store — so a master
+cannot use this to vouch for itself. There is a test that pins the separation.
+
+What a compromised master gains is correspondingly small. It could make an agent report a
+green measurement for a target that is being intercepted; but it already decides what
+address that target names, so it could point the target anywhere regardless. The trust it
+gains is over endpoints whose definition it already controls.
+
+See [Configuration](configuration.md#internal-certificates).

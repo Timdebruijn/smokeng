@@ -1,25 +1,69 @@
 package probe
 
 import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
-// httpsServer starts a TLS server with a self-signed certificate — the shape
-// of every internal service behind a private PKI, which is the case all of
-// this exists for.
+// httpsServer starts a TLS server with a freshly minted self-signed
+// certificate — the shape of every internal service behind a private PKI,
+// which is the case all of this exists for.
+//
+// The certificate is generated here rather than taken from
+// httptest.NewTLSServer, which hands every server it makes the same built-in
+// one. Two servers sharing a certificate cannot distinguish "this CA is
+// trusted" from "some CA is trusted", so a test written against it would pass
+// whether or not the pool did anything.
 func httpsServer(t *testing.T) (*httptest.Server, TargetSpec) {
 	t.Helper()
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "smokeng-test-" + serial.String()[:8]},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{
+		Certificate: [][]byte{der},
+		PrivateKey:  key,
+	}}}
+	srv.StartTLS()
 	t.Cleanup(srv.Close)
-	spec := userspaceSpec(t, "https", portOf(t, srv))
-	return srv, spec
+	return srv, userspaceSpec(t, "https", portOf(t, srv))
 }
 
 // trustOnly points the probe pool at this server's certificate and restores it
@@ -27,17 +71,19 @@ func httpsServer(t *testing.T) (*httptest.Server, TargetSpec) {
 // silently change what every later test verifies against.
 func trustOnly(t *testing.T, srv *httptest.Server) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "ca.pem")
-	der := srv.Certificate().Raw
-	if err := os.WriteFile(path, pem.EncodeToMemory(
-		&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	before := trustedCAs.Load()
-	t.Cleanup(func() { trustedCAs.Store(before) })
-	if err := TrustCAFiles([]string{path}); err != nil {
+	t.Cleanup(resetCAs)
+	if err := TrustCAFiles([]string{pemFile(t, srv)}); err != nil {
 		t.Fatalf("TrustCAFiles: %v", err)
 	}
+}
+
+// resetCAs clears both sources. The pool is process-wide, so a test that left
+// it set would silently change what every later test verifies against.
+func resetCAs() {
+	caMu.Lock()
+	defer caMu.Unlock()
+	localCAs, remoteCAs = nil, nil
+	_ = rebuildLocked()
 }
 
 // The default has to be that an unverifiable certificate is not quietly
@@ -88,19 +134,8 @@ func TestTrustCAFilesAccumulate(t *testing.T) {
 	a, specA := httpsServer(t)
 	b, specB := httpsServer(t)
 
-	dir := t.TempDir()
-	var paths []string
-	for i, srv := range []*httptest.Server{a, b} {
-		p := filepath.Join(dir, string(rune('a'+i))+".pem")
-		if err := os.WriteFile(p, pem.EncodeToMemory(
-			&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		paths = append(paths, p)
-	}
-	before := trustedCAs.Load()
-	t.Cleanup(func() { trustedCAs.Store(before) })
-	if err := TrustCAFiles(paths); err != nil {
+	t.Cleanup(resetCAs)
+	if err := TrustCAFiles([]string{pemFile(t, a), pemFile(t, b)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -119,12 +154,80 @@ func TestTrustCAFilesRejectsAFileWithNoCertificates(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not a certificate\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before := trustedCAs.Load()
-	t.Cleanup(func() { trustedCAs.Store(before) })
+	t.Cleanup(resetCAs)
 	if err := TrustCAFiles([]string{path}); err == nil {
 		t.Fatal("a file with no PEM certificates was accepted")
 	}
 	if err := TrustCAFiles([]string{filepath.Join(t.TempDir(), "absent.pem")}); err == nil {
 		t.Fatal("a missing CA file was accepted")
 	}
+}
+
+// The master's CAs replace what the master supplied before, and never touch
+// what this host was given locally. Without replacement, withdrawing a CA on
+// the master could not reach the agents — the pool would keep trusting a root
+// long after it was retired.
+func TestRemoteCAsReplaceButLocalOnesSurvive(t *testing.T) {
+	quietLog(t)
+	local, localSpec := httpsServer(t)
+	remote, remoteSpec := httpsServer(t)
+
+	t.Cleanup(resetCAs)
+	resetCAs()
+
+	if err := TrustCAFiles([]string{pemFile(t, local)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := TrustRemoteCAPEMs([][]byte{pemBytes(local), pemBytes(remote)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := runOne(t, remoteSpec); got.received != 1 {
+		t.Fatalf("a CA from the master was not trusted: %+v", got)
+	}
+
+	// The master withdraws everything. Its own CA goes; the local one stays.
+	if err := TrustRemoteCAPEMs(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := runOne(t, remoteSpec); got.received != 0 {
+		t.Fatalf("a CA the master withdrew is still trusted: %+v", got)
+	}
+	if got := runOne(t, localSpec); got.received != 1 {
+		t.Fatalf("the master's withdrawal revoked a locally-configured CA: %+v", got)
+	}
+}
+
+// LocalCAPEMs is what a master hands down. It must never include what the
+// master itself was handed, or one compromised master would propagate its
+// trust decisions through every master that relayed for it.
+func TestLocalCAPEMsExcludesRemoteOnes(t *testing.T) {
+	quietLog(t)
+	local, _ := httpsServer(t)
+	remote, _ := httpsServer(t)
+	t.Cleanup(resetCAs)
+
+	if err := TrustCAFiles([]string{pemFile(t, local)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := TrustRemoteCAPEMs([][]byte{pemBytes(remote)}); err != nil {
+		t.Fatal(err)
+	}
+	got := LocalCAPEMs()
+	if len(got) != 1 || !bytes.Equal(got[0], pemBytes(local)) {
+		t.Fatalf("LocalCAPEMs returned %d block(s); it must hand on only what this host "+
+			"was configured with", len(got))
+	}
+}
+
+func pemBytes(srv *httptest.Server) []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+}
+
+func pemFile(t *testing.T, srv *httptest.Server) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(p, pemBytes(srv), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

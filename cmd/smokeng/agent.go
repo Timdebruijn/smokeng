@@ -234,8 +234,11 @@ func agentRun(args []string) error {
 			"A loopback master needs no flag: that traffic never leaves the host")
 	tlsCAFiles := fs.String("tls-ca-file", "",
 		"comma-separated PEM files whose certificates https probes trust, in addition "+
-			"to the system roots. An agent verifies certificates itself, so it needs "+
-			"the same CA the master was given — the master does not supply it")
+			"to the system roots and to whatever the master hands down")
+	noRemoteCAs := fs.Bool("no-remote-cas", false,
+		"refuse the CA certificates the master supplies. They only ever reach https "+
+			"probes, never this agent's own connection to the master, but this puts "+
+			"every trust decision on this host")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -291,6 +294,7 @@ func agentRun(args []string) error {
 	a, err := agent.New(agent.Config{
 		Master: *master, AgentID: *agentID, KeyPath: *keyPath,
 		DBPath: *dbPath, Insecure: *insecure, Version: version,
+		NoRemoteCAs: *noRemoteCAs,
 	}, key, st)
 	if err != nil {
 		return err

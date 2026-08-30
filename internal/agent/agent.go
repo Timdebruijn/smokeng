@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/timdebruijn/smokeng/internal/ingest"
+	"github.com/timdebruijn/smokeng/internal/probe"
 	"github.com/timdebruijn/smokeng/internal/store"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
@@ -38,6 +39,11 @@ type Config struct {
 	KeyPath  string
 	DBPath   string
 	Insecure bool // permit plain HTTP, for local development only
+	// NoRemoteCAs refuses the CA certificates the master hands down. They only
+	// ever reach https probes, never this agent's own connection to the
+	// master — but an operator who would rather place every trust decision on
+	// the agent host itself can say so.
+	NoRemoteCAs bool
 	// Version is reported to the master so an operator can see which agents
 	// still predate a fix. It is sent unsigned, on a signed request: it says
 	// what this agent claims to be, not what it has proven.
@@ -182,9 +188,23 @@ func (a *Agent) pull(ctx context.Context) error {
 	}
 	var body struct {
 		Targets []assignment `json:"targets"`
+		CAs     []string     `json:"ca_certificates"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return err
+	}
+	// Applied before mirroring, so an assignment and the trust needed to
+	// verify it arrive together rather than a poll apart.
+	if !a.cfg.NoRemoteCAs {
+		pems := make([][]byte, 0, len(body.CAs))
+		for _, c := range body.CAs {
+			pems = append(pems, []byte(c))
+		}
+		if err := probe.TrustRemoteCAPEMs(pems); err != nil {
+			// Not fatal: measuring with the trust an agent already had beats
+			// not measuring, and the failure is named rather than swallowed.
+			log.Printf("agent: apply CAs from master: %v", err)
+		}
 	}
 	return a.mirror(ctx, body.Targets)
 }

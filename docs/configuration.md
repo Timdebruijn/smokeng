@@ -202,15 +202,15 @@ They are added to the system roots rather than replacing them, so public endpoin
 working — a file that parses to no certificate at all is an error rather than a silent
 no-op, because the intent was to trust something.
 
-Two things follow from it being a flag rather than a target setting. It applies to the
-whole instance, which is fine: trusting a CA is not the same as measuring anything through
-it. And **a remote agent needs the same file deployed to it** — the agent verifies
-certificates itself, and the master deliberately does not hand out CAs, because an agent
-trusting whatever the master sends would be a wider relationship than it needs.
+It is a flag rather than a target setting because a CA is a property of the deployment,
+not of one measurement — and trusting a CA is not the same as measuring anything through
+it.
 
-```bash
-smokeng agent run --master https://… --agent-id 3 --tls-ca-file /etc/ssl/certs/gemeentex-root.pem
-```
+**Remote agents get these CAs from the master**, delivered with their assignments, so a
+root is placed in one file and a rotation reaches every agent within a poll. They apply to
+https probes only, never to an agent's own connection to its master. An agent can add its
+own with `--tls-ca-file`, or refuse the master's with `--no-remote-cas`; see
+[Remote agents](agents.md#certificates-the-agent-has-to-trust).
 
 **Or turn verification off for that target.**
 

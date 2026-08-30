@@ -328,6 +328,7 @@ func serve(args []string) error {
 		Handler: api.New(st, api.Options{
 			Alerts: alertViewOrNil(alerts), Auth: authOrNil(authenticator),
 			Probe: eng, Version: version, MetricsPublic: *metricsPublic,
+			AgentCAs:    probe.LocalCAPEMs(),
 			DefaultRole: auth.Role(*defaultRole), ExternalURL: *externalURL,
 			TrustedProxies: trusted,
 		}, dist),

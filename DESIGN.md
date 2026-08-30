@@ -28,6 +28,22 @@ the half that serves web pages; it costs a signed HTTP round trip where there wa
 writer, and a second unit to operate. One process stays the default because it is the
 right shape for one host.
 
+It also buys accuracy, but only for the types that need it. `icmp` is unaffected by
+construction — kernel timestamps are taken as the packet crosses the wire, so no amount of
+userspace work can move them, which is the whole reason §5.2 takes them there. The
+userspace-timed types include scheduler delay in the RTT by definition, and a measured
+comparison (docs/operations.md) put their p99 3–4× lower in a separate process under load,
+with the median almost unchanged. That is the signature of GC and scheduler contention, and
+on an instrument built to keep the distribution, a tail inflated by the prober itself is
+the one kind of error the design cannot tolerate.
+
+**A separate prober *binary* was considered and rejected.** Measured, it saves 2.7 MB of
+18 — modernc.org/sqlite (~4.3 MB) and Arrow (~2.4 MB) dominate, and the agent needs both:
+it buffers to SQLite and speaks Arrow ingest. The embedded frontend is 564 KB. Unused code
+costs disk, not measurement: it never executes, so it cannot contend for anything. The
+separation worth having is the process, not the artifact — and a second artifact would add
+a version-skew axis for a 15% download.
+
 What splitting processes does *not* fix is a panic taking everything down, since that
 would only move it. Panics are contained where they happen instead: on the per-target loop
 and on the per-probe goroutines, which hold no shared lock — narrow on purpose, because a
@@ -198,9 +214,17 @@ The asymmetry is the point. The CA is a deployment fact, so it is a flag: a PEM 
 target tree would mean shipping certificates through the API and inheriting them down the
 tree. Skipping verification is a decision about one endpoint, so it is a setting, and there
 is deliberately **no instance-wide switch** for it — one flag that quietly weakened every
-https target at once is not a decision anyone reviewed. The cost of the flag is that a
-remote agent needs the same CA file deployed to it; the master does not distribute CAs,
-because an agent trusting whatever the master sends is a wider relationship than it needs.
+https target at once is not a decision anyone reviewed.
+
+**Agents receive the master's CAs with their assignments** (§9), replaced rather than
+accumulated so a withdrawal reaches them, and logged with subject and fingerprint on every
+change. This is the one place assignments carry something other than "what to measure", so
+it is bounded explicitly: the pool reaches https probes only and never an agent's own
+connection to its master, which verifies against the host's trust store. A master therefore
+cannot use it to vouch for itself, and there is a test in internal/agent that pins the
+separation. The residual capability a compromised master gains — making an agent report a
+green measurement for an intercepted endpoint — is over endpoints whose address it already
+dictates. `--no-remote-cas` declines the whole arrangement.
 
 **`tcp` has no default port and none is guessed.** A `tcp` target with no `probe_port`
 resolved is refused by `validateSpec` before it is ever scheduled, named in the log once,

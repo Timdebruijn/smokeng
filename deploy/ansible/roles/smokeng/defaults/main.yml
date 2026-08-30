@@ -44,9 +44,9 @@ smokeng_oidc_admin_value: ""
 # trust, on top of the system roots — an internal PKI, most often. This keeps
 # verification on, which a target's tls_skip_verify turns off; prefer this.
 #
-# A remote agent verifies certificates itself and the master does not hand it
-# the CA, so an agent measuring an internally-signed target needs the same file
-# deployed to it.
+# Remote agents receive these with their assignments, so this file is the only
+# place a private root has to be placed and a rotation reaches every agent
+# within a poll.
 smokeng_tls_ca_files: ""
 
 # Run the prober as its own process next to the master, instead of inside it.
