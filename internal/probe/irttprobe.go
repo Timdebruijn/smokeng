@@ -108,6 +108,15 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 			}
 			continue
 		}
+		// A negative round trip is an irtt anomaly, not our clock stepping.
+		// recordRoundTrip synthesises txUser = now - rtt, so a negative rtt puts
+		// txUser in the future and finalize would drop the sample as a clock
+		// step — correct to drop, wrong to blame the local clock. Treat it as a
+		// lost reply instead: no sample, no misleading flag.
+		if rt.RTT() < 0 {
+			col.markSent(i, 0, now)
+			continue
+		}
 		col.recordRoundTrip(i, rt.RTT())
 	}
 	// A send error leaves RoundTrips short of Pings; the tail never went out, so

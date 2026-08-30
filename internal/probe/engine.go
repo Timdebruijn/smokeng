@@ -19,6 +19,8 @@ import (
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
+var errShuttingDown = errors.New("probe: engine is shutting down")
+
 const (
 	specRefresh    = 30 * time.Second
 	writerFlush    = time.Second
@@ -65,6 +67,9 @@ type Engine struct {
 	// warned remembers the last configuration problem reported per target, so
 	// a misconfiguration is named once instead of twice a minute forever.
 	warned map[int64]string
+	// shuttingDown stops connFor opening a socket the teardown snapshot has
+	// already moved past, which would leak it.
+	shuttingDown bool
 }
 
 type connKey struct {
@@ -118,6 +123,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			// a closing socket), then the sockets, then the writer — which
 			// drains and flushes every measurement the loops produced.
 			e.mu.Lock()
+			e.shuttingDown = true
 			for _, rt := range e.running {
 				rt.cancel()
 			}
@@ -321,6 +327,14 @@ func (e *Engine) connFor(family string, dscp int) (*conn, error) {
 	if c, ok := e.conns[key]; ok {
 		return c, nil
 	}
+	// Once teardown has snapshotted the conn map, a socket opened here would go
+	// into the fresh map the snapshot no longer covers and never be closed — a
+	// leak that only bites at shutdown, but a leak. A target goroutine can
+	// reach this between its last sleepUntil and returning, so decline rather
+	// than open.
+	if e.shuttingDown {
+		return nil, errShuttingDown
+	}
 	c, err := openConn(family, dscp, &e.late, &e.panics)
 	if err != nil {
 		return nil, err
@@ -379,6 +393,12 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 		if spec.ProbeType == "" || spec.ProbeType == "icmp" {
 			c, err = e.connFor(spec.Family, spec.DSCP)
 			if err != nil {
+				// Shutdown is the ordinary way to get here, not a fault: the
+				// context is already cancelled, so return quietly rather than
+				// log a socket error on every target as the process exits.
+				if errors.Is(err, errShuttingDown) {
+					return
+				}
 				log.Printf("probe: target %d: %v", spec.TargetID, err)
 				if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
 					return

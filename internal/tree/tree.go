@@ -134,6 +134,15 @@ func (t *Target) Validate() error {
 	if s.TimeoutMS != nil && *s.TimeoutMS <= 0 {
 		return fmt.Errorf("tree: timeout_ms must be positive")
 	}
+	// A ceiling as well as a floor: the timeout is added to the bucket end to
+	// decide when a measurement finalizes, so an absurd value delays the whole
+	// series' data by that long. Ten minutes is far past any real reply time
+	// and still bounds the pathology. A timeout longer than the interval is a
+	// separate concern the engine handles per bucket; this only rejects the
+	// clearly-wrong.
+	if s.TimeoutMS != nil && *s.TimeoutMS > 600_000 {
+		return fmt.Errorf("tree: timeout_ms must be at most 600000 (10 minutes)")
+	}
 	// The ICMP payload carries a 4-byte magic and an 8-byte token.
 	if s.PacketSize != nil && (*s.PacketSize < 12 || *s.PacketSize > 65_000) {
 		return fmt.Errorf("tree: packet_size must be between 12 and 65000 bytes")

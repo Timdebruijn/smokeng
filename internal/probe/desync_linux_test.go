@@ -20,7 +20,7 @@ import (
 // is that byCounter takes no new entries after the latch.
 func TestKernelTXAbandonedAfterDesync(t *testing.T) {
 	var late atomic.Int64
-	c, err := openConn("v4", 0, &late)
+	c, err := openConn("v4", 0, &late, new(atomic.Int64))
 	if err != nil {
 		t.Skipf("datagram ICMP socket not permitted (see net.ipv4.ping_group_range): %v", err)
 	}

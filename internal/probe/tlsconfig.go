@@ -95,8 +95,20 @@ func TrustRemoteCAPEMs(pems [][]byte) error {
 	if len(pems) == 0 && len(remoteCAs) > 0 {
 		log.Printf("probe: the master withdrew every CA it had supplied")
 	}
+	// Rebuild against the new set before recording it, and record it only if
+	// the rebuild succeeds. Assigning first meant that a rebuild failure (a
+	// system-pool read error, say) left remoteCAs claiming the new bytes while
+	// the pool still held the old — so the next identical push short-circuited
+	// at samePEMs and the pool was never reconciled, running indefinitely on
+	// the wrong set with the audit log saying otherwise. Validate-then-commit,
+	// as TrustCAFiles already does.
+	prev := remoteCAs
 	remoteCAs = pems
-	return rebuildLocked()
+	if err := rebuildLocked(); err != nil {
+		remoteCAs = prev
+		return err
+	}
+	return nil
 }
 
 // rebuildLocked composes the pool from the system roots plus both sources.

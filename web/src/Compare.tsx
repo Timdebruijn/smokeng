@@ -85,6 +85,12 @@ export default function Compare({
   // the backing store keeps its old pixel size and the browser stretches a
   // stale bitmap. Plot.tsx does exactly this; Compare must too.
   const [boxW, setBoxW] = useState(0)
+  // The axis reads --dim/--border via getComputedStyle at draw time, so a
+  // change to the accessibility contrast or colour-blind setting — which
+  // rewrites those tokens on the root — leaves the gridlines their old colour
+  // until the next data refresh. Watch the root's a11y attributes and redraw
+  // when they change, so the toggle takes effect at once even while paused.
+  const [theme, setTheme] = useState(0)
 
   const keys = useMemo(() => series.map((s) => s.key).join('|'), [series])
 
@@ -121,7 +127,16 @@ export default function Compare({
     })
     ro.observe(canvas)
     setBoxW(canvas.clientWidth)
-    return () => ro.disconnect()
+
+    const mo = new MutationObserver(() => setTheme((t) => t + 1))
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-contrast', 'data-cb', 'data-theme'],
+    })
+    return () => {
+      ro.disconnect()
+      mo.disconnect()
+    }
   }, [])
 
   useEffect(() => {
@@ -225,7 +240,7 @@ export default function Compare({
       }
       ctx.stroke()
     })
-  }, [data, series, from, to, logScale, boxW])
+  }, [data, series, from, to, logScale, boxW, theme])
 
   return (
     <div className="card compare">

@@ -410,6 +410,14 @@ func (c *conn) errQueueLoop() {
 	defer tick.Stop()
 	for !c.closed.Load() {
 		<-tick.C
+		// Re-check after the tick: close() may have run and closed the fd
+		// during the wait, and reading a closed (possibly reused) fd would
+		// query the wrong socket's error queue for one tick. recvLoop is safe
+		// without this because a blocked recvmsg returns EBADF, but this loop
+		// polls, so it must look.
+		if c.closed.Load() {
+			return
+		}
 		entries, err := timestamp.ReadErrQueue(c.fd)
 		if err != nil {
 			continue

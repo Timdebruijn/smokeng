@@ -496,10 +496,12 @@ function SettingRow({
   onSet: (v: number | string | boolean | null) => Promise<boolean>
 }) {
   const isLocal = value.local !== null
-  // A number whose minimum is 1 cannot legitimately be 0, so 0 there means
-  // "nobody set one" and is shown as empty. Printing "Port: 0" would name a
-  // port that does not exist and hide the fact that the type's default applies.
-  const shown = def.kind === 'number' && def.min === 1 && value.effective === 0 ? '' : String(value.effective)
+  // A setting no node in the tree sets is shown as empty rather than as its
+  // zero value — printing "Port: 0" would name a port that does not exist and
+  // hide that the type's default applies. isUnset is the one authority on that
+  // question (it reads the server's provenance), so the display and the "not
+  // set anywhere" chip below cannot drift apart.
+  const shown = isUnset(value) ? '' : String(value.effective)
   const [draft, setDraft] = useState(shown)
   const [problem, setProblem] = useState<string | null>(null)
   useEffect(() => {
