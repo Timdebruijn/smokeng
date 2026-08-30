@@ -176,8 +176,8 @@ Six types, all built:
 
 | Type | What it times | Why it earns its place |
 | --- | --- | --- |
-| `icmp` | Echo request to reply | The baseline, and the only one the kernel can timestamp |
-| `dns` | Query sent to answer received | A resolver going slow looks like a healthy network on ICMP |
+| `icmp` | Echo request to reply | The baseline, and kernel-timestamped |
+| `dns` | Query sent to answer received | A resolver going slow looks like a healthy network on ICMP; kernel-timestamped |
 | `tcp` | SYN to the handshake completing | Sees firewalls, SYN drops and a port closing, which ICMP cannot |
 | `http` / `https` | Request to response headers | Service latency including TLS, for the thing users actually wait on |
 | `irtt` | A UDP session against `irtt server` | Ordinary UDP: not control-plane rate-limited like ICMP, and never answered by a middlebox |
@@ -193,10 +193,17 @@ end paces the train and reports every packet, so the engine calls it once per in
 rather than once per probe. It still honours `probe_mode` — switching a target between
 `icmp` and `irtt` changes what the packets are, not when they leave.
 
-**Only `icmp` can be kernel-timestamped.** Everything else is timed around a userspace
-call and carries `FlagUserspaceTX|FlagUserspaceRX` unconditionally (§5.2). This is the
-flag doing exactly its job: a band widened by a busy prober must not be readable as a slow
-service.
+**`icmp` and `dns` are kernel-timestamped; the rest are not.** dns runs on a socket of our
+own rather than the library's, precisely so SO_TIMESTAMPING can be set on it — a resolver's
+latency deserves the same standard as a ping's. `tcp`, `http`, `https` and `irtt` carry
+`FlagUserspaceTX|FlagUserspaceRX` unconditionally (§5.2), and cannot be fixed the same way:
+their handshakes complete inside the kernel and userspace only observes the call returning,
+so there is no packet of ours left to stamp.
+
+The gap is measured, on a two-core Debian VM under load from the instance's own API, as
+spread within an interval — the width of the band the graph draws. icmp 8 µs idle and 8 µs
+loaded; dns 46 µs and 41 µs; tcp 139 µs and 1764 µs. The kernel-stamped types do not move
+at all. That is the whole argument for taking the timestamp in the kernel, in one table.
 
 **Two failure modes are recorded as loss rather than as a sample**, because the alternative
 draws a healthy band over an outage. An HTTP response of 400 or above, and a refused TCP

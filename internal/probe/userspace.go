@@ -7,13 +7,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Helpers shared by the probe types that are timed around a userspace call
-// rather than by the kernel: dns, tcp, http, https and irtt.
+// Helpers shared by the probe types that do not use the shared icmp socket:
+// dns, tcp, http, https and irtt.
 //
-// None of them can be kernel-timestamped, so finalize flags every measurement
-// they produce as userspace on both sides (DESIGN.md §5.2). That is not a
-// detail to gloss over: a band widened by a busy prober must never be
-// readable as a slow service.
+// Of these only dns is kernel-timestamped, on a socket of its own (see
+// dnssocket.go). The others are timed around a userspace call and cannot be
+// otherwise — a tcp or tls handshake completes inside the kernel and userspace
+// only sees the call return — so finalize flags every measurement they produce
+// as userspace on both sides (DESIGN.md §5.2). That is not a detail to gloss
+// over: a band widened by a busy prober must never be readable as a slow
+// service.
 
 // tcpNetwork pins the dial to one address family. The address is already
 // resolved to a literal of the right family, so "tcp" would work — but naming

@@ -233,10 +233,29 @@ anybody reviewed.
 
 ### Timing accuracy
 
-Only `icmp` can be kernel-timestamped. Every other type is timed around a userspace call,
-so every measurement they produce carries the `userspace TX/RX` quality flag and is
-labelled as such on the graph. That is not a defect being hidden — it is the reason the
-flag exists. A band widened by a busy prober must never be readable as a slow service.
+`icmp` and `dns` are kernel-timestamped, so what they report is the network rather than
+the network plus whatever delayed the prober. `tcp`, `http`, `https` and `irtt` are timed
+around a userspace call and carry the `userspace TX/RX` quality flag on every measurement.
+That flag is not a defect being hidden; it is the reason the flag exists. A band widened
+by a busy prober must never be readable as a slow service.
+
+The difference is worth a number. Measured on a two-core Debian VM, loopback, with the
+machine under heavy load from the instance's own API — spread within an interval, which is
+the width of the band the graph draws:
+
+| | idle | under load |
+| --- | --- | --- |
+| `icmp` (kernel) | 8 µs | 8 µs |
+| `dns` (kernel) | 46 µs | 41 µs |
+| `tcp` (userspace) | 139 µs | **1764 µs** |
+
+The kernel-stamped types do not move. The userspace-timed one widens thirteenfold, and
+none of that is the network. If that matters for your `tcp`/`http` targets, run the prober
+as its own process — see [Operations](operations.md#running-the-prober-as-its-own-process).
+
+`tcp`, `http` and `https` cannot be fixed this way: their handshakes complete inside the
+kernel and userspace only observes the call returning, so there is no packet for us to
+stamp.
 
 ## Presentation and lifecycle
 

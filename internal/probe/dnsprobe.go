@@ -2,21 +2,17 @@ package probe
 
 import (
 	"context"
+	"log"
 	"net"
 	"net/netip"
 	"strconv"
 	"strings"
-	"time"
 
 	"codeberg.org/miekg/dns"
 )
 
 // defaultDNSPort is where a resolver listens unless the target says otherwise.
 const defaultDNSPort = 53
-
-// One client for every DNS probe: it holds no per-query state, and the
-// alternative is building one per probe several times a second.
-var dnsClient = dns.NewClient()
 
 // probeDNS times one query against the target, which is the resolver being
 // measured — not the name being asked about.
@@ -25,10 +21,11 @@ var dnsClient = dns.NewClient()
 // while every lookup behind it crawls. That is the whole reason this type
 // exists, and why it times the query rather than the host.
 //
-// The RTT is taken around a userspace call, so it carries the scheduler's
-// jitter in exactly the way DESIGN.md §5.2 describes. finalize flags it as
-// userspace on both sides because no kernel timestamp is ever recorded here —
-// a band widened by a busy prober must not be readable as a slow resolver.
+// The query runs on a socket of smokeng's own rather than the library's, so
+// the kernel can stamp it (dnssocket.go). Where it does, a dns measurement is
+// as free of the prober's own jitter as an icmp one; where it does not, the
+// userspace fallback is flagged like everywhere else. A band widened by a busy
+// prober must not be readable as a slow resolver.
 func probeDNS(ctx context.Context, col *collector, idx int, addr netip.Addr, spec TargetSpec) {
 	name := strings.TrimSpace(spec.DNSQuery)
 	if name == "" {
@@ -52,21 +49,39 @@ func probeDNS(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 
 	m := dns.NewMsg(name, rr)
 	m.ID = dns.ID()
-
-	qctx, cancel := context.WithTimeout(ctx, time.Duration(spec.TimeoutMS)*time.Millisecond)
-	defer cancel()
-
-	col.markSent(idx, 0, time.Now())
-	// Not the library's own rtt: that measures its call, and what belongs in
-	// the distribution is the span every other probe type reports — the moment
-	// before the request left to the moment the answer was in hand.
-	_, _, err := dnsClient.Exchange(qctx, m, "udp", server)
-	if err != nil {
-		// No answer inside the timeout is loss, the same as an unanswered
-		// echo. It is not recorded as a send failure: the query did go out.
+	if err := m.Pack(); err != nil {
+		// Nothing was asked of the resolver, so the resolver is not what
+		// failed. That distinction is the difference between a broken target
+		// and a broken smokeng.
+		col.markSendFailed(idx)
+		log.Printf("probe: target %d: pack DNS query: %v", spec.TargetID, err)
 		return
 	}
-	col.onRX(idx, time.Now(), false)
+
+	res, err := dnsRoundTrip(ctx, m.Data, m.ID, addr, port, spec)
+	if res.TXUser.IsZero() {
+		// It never left: opening or connecting the socket failed.
+		col.markSendFailed(idx)
+		if idx == 0 {
+			log.Printf("probe: target %d (%s): dns query to %s: %v",
+				spec.TargetID, spec.Host, server, err)
+		}
+		return
+	}
+	col.markSent(idx, 0, res.TXUser)
+	if err != nil {
+		// No answer inside the timeout is loss, the same as an unanswered
+		// echo. It is not a send failure: the query did go out.
+		return
+	}
+	// Hand both stamps to the collector and let finalize decide. It already
+	// validates a kernel transmit stamp against its own probe's bounds and
+	// flags the fallbacks, and routing this through the same place means a
+	// dns measurement is scrutinised exactly as an icmp one is.
+	if !res.TXKernel.IsZero() {
+		col.onTXKernel(idx, res.TXKernel)
+	}
+	col.onRX(idx, res.RX, res.RXKernel)
 }
 
 // rrType maps the configured record type. The set is the one tree.Validate

@@ -644,10 +644,11 @@ func (e *Engine) traceOnce(ctx context.Context, spec TargetSpec) {
 	}
 }
 
-// runUserspaceProbe dispatches the probe types that are timed around a
-// userspace call rather than by the kernel. finalize flags every measurement
-// they produce as userspace on both sides, because none of them can be
-// kernel-timestamped and a band widened by a busy prober must not read as a
+// runUserspaceProbe dispatches the probe types that do not share the icmp
+// socket. Most of them are timed around a userspace call and finalize flags
+// their measurements accordingly; dns is the exception, running on a socket of
+// its own so the kernel can stamp it (dnssocket.go). Either way the flags say
+// which happened, because a band widened by a busy prober must not read as a
 // slow service.
 func runUserspaceProbe(ctx context.Context, col *collector, idx int, addr netip.Addr, spec TargetSpec) {
 	switch spec.ProbeType {

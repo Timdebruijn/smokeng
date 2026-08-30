@@ -84,88 +84,36 @@ separate prober on the same machine as the master. Reasons to want that:
 
 ### What it does to accuracy
 
-`icmp` on Linux is **not affected**, and this is structural rather than a measurement:
-the timestamps are taken by the kernel as the packet crosses the wire, so nothing
-userspace does — GC, an expensive Arrow query, another process — can move them. That
-guarantee is the reason kernel timestamping is there.
+Measured, not assumed. Two-core Debian VM, loopback targets so the network contributes
+almost nothing, the machine under heavy load from the instance's own API in the loaded
+column, and the load still running when collection stopped:
 
-Every other type is timed around a userspace call, so its RTT includes whatever delayed
-the goroutine between the reply arriving and `time.Now()` running. Sharing a process with
-an allocating HTTP and Arrow workload is exactly the thing that delays it.
-
-TCP-connect against a listener on loopback, so the network contributes almost nothing and
-what is left is the measurement overhead. The machine was equally busy in both columns;
-only the prober's location differs:
-
-| | prober in the master process | prober as its own process |
+| spread within an interval | idle | prober in the master process, under load |
 | --- | --- | --- |
-| median | 311 µs | 276 µs |
-| p95 | 1128 µs | **417 µs** |
-| p99 | 3431 µs | **831 µs** |
-| max | 11 160 µs | 5825 µs |
-| spread within an interval | 529 µs | **304 µs** |
+| `icmp` (kernel-stamped) | 8 µs | **8 µs** |
+| `dns` (kernel-stamped) | 46 µs | **41 µs** |
+| `tcp` (userspace-timed) | 139 µs | **1764 µs** |
 
-The median barely moves; the tail improves by 3–4×. That is the signature of GC pauses and
-scheduler contention rather than of anything on the network — and on a tool whose whole
-premise is keeping the distribution, an inflated p99 of your own making is smoke that is
-not there.
+That is the whole story in one table. **The kernel-stamped types do not move**, because
+their timestamps are taken as the packet crosses the wire and no amount of userspace work
+can shift them. `tcp` widens thirteenfold and its p99 goes from 277 µs to 4484 µs, and none
+of that is the network — it is GC and scheduler contention inside your own prober, drawn as
+smoke.
 
-Treat this as indicative, not as a benchmark: one machine, macOS, roughly 500 samples per
-column, under load applied deliberately hard. It says the effect is real and which
-direction it goes, not what it will be on your hardware. An earlier run that varied load
-*and* left the machine idle in one arm measured the opposite sign, because CPU frequency
-scaling swamped everything — which is its own lesson about this kind of comparison.
+So:
 
-The cost is real and worth stating: measurements travel over signed HTTP instead of going
-straight to the writer, there are two units to run and upgrade, and there are two ways to
-be half-broken instead of one. It is the same code path a prober in another datacentre
-uses, which is exactly why it is worth having rather than a second local-only mechanism.
+- **Only `icmp` or `dns` targets?** Change nothing. One process is correct and the prober
+  is already immune.
+- **`tcp`, `http`, `https` or `irtt` targets, on an instance whose UI gets real traffic?**
+  Run the prober as its own process. There is no way to fix those types at the source: a
+  TCP or TLS handshake completes inside the kernel and userspace only observes the call
+  returning, so there is no packet of ours left to stamp.
 
-```bash
-sudo -u smokeng smokeng agent key --key /var/lib/smokeng/prober.key
-```
-
-That prints the public key, creating it on first run and reusing it after. Enrol it on the
-master, which prints the agent id:
-
-```bash
-sudo -u smokeng smokeng agent add --db /var/lib/smokeng/smokeng.db \
-    --name local-probe --pubkey <the key above>
-```
-
-Then run it, with its own buffer database:
-
-```bash
-sudo -u smokeng smokeng agent run --master http://127.0.0.1:8080 --agent-id 1 \
-    --key /var/lib/smokeng/prober.key --db /var/lib/smokeng/prober.db
-```
-
-Plain HTTP needs no flag here because the master is on loopback: those packets never reach
-a network interface, so there is nothing for TLS to protect them from. Only a literal
-loopback address counts, not a name that happens to resolve to one — `localhost` is usually
-127.0.0.1 and occasionally whatever a resolver says, and the exemption rests on the packets
-provably not leaving the machine. Anywhere else still needs HTTPS, or
-`--insecure-allow-http` said out loud.
-
-Nothing moves by itself. The master keeps its built-in prober under the name `local`, and
-a target measures here only once its `agents` setting names `local-probe`. Both can be
-listed: two vantage points on one host is a strange thing to want, but it is not
-prevented, and the two series stay separate like any others.
-
-The Ansible role does all of this behind `smokeng_prober_enabled: true`, including a
-second unit — see [`deploy/ansible`](../deploy/ansible/README.md).
-
-### What this does not fix
-
-A panic inside a probe used to end the whole process. Splitting the prober out would only
-have moved that, so it is fixed where it happens instead: a panic in one probe, or in one
-target's loop, is contained, logged with its stack, counted in
-`smokeng_probe_panics_total`, and the target is rescheduled. One target's gap, not an
-outage.
-
-The containment is deliberately narrow — only on goroutines holding no shared lock. A
-process that survives a panic into a deadlock is worse off than one that crashed, because
-systemd restarts a crash and cannot see a wedge.
+Two caveats worth carrying. The figures are one machine and a deliberately hard load, so
+they say the effect is real and which direction it goes, not what it will be on yours. And
+an earlier version of this experiment left one arm on an idle machine and measured the
+opposite sign, because CPU frequency scaling swamped everything — if you repeat it, keep
+the machine equally busy in both arms and keep the load running until collection ends.
 
 ## Storage growth
 
