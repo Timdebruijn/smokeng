@@ -19,6 +19,134 @@
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 
+/* Reader-side presentation settings (A11y.tsx). They are attributes on <html>
+   rather than a wrapper class so the text-size zoom takes fixed and portalled
+   elements with it, and so these rules outrank the :root tokens on specificity
+   alone — no !important needed to win. */
+:root[data-contrast="high"] {
+  --fg: light-dark(#0a1118, #ffffff);
+  --dim: light-dark(#2e3b47, #c9d4de);
+  --border: light-dark(#5a6b7c, #a3b3c2);
+  /* Shadows soften exactly the edges this setting exists to harden. */
+  --shadow: none;
+  --shadow-pop: 0 10px 30px light-dark(rgba(20, 35, 50, 0.3), rgba(0, 0, 0, 0.8));
+}
+
+:root[data-contrast="high"] :focus-visible {
+  outline-width: 3px;
+}
+
+/* Scales the whole page, graphs included — the canvas is laid out in CSS
+   pixels, so it grows with everything else rather than staying a small island
+   of unreadable text. */
+:root[data-textsize="large"] {
+  zoom: 1.18;
+}
+
+/* Okabe-Ito blue/orange/magenta in place of green/amber/red. This UI spends
+   red and green on "lossy" and "healthy", which is the most common confusion
+   there is: without an alternative the loss rail says nothing to roughly one
+   man in twelve. */
+:root[data-cb="safe"] {
+  --good: light-dark(#0072b2, #56b4e9);
+  --warn: light-dark(#a86e02, #e69f00);
+  --bad: light-dark(#b13487, #f2a0ce);
+}
+
+/* Accessibility menu and the firing bell, both in the header. */
+.a11y,
+.bell {
+  position: relative;
+}
+
+.a11y-popover,
+.bell-popover {
+  width: min(20rem, 86vw);
+}
+
+.a11y-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.5rem 0.4rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.a11y-row:hover {
+  background: var(--card2);
+}
+
+.a11y-row input {
+  margin-top: 0.15rem;
+  accent-color: var(--accent);
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.a11y-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.a11y-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.a11y-note {
+  margin: 0.5rem 0.4rem 0.1rem;
+}
+
+.bell-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--bad);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+}
+
+.bell-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+}
+
+.bell-row:hover {
+  background: var(--card2);
+}
+
+.bell-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.dot.firing {
+  background: var(--bad);
+  animation: pulse-dot 1.6s infinite;
+}
+
 body {
   margin: 0;
   color: var(--fg);
@@ -1465,4 +1593,44 @@ a.button {
   border-radius: 5px;
   padding: 0 5px;
   margin-left: 2px;
+}
+
+/* Compare: several series' pooled medians on one axis (Compare.tsx). */
+.compare {
+  margin-top: 0.75rem;
+  padding: 0.9rem 1rem 1rem;
+}
+
+.compare-head {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
+.compare-head h2 {
+  font-size: 0.88rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.compare-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--dim);
+}
+
+.compare-swatch {
+  width: 0.7rem;
+  height: 0.2rem;
+  border-radius: 2px;
+}
+
+.compare-canvas {
+  display: block;
+  width: 100%;
+  height: 300px;
 }

@@ -5,6 +5,9 @@ import Alerts from './Alerts'
 import Detail from './Detail'
 import Overview from './Overview'
 import Palette from './Palette'
+import A11yMenu, { useA11y, type A11yState } from './A11y'
+import Bell from './Bell'
+import Compare, { type CompareSeries } from './Compare'
 import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
@@ -22,6 +25,10 @@ type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' |
 export default function App() {
   const [view, setView] = useState<View>('overview')
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  // One popover at a time. Two open at once overlap in the corner they share,
+  // and the one underneath cannot be reached without closing the other.
+  const [headerMenu, setHeaderMenu] = useState<'a11y' | 'bell' | null>(null)
+  const [a11y, toggleA11y] = useA11y()
   // Which target the detail screen is showing. Detail is reached from a plot,
   // never from the tab bar, so it is not one of the tabs.
   const [detailId, setDetailId] = useState<number | null>(null)
@@ -66,7 +73,17 @@ export default function App() {
         views={views}
         onView={setView}
         userMenuOpen={userMenuOpen}
-        onToggleUser={() => setUserMenuOpen((v) => !v)}
+        onToggleUser={() => {
+          setUserMenuOpen((v) => !v)
+          setHeaderMenu(null)
+        }}
+        a11y={a11y}
+        onToggleA11y={toggleA11y}
+        headerMenu={headerMenu}
+        onHeaderMenu={(m) => {
+          setHeaderMenu(m)
+          if (m !== null) setUserMenuOpen(false)
+        }}
         onOpenPalette={() => setPaletteOpen(true)}
       />
       {paletteOpen && (
@@ -157,6 +174,10 @@ function AppHeader({
   userMenuOpen,
   onToggleUser,
   onOpenPalette,
+  a11y,
+  onToggleA11y,
+  headerMenu,
+  onHeaderMenu,
 }: {
   me: Me | null
   view: View
@@ -165,6 +186,10 @@ function AppHeader({
   userMenuOpen: boolean
   onToggleUser: () => void
   onOpenPalette: () => void
+  a11y: A11yState
+  onToggleA11y: (k: keyof A11yState) => void
+  headerMenu: 'a11y' | 'bell' | null
+  onHeaderMenu: (m: 'a11y' | 'bell' | null) => void
 }) {
   const who = me?.name ?? me?.email ?? me?.subject ?? ''
   return (
@@ -187,6 +212,20 @@ function AppHeader({
           <span>Search…</span>
           <kbd>⌘K</kbd>
         </button>
+        <A11yMenu
+          state={a11y}
+          onToggle={onToggleA11y}
+          open={headerMenu === 'a11y'}
+          onOpenChange={(o) => onHeaderMenu(o ? 'a11y' : null)}
+        />
+        <Bell
+          open={headerMenu === 'bell'}
+          onOpenChange={(o) => onHeaderMenu(o ? 'bell' : null)}
+          onOpenAlerts={() => {
+            onHeaderMenu(null)
+            onView('alerts')
+          }}
+        />
         {me?.auth_enabled && me.authenticated && (
           <div className="usermenu">
             <button className="chip-button" onClick={onToggleUser}>
@@ -288,6 +327,7 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
   const [hidden, setHidden] = useState<Set<number>>(new Set())
   const [graphSearch, setGraphSearch] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [compareOn, setCompareOn] = useState(false)
   const shown = leaves.filter((t) => !hidden.has(t.id))
   const toggleShown = (id: number) =>
     setHidden((prev) => {
@@ -324,6 +364,17 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
       agentName: resolved.length > 1 ? a.name : undefined,
     }))
   })
+
+  // A series with no enrolled agent has nothing to draw, and a legend entry
+  // for an empty line would be a target that looks compared and is not.
+  const comparable: CompareSeries[] = series
+    .filter((s): s is PlotSeries & { agentId: number } => s.agentId !== null)
+    .map((s) => ({
+      key: `${s.target.id}-${s.agentId}`,
+      label: (s.target.title ?? s.target.name) + (s.agentName ? ` (${s.agentName})` : ''),
+      targetId: s.target.id,
+      agentId: s.agentId,
+    }))
 
   return (
     <section className="graphs">
@@ -370,6 +421,13 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
           >
             {live && !zoom ? '● live' : '○ paused'}
           </button>
+          <button
+            className={compareOn ? 'pill active' : 'pill'}
+            onClick={() => setCompareOn((v) => !v)}
+            title="Overlay the pooled medians of the shown targets on one axis"
+          >
+            compare
+          </button>
           <span className="spacer" />
           <span className="span-label">{spanLabel}</span>
           {zoom ? (
@@ -389,6 +447,20 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
         )}
         {!error && leaves.length > 0 && series.length === 0 && (
           <div className="card empty">No targets selected — check some in the target list.</div>
+        )}
+        {compareOn && comparable.length > 0 && (
+          <Compare
+            series={comparable}
+            from={from}
+            to={to}
+            logScale={logScale}
+            refreshKey={refreshKey}
+          />
+        )}
+        {compareOn && comparable.length === 0 && (
+          <div className="card empty">
+            Nothing to compare — the shown targets have no enrolled agent measuring them.
+          </div>
         )}
         {series.map((s) =>
           s.agentId === null ? (
