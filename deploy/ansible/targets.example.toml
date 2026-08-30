@@ -38,3 +38,50 @@ address_family = "v4"
 [targets."Local/loopback"]
 host = "127.0.0.1"
 address_family = "v4"
+
+# The probe types that measure a service rather than a path. The same host
+# appears here and under Internet, one layer up each time: icmp times the
+# path, tcp times the handshake, https times the whole thing including TLS.
+# Where they disagree, the difference names the layer that is slow — and a
+# middlebox that answers pings for a host that is not serving looks healthy to
+# icmp alone.
+#
+# Slower and thinner than the icmp defaults on purpose: every https probe is a
+# fresh TCP and TLS handshake, so twenty of them every interval is a lot to ask
+# of somebody else's endpoint for a latency figure.
+#
+# These types are timed in userspace and cannot be kernel-stamped, so their
+# round trips include whatever delayed the prober. If this instance's UI gets
+# real traffic, run the prober as its own process and point them at it by
+# adding `agents = ["local-probe"]` here — see docs/operations.md. Left off
+# below so this file imports on a stock install, where no such agent exists.
+[targets."Services"]
+title = "Services"
+interval_s = 60
+pings_per_interval = 10
+burst_gap_ms = 200
+trace_interval_s = 0
+
+[targets."Services/cloudflare-tcp"]
+host = "1.1.1.1"
+address_family = "v4"
+probe_type = "tcp"
+probe_port = 443
+
+# The hostname rather than the address, so SNI and certificate verification
+# are part of what is measured.
+[targets."Services/cloudflare-https"]
+host = "one.one.one.one"
+address_family = "v4"
+probe_type = "https"
+http_path = "/"
+
+# A resolver on your own network, timed as a resolver rather than as a host:
+# a box that answers pings promptly while every lookup behind it crawls is
+# exactly what this type is for. dns is kernel-timestamped, like icmp.
+[targets."Services/resolver-dns"]
+host = "192.0.2.53"
+address_family = "v4"
+probe_type = "dns"
+dns_query = "example.com"
+dns_rr_type = "A"
