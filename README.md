@@ -8,12 +8,12 @@ actual density — no rollup, no consolidation, no single-value-per-check.
 ![Three targets in the smokeng UI: the density smoke, the pooled median line and the loss
 rail, stacked on a shared time axis](docs/images/smokeng.png)
 
-**Status: released, [v0.6.1](https://github.com/timdebruijn/smokeng/releases/tag/v0.6.1).**
+**Status: released, [v0.7.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.7.0).**
 The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the prober — ICMP, DNS, TCP-connect, HTTP(S)
 and IRTT, burst and spread, kernel
-timestamping with observable fallback where the type allows it, and a userspace flag
-where it does not — the SQLite store, TOML import/export of the
+kernel timestamping for ICMP and DNS with an observable fallback, and a userspace flag on
+the types that cannot be stamped — the SQLite store, TOML import/export of the
 target tree, a SmokePing `Targets` importer, the Arrow measurements API, the browser
 renderer — density smoke, pooled median, loss rail, stacked plots with a shared
 crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that edits the
