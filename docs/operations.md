@@ -185,7 +185,29 @@ Five of these are worth an alert of their own:
 - `smokeng_measurements_dropped_total` increasing means smokeng is throwing away
   measurements it took. Nothing else should be able to cause a gap in the data.
 - `smokeng_socket_overflow_measurements_total` increasing means loss in the graphs may be
-  smokeng's rather than the network's. Those intervals are flagged in the UI too.
+  smokeng's rather than the network's. Those intervals are flagged in the UI too. The fix
+  is a larger receive buffer, and it is worth knowing why this is a counter rather than a
+  setup step: every ICMP target shares one socket per address family and DSCP, so the
+  queue fills from the *total* burst rate, not from any one target. A handful of targets
+  never comes close; a few hundred can, and so can a prober that stalls long enough not to
+  drain. smokeng logs the shortfall at startup —
+
+  ```
+  probe: v4 socket receive buffer is 425984 bytes, asked for 4194304
+  (raise net.core.rmem_max to allow more); replies may be dropped under load
+  ```
+
+  — and that line on its own is not a problem to fix. It says what the kernel granted, not
+  that anything was lost. Act when the counter moves:
+
+  ```bash
+  echo 'net.core.rmem_max = 4194304' | sudo tee /etc/sysctl.d/60-smokeng-rmem.conf
+  sudo sysctl -p /etc/sysctl.d/60-smokeng-rmem.conf
+  sudo systemctl restart smokeng   # the buffer is sized when the socket opens
+  ```
+
+  Note that this is the setting on the machine smokeng runs on. On a virtual machine that
+  is the guest's own kernel; a generous value on the hypervisor does nothing for it.
 - `time() - smokeng_agent_last_seen_seconds` exceeding a few minutes means an agent is
   gone, and the absence of its graph is not the absence of a problem.
 - `smokeng_targets_unmeasured` above zero means a target is assigned only to agents that
