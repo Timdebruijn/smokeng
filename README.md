@@ -8,7 +8,7 @@ actual density — no rollup, no consolidation, no single-value-per-check.
 ![Three targets in the smokeng UI: the density smoke, the pooled median line and the loss
 rail, stacked on a shared time axis](docs/images/smokeng.png)
 
-**Status: released, [v0.8.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.8.0).**
+**Status: released, [v0.9.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.9.0).**
 The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the prober — ICMP, DNS, TCP-connect, HTTP(S)
 and IRTT, burst and spread, kernel timestamping for ICMP and DNS with an observable
