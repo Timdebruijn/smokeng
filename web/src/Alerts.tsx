@@ -3,6 +3,7 @@ import {
   createAlertRule,
   deleteAlertRule,
   fetchAlertRules,
+  acknowledgeAlert,
   fetchFiringAlerts,
   fetchTargets,
   updateAlertRule,
@@ -48,6 +49,18 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
     return () => clearInterval(id)
   }, [reload])
 
+  const ackAlert = useCallback(
+    async (a: FiringAlert) => {
+      try {
+        await acknowledgeAlert(a, !a.acked)
+        await reload()
+      } catch (e) {
+        setError((e as Error).message)
+      }
+    },
+    [reload],
+  )
+
   const run = async (fn: () => Promise<unknown>) => {
     try {
       await fn()
@@ -82,10 +95,13 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
           <table className="alerts">
             <tbody>
               {firing.map((a) => (
-                <tr key={`${a.target}-${a.rule}`}>
+                <tr key={`${a.target}-${a.rule}`} className={a.acked ? 'disabled-row' : undefined}>
                   <td>
                     <span className="dot-label">
-                      <span className="dot" style={{ background: 'var(--bad)' }} />
+                      <span
+                        className="dot"
+                        style={{ background: a.acked ? 'var(--dim)' : 'var(--bad)' }}
+                      />
                       <span className="chip firing">{a.rule}</span>
                     </span>
                   </td>
@@ -104,6 +120,24 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                     ) : (
                       ''
                     )}
+                    {a.acked && a.acked_by ? (
+                      <span className="hint small"> · acknowledged by {a.acked_by}</span>
+                    ) : (
+                      ''
+                    )}
+                  </td>
+                  <td>
+                    <button
+                      className="pill small"
+                      title={
+                        a.acked
+                          ? 'Un-acknowledge'
+                          : 'Acknowledge — the alert keeps firing, it just stops demanding attention'
+                      }
+                      onClick={() => void ackAlert(a)}
+                    >
+                      {a.acked ? 'un-acknowledge' : 'acknowledge'}
+                    </button>
                   </td>
                 </tr>
               ))}

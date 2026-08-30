@@ -20,6 +20,13 @@ type Alert struct {
 	Firing     bool
 	Since      time.Time
 	Value      float64
+	// Acked and its detail describe an acknowledgement: a firing alert a person
+	// marked seen so it stops demanding attention, without changing the rule or
+	// stopping the alert. It never suppresses delivery — the alert is still
+	// firing and downstream still needs to know — only the UI's own attention.
+	Acked   bool
+	AckedAt time.Time
+	AckedBy string
 }
 
 // Notifier delivers alerts. smokeng ships exactly one implementation, a

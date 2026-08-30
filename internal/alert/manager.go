@@ -272,7 +272,43 @@ func (m *Manager) alertLocked(r *Rule, st *State, app applicable, firing bool) A
 	if st.Since != 0 {
 		a.Since = time.Unix(st.Since, 0)
 	}
+	if st.Acked() {
+		a.Acked, a.AckedBy = true, st.AckedBy
+		if st.AckedAt != 0 {
+			a.AckedAt = time.Unix(st.AckedAt, 0)
+		}
+	}
 	return a
+}
+
+// Acknowledge marks a firing alert seen, or clears that mark when ack is false.
+// It returns whether a firing alert was found to change — false when nothing is
+// firing for that (rule, target, agent), so the caller can answer 404 rather
+// than pretend it did something.
+//
+// The change is persisted at once rather than waiting for the next
+// measurement's save, so an acknowledgement is not lost to a restart in the
+// gap — and because firing state is itself persisted, the ack still matches its
+// episode after a restart.
+func (m *Manager) Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, ack bool, by string) (bool, error) {
+	m.mu.Lock()
+	st, ok := m.states[stateKey{ruleID, targetID, agentID}]
+	if !ok || !st.Firing {
+		m.mu.Unlock()
+		return false, nil
+	}
+	if ack {
+		st.AckedSince, st.AckedAt, st.AckedBy = st.Since, time.Now().Unix(), by
+	} else {
+		st.AckedSince, st.AckedAt, st.AckedBy = 0, 0, ""
+	}
+	snapshot := *st
+	m.mu.Unlock()
+
+	if err := m.st.SaveAlertStates(ctx, []State{snapshot}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (m *Manager) deliver(ctx context.Context, alerts []Alert) {

@@ -223,9 +223,21 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 			"agent":     a.AgentName,
 			"value":     a.Value,
 			"describes": a.Rule.Describe(),
+			// The identifiers the acknowledge endpoint needs — the names alone
+			// cannot address one (target, agent) pair.
+			"rule_id":   a.Rule.ID,
+			"target_id": a.TargetID,
+			"agent_id":  a.AgentID,
+			"acked":     a.Acked,
 		}
 		if !a.Since.IsZero() {
 			item["since"] = a.Since.Unix()
+		}
+		if a.Acked {
+			item["acked_by"] = a.AckedBy
+			if !a.AckedAt.IsZero() {
+				item["acked_at"] = a.AckedAt.Unix()
+			}
 		}
 		out = append(out, item)
 	}
@@ -272,4 +284,65 @@ func (s *server) handleAlertEvents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": out})
+}
+
+// handleAckAlert marks a firing alert acknowledged, or clears the mark. The
+// alert keeps firing and delivery is untouched — this only quiets the UI's own
+// attention, so a person can say "seen, handling it" without editing the rule
+// or waiting for the condition to resolve.
+func (s *server) handleAckAlert(w http.ResponseWriter, r *http.Request) {
+	if s.alerts == nil {
+		notFound(w)
+		return
+	}
+	var body struct {
+		RuleID   int64 `json:"rule_id"`
+		TargetID int64 `json:"target_id"`
+		AgentID  int64 `json:"agent_id"`
+		Ack      *bool `json:"ack"` // absent means acknowledge; false clears it
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+		badRequest(w, err)
+		return
+	}
+	// Write on the target the alert is about: acknowledging is an operational
+	// action on shared state, so an editor of that subtree may do it and a
+	// viewer may not.
+	if _, ok := s.requireWrite(w, r, body.TargetID); !ok {
+		return
+	}
+	ack := body.Ack == nil || *body.Ack
+	changed, err := s.alerts.Acknowledge(r.Context(), body.RuleID, body.TargetID, body.AgentID, ack, s.callerName(r))
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if !changed {
+		// Nothing firing for that (rule, target, agent) — it may have resolved
+		// between the page loading and the click. Say so rather than imply an
+		// ack landed on a problem that is over.
+		notFound(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"acked": ack})
+}
+
+// callerName is a human label for the acknowledging user, for display and
+// audit. Empty on an unauthenticated instance, where there is no identity to
+// record and none is claimed.
+func (s *server) callerName(r *http.Request) string {
+	if s.auth == nil {
+		return ""
+	}
+	sess, ok := s.auth.SessionFrom(r)
+	if !ok {
+		return ""
+	}
+	if sess.Email != "" {
+		return sess.Email
+	}
+	if sess.Name != "" {
+		return sess.Name
+	}
+	return sess.Subject
 }

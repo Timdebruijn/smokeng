@@ -123,6 +123,20 @@ type State struct {
 	// Value is the metric value at the most recent evaluation, carried into
 	// the notification so it says what actually happened.
 	Value float64
+	// AckedSince records the firing episode an acknowledgement applies to: it
+	// equals Since when the alert is acknowledged. Tying the ack to the episode
+	// is what makes it mute only this one — when the alert resolves and later
+	// re-fires with a new Since, the ack no longer matches and the alert
+	// demands attention again. Zero means unacknowledged. AckedAt and AckedBy
+	// are for display and audit.
+	AckedSince int64
+	AckedAt    int64
+	AckedBy    string
+}
+
+// Acked reports whether this state's current firing episode is acknowledged.
+func (st *State) Acked() bool {
+	return st.Firing && st.AckedSince != 0 && st.AckedSince == st.Since
 }
 
 // Transition is what an evaluation did to a rule's state.
@@ -221,6 +235,10 @@ func Evaluate(r *Rule, st *State, m *Input, intervalS int) Transition {
 		st.Firing = false
 		st.Since = 0
 		st.Streak = 0
+		// The acknowledgement belonged to the episode that just ended. Clearing
+		// it means a fresh fire of the same rule alerts again rather than
+		// inheriting an ack from a problem that is over.
+		st.AckedSince, st.AckedAt, st.AckedBy = 0, 0, ""
 		return Resolved
 	}
 	return NoChange

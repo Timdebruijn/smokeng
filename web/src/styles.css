@@ -1634,3 +1634,26 @@ a.button {
   width: 100%;
   height: 300px;
 }
+
+/* A firing-bell row now pairs the alert with an ack button. */
+.bell-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.bell-item .bell-row {
+  flex: 1;
+  min-width: 0;
+}
+
+/* An acknowledged alert is still firing, so it stays visible — just dimmed, to
+   say "seen, not gone". */
+.bell-item.acked {
+  opacity: 0.6;
+}
+
+.pill.small {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.5rem;
+}

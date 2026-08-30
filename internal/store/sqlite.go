@@ -237,6 +237,16 @@ UPDATE targets SET probe_type = 'icmp' WHERE parent_id IS NULL AND probe_type IS
 ALTER TABLE targets ADD COLUMN tls_skip_verify INTEGER;
 UPDATE targets SET tls_skip_verify = 0 WHERE parent_id IS NULL AND tls_skip_verify IS NULL;
 `,
+	// v14: acknowledgement of a firing alert. acked_since records the firing
+	// episode (its `since`) the acknowledgement applies to, so an ack mutes
+	// only this episode: when the alert resolves and later re-fires with a new
+	// since, the ack no longer matches and it demands attention again. acked_at
+	// and acked_by are for display and audit.
+	`
+ALTER TABLE alert_state ADD COLUMN acked_since INTEGER;
+ALTER TABLE alert_state ADD COLUMN acked_at INTEGER;
+ALTER TABLE alert_state ADD COLUMN acked_by TEXT;
+`,
 }
 
 func (s *SQLite) migrate() error {

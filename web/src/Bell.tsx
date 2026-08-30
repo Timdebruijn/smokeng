@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchFiringAlerts, type FiringAlert } from './api'
+import { acknowledgeAlert, fetchFiringAlerts, type FiringAlert } from './api'
 
 /**
  * What is firing, reachable from every page.
@@ -25,39 +25,52 @@ export default function Bell({
   const [alerts, setAlerts] = useState<FiringAlert[]>([])
   const [enabled, setEnabled] = useState(true)
 
+  const poll = () =>
+    fetchFiringAlerts()
+      .then((r) => {
+        setAlerts(r.alerts ?? [])
+        setEnabled(r.enabled)
+      })
+      // A failed poll leaves the last known state rather than clearing it.
+      // Showing "all quiet" because the request failed would be the one
+      // wrong answer this control can give.
+      .catch(() => undefined)
+
   useEffect(() => {
     let cancelled = false
-    const poll = () => {
-      fetchFiringAlerts()
-        .then((r) => {
-          if (cancelled) return
-          setAlerts(r.alerts ?? [])
-          setEnabled(r.enabled)
-        })
-        // A failed poll leaves the last known state rather than clearing it.
-        // Showing "all quiet" because the request failed would be the one
-        // wrong answer this control can give.
-        .catch(() => undefined)
+    const tick = () => {
+      if (!cancelled) void poll()
     }
-    poll()
-    const t = setInterval(poll, 30_000)
+    tick()
+    const t = setInterval(tick, 30_000)
     return () => {
       cancelled = true
       clearInterval(t)
     }
+    // poll closes over only setState setters, which are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const ack = async (a: FiringAlert) => {
+    await acknowledgeAlert(a, !a.acked)
+    await poll() // reflect the new state at once rather than waiting 30s
+  }
+
+  // The badge counts what still needs attention: unacknowledged alerts. An
+  // acknowledged one is still firing and still listed, just not shouting.
+  const unacked = alerts.filter((a) => !a.acked).length
 
   return (
     <div className="bell">
       <button
         className="icon-button"
-        title={alerts.length ? `${alerts.length} firing` : 'Firing alerts'}
-        aria-label={alerts.length ? `${alerts.length} alerts firing` : 'Firing alerts'}
+        title={unacked ? `${unacked} firing` : 'Firing alerts'}
+        aria-label={unacked ? `${unacked} alerts firing` : 'Firing alerts'}
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
       >
         ▲
-        {alerts.length > 0 && <span className="bell-badge">{alerts.length}</span>}
+        {unacked > 0 && <span className="bell-badge">{unacked}</span>}
       </button>
       {open && (
         <div className="popover bell-popover">
@@ -70,16 +83,26 @@ export default function Bell({
             <p className="hint small">All quiet — nothing is firing.</p>
           ) : (
             alerts.map((a, i) => (
-              <button key={`${a.rule}-${a.target}-${i}`} className="bell-row" onClick={onOpenAlerts}>
-                <span className="bell-rule">
-                  <span className="dot firing" />
-                  {a.rule} — {a.describes}
-                </span>
-                <span className="hint small mono">
-                  {a.target}
-                  {a.since ? ` · since ${new Date(a.since * 1000).toLocaleTimeString()}` : ''}
-                </span>
-              </button>
+              <div key={`${a.rule}-${a.target}-${i}`} className={a.acked ? 'bell-item acked' : 'bell-item'}>
+                <button className="bell-row" onClick={onOpenAlerts}>
+                  <span className="bell-rule">
+                    <span className={a.acked ? 'dot' : 'dot firing'} />
+                    {a.rule} — {a.describes}
+                  </span>
+                  <span className="hint small mono">
+                    {a.target}
+                    {a.since ? ` · since ${new Date(a.since * 1000).toLocaleTimeString()}` : ''}
+                    {a.acked && a.acked_by ? ` · ack ${a.acked_by}` : ''}
+                  </span>
+                </button>
+                <button
+                  className="pill small"
+                  title={a.acked ? 'Un-acknowledge' : 'Acknowledge — still fires, just stops nagging'}
+                  onClick={() => void ack(a)}
+                >
+                  {a.acked ? 'unack' : 'ack'}
+                </button>
+              </div>
             ))
           )}
         </div>

@@ -152,8 +152,18 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
         <Kpi
           label="Firing"
           value={String(firing.length)}
-          sub={firing.length === 0 ? 'all quiet' : 'needs attention'}
-          tone={firing.length > 0 ? 'bad' : undefined}
+          // An acknowledged alert is still firing, so it counts here — but it
+          // no longer "needs attention", and the tone drops to neutral once
+          // every firing alert has been seen, so the overview stops shouting
+          // about something an operator is already handling.
+          sub={
+            firing.length === 0
+              ? 'all quiet'
+              : firing.every((a) => a.acked)
+                ? 'all acknowledged'
+                : `${firing.filter((a) => !a.acked).length} need attention`
+          }
+          tone={firing.some((a) => !a.acked) ? 'bad' : undefined}
         />
         <Kpi
           label="Worst loss"

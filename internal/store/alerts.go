@@ -105,7 +105,8 @@ func (s *SQLite) DeleteAlertRule(ctx context.Context, id int64) error {
 // ListAlertStates returns the standing of every rule that has been evaluated.
 func (s *SQLite) ListAlertStates(ctx context.Context) ([]alert.State, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT rule_id, target_id, agent_id, firing, since, streak, last_ts, value
+		SELECT rule_id, target_id, agent_id, firing, since, streak, last_ts, value,
+			acked_since, acked_at, acked_by
 		FROM alert_state`)
 	if err != nil {
 		return nil, err
@@ -114,12 +115,15 @@ func (s *SQLite) ListAlertStates(ctx context.Context) ([]alert.State, error) {
 	var out []alert.State
 	for rows.Next() {
 		var st alert.State
-		var since, lastTS sql.NullInt64
+		var since, lastTS, ackedSince, ackedAt sql.NullInt64
+		var ackedBy sql.NullString
 		if err := rows.Scan(&st.RuleID, &st.TargetID, &st.AgentID, &st.Firing,
-			&since, &st.Streak, &lastTS, &st.Value); err != nil {
+			&since, &st.Streak, &lastTS, &st.Value,
+			&ackedSince, &ackedAt, &ackedBy); err != nil {
 			return nil, err
 		}
 		st.Since, st.LastTS = since.Int64, lastTS.Int64
+		st.AckedSince, st.AckedAt, st.AckedBy = ackedSince.Int64, ackedAt.Int64, ackedBy.String
 		out = append(out, st)
 	}
 	return out, rows.Err()
@@ -139,22 +143,28 @@ func (s *SQLite) SaveAlertStates(ctx context.Context, states []alert.State) erro
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT OR REPLACE INTO alert_state
-			(rule_id, target_id, agent_id, firing, since, streak, last_ts, value)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+			(rule_id, target_id, agent_id, firing, since, streak, last_ts, value,
+			 acked_since, acked_at, acked_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, st := range states {
-		var since, lastTS any
+		var since, lastTS, ackedSince, ackedAt any
+		var ackedBy any
 		if st.Since != 0 {
 			since = st.Since
 		}
 		if st.LastTS != 0 {
 			lastTS = st.LastTS
 		}
+		if st.AckedSince != 0 {
+			ackedSince, ackedAt, ackedBy = st.AckedSince, st.AckedAt, st.AckedBy
+		}
 		if _, err := stmt.ExecContext(ctx, st.RuleID, st.TargetID, st.AgentID,
-			st.Firing, since, st.Streak, lastTS, st.Value); err != nil {
+			st.Firing, since, st.Streak, lastTS, st.Value,
+			ackedSince, ackedAt, ackedBy); err != nil {
 			return err
 		}
 	}

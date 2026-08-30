@@ -47,6 +47,30 @@ export interface FiringAlert {
   value: number
   since?: number
   describes: string
+  /** Identifiers the acknowledge call needs — names alone cannot address one. */
+  rule_id: number
+  target_id: number
+  agent_id: number
+  /** Acknowledged: still firing, but marked seen so it stops demanding attention. */
+  acked: boolean
+  acked_by?: string
+  acked_at?: number
+}
+
+/**
+ * Acknowledge a firing alert, or clear the acknowledgement with `ack: false`.
+ * The alert keeps firing; this only quiets the UI's attention.
+ */
+export function acknowledgeAlert(
+  a: Pick<FiringAlert, 'rule_id' | 'target_id' | 'agent_id'>,
+  ack: boolean,
+): Promise<unknown> {
+  return mutate('/api/v1/alerts/ack', 'POST', {
+    rule_id: a.rule_id,
+    target_id: a.target_id,
+    agent_id: a.agent_id,
+    ack,
+  })
 }
 
 export async function fetchAlertRules(): Promise<AlertRule[]> {

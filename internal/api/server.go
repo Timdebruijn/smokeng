@@ -29,6 +29,9 @@ type AlertView interface {
 	// Delivering reports whether transitions go anywhere beyond the log.
 	// Evaluation no longer depends on it, so the two are separate facts.
 	Delivering() bool
+	// Acknowledge marks a firing alert seen (or clears it), returning whether a
+	// firing alert existed to change.
+	Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, ack bool, by string) (bool, error)
 }
 
 // Store is everything the API persists through: the measurement store plus
@@ -178,6 +181,7 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	rt.handle(classScopedWrite, "PATCH /api/v1/alert-rules/{id}", s.handleUpdateAlertRule)
 	rt.handle(classScopedWrite, "DELETE /api/v1/alert-rules/{id}", s.handleDeleteAlertRule)
 	rt.handle(classScopedRead, "GET /api/v1/alerts", s.handleFiringAlerts)
+	rt.handle(classScopedWrite, "POST /api/v1/alerts/ack", s.handleAckAlert)
 	if s.events != nil {
 		rt.handle(classScopedRead, "GET /api/v1/alert-events", s.handleAlertEvents)
 	}

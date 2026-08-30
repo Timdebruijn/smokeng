@@ -242,3 +242,102 @@ func TestChildRulesReplaceInherited(t *testing.T) {
 		t.Errorf("fired rule = %v, want the leaf's own", labels)
 	}
 }
+
+// Acknowledging a firing alert mutes it without resolving it, ties to the
+// current episode, and is dropped when that episode ends — so a fresh fire of
+// the same rule demands attention again rather than inheriting the old ack.
+func TestAcknowledgeTiesToEpisode(t *testing.T) {
+	ctx := context.Background()
+	st, groupID, leafID := setup(t)
+
+	rule := alert.Rule{
+		TargetID: groupID, Name: "loss", Metric: alert.MetricLoss,
+		Op: alert.OpGreater, Threshold: 20, For: 1, ClearFor: 1, Enabled: true,
+	}
+	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	m := alert.NewManager(st, nil)
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fire.
+	m.Observe(ctx, []alert.Input{input(leafID, 0, 10, 0)})
+	firing := m.Firing()
+	if len(firing) != 1 || firing[0].Acked {
+		t.Fatalf("want one firing, unacked alert, got %+v", firing)
+	}
+
+	// Acknowledge it.
+	changed, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, true, "tim@example.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("Acknowledge reported no firing alert to change")
+	}
+	firing = m.Firing()
+	if len(firing) != 1 || !firing[0].Acked || firing[0].AckedBy != "tim@example.org" {
+		t.Fatalf("alert should be firing and acknowledged by tim, got %+v", firing)
+	}
+
+	// It survives a restart, because both the firing state and the ack are
+	// persisted and the ack still matches its episode.
+	m2 := alert.NewManager(st, nil)
+	if err := m2.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f := m2.Firing(); len(f) != 1 || !f[0].Acked {
+		t.Fatalf("ack did not survive a restart: %+v", f)
+	}
+
+	// Resolve, then re-fire: the new episode is not acknowledged.
+	m2.Observe(ctx, []alert.Input{input(leafID, 1, 10, 10)}) // healthy → resolves
+	if f := m2.Firing(); len(f) != 0 {
+		t.Fatalf("alert should have resolved, got %+v", f)
+	}
+	m2.Observe(ctx, []alert.Input{input(leafID, 2, 10, 0)}) // lossy again → re-fires
+	f := m2.Firing()
+	if len(f) != 1 {
+		t.Fatalf("alert should have re-fired, got %+v", f)
+	}
+	if f[0].Acked {
+		t.Fatal("the re-fired episode inherited the old acknowledgement; each episode must be " +
+			"acknowledged on its own")
+	}
+}
+
+// Unacknowledging clears the mark, and acknowledging something not firing is a
+// no-op the caller can distinguish.
+func TestAcknowledgeUnackAndMiss(t *testing.T) {
+	ctx := context.Background()
+	st, groupID, leafID := setup(t)
+	rule := alert.Rule{
+		TargetID: groupID, Name: "loss", Metric: alert.MetricLoss,
+		Op: alert.OpGreater, Threshold: 20, For: 1, ClearFor: 1, Enabled: true,
+	}
+	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	m := alert.NewManager(st, nil)
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing firing yet: an ack changes nothing and says so.
+	if changed, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, true, "x"); err != nil || changed {
+		t.Fatalf("ack of a non-firing alert should be a no-op, got changed=%v err=%v", changed, err)
+	}
+
+	m.Observe(ctx, []alert.Input{input(leafID, 0, 10, 0)})
+	if _, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, true, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if f := m.Firing(); len(f) != 1 || f[0].Acked {
+		t.Fatalf("unack should have cleared the mark, got %+v", f)
+	}
+}
