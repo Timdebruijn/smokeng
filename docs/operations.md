@@ -101,13 +101,15 @@ Then run it, with its own buffer database:
 
 ```bash
 sudo -u smokeng smokeng agent run --master http://127.0.0.1:8080 --agent-id 1 \
-    --key /var/lib/smokeng/prober.key --db /var/lib/smokeng/prober.db \
-    --insecure-allow-http
+    --key /var/lib/smokeng/prober.key --db /var/lib/smokeng/prober.db
 ```
 
-`--insecure-allow-http` is needed because the traffic is plain HTTP; over loopback it never
-leaves the host. Point it at your external HTTPS URL instead if you would rather it did
-not depend on that reasoning.
+Plain HTTP needs no flag here because the master is on loopback: those packets never reach
+a network interface, so there is nothing for TLS to protect them from. Only a literal
+loopback address counts, not a name that happens to resolve to one — `localhost` is usually
+127.0.0.1 and occasionally whatever a resolver says, and the exemption rests on the packets
+provably not leaving the machine. Anywhere else still needs HTTPS, or
+`--insecure-allow-http` said out loud.
 
 Nothing moves by itself. The master keeps its built-in prober under the name `local`, and
 a target measures here only once its `agents` setting names `local-probe`. Both can be

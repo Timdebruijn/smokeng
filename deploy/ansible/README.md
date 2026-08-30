@@ -53,6 +53,7 @@ The ones that matter:
 | `smokeng_alert_webhook` | `""` | Empty means rules are stored but never evaluated |
 | `smokeng_targets_file` | `""` | Path on the controller to a `targets.toml` |
 | `smokeng_targets_prune` | `false` | Delete absent targets instead of disabling them |
+| `smokeng_tls_ca_files` | `""` | PEM files on the host whose certificates https probes trust, on top of the system roots. Deploy the same file to any agent that measures an internally-signed target. |
 | `smokeng_prober_enabled` | `false` | Run the prober as its own process next to the master — see below |
 | `smokeng_prober_agent_name` | `local-probe` | The name a target's `agents` must list to be measured there |
 

@@ -17,6 +17,7 @@ func testTargets() []Target {
 			Agents:           ptr("local"),
 			TraceIntervalS:   ptr(300),
 			ProbeType:        ptr("icmp"),
+			TLSSkipVerify:    ptr(false),
 		}},
 		{ID: 2, ParentID: ptr(int64(1)), Name: "Production", Enabled: true,
 			Settings: Settings{IntervalS: ptr(30)}},

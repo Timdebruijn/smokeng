@@ -17,7 +17,7 @@ interface SettingDef {
   key: SettingKey
   label: string
   unit?: string
-  kind: 'number' | 'text' | 'choice' | 'agents'
+  kind: 'number' | 'text' | 'choice' | 'agents' | 'bool'
   min?: number
   max?: number
   choices?: { value: string; label: string }[]
@@ -107,6 +107,13 @@ const SETTINGS: SettingDef[] = [
     kind: 'text',
     types: ['http', 'https'],
     hint: 'Unset requests /. Redirects are not followed: a 3xx is one round trip to this host, and chasing it would report two as one.',
+  },
+  {
+    key: 'tls_skip_verify',
+    label: 'Skip TLS verification',
+    kind: 'bool',
+    types: ['https'],
+    hint: 'Leave off. An internal certificate is better handled by trusting its CA with --tls-ca-file, which keeps verification on; turning this off measures a service without establishing it is the right one.',
   },
   { key: 'dscp', label: 'DSCP', kind: 'number', min: 0, max: 63 },
   { key: 'agents', label: 'Agents', kind: 'agents' },
@@ -281,7 +288,11 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
 // rule is a relationship between three settings, and the server rejects the
 // combination rather than any one of them — so without this the operator gets
 // a refusal on a field that is not the one they would need to change.
-function validateSetting(target: Target, def: SettingDef, next: number | string | null): string | null {
+function validateSetting(
+  target: Target,
+  def: SettingDef,
+  next: number | string | boolean | null,
+): string | null {
   if (next === null) return null
   if (def.kind === 'number') {
     const v = Number(next)
@@ -410,13 +421,25 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
             it is not being measured at all. Set one below.
           </p>
         )}
+      {/* Not an error, but not something to discover by reading a settings
+          table either: these measurements say a service answered, not that it
+          was the right service. */}
+      {!target.is_group &&
+        String(target.settings.probe_type.effective) === 'https' &&
+        target.settings.tls_skip_verify.effective === true && (
+          <p className="hint warn-line">
+            Certificates are not verified for this target, so a measurement here shows that
+            something answered — not that it was the right service. Trusting the issuing CA with{' '}
+            <code>--tls-ca-file</code> does the same job with verification left on.
+          </p>
+        )}
       <table className="settings">
         <tbody>
           {settingsFor(target).map((s) => (
             <SettingRow
               key={s.key}
               def={s}
-              value={target.settings[s.key] as SettingValue<number | string>}
+              value={target.settings[s.key] as SettingValue<number | string | boolean>}
               agents={agents}
               busy={busy}
               validate={(v) => validateSetting(target, s, v)}
@@ -466,11 +489,11 @@ function SettingRow({
   onSet,
 }: {
   def: SettingDef
-  value: SettingValue<number | string>
+  value: SettingValue<number | string | boolean>
   agents: AgentInfo[]
   busy: boolean
-  validate: (v: number | string | null) => string | null
-  onSet: (v: number | string | null) => Promise<boolean>
+  validate: (v: number | string | boolean | null) => string | null
+  onSet: (v: number | string | boolean | null) => Promise<boolean>
 }) {
   const isLocal = value.local !== null
   // A number whose minimum is 1 cannot legitimately be 0, so 0 there means
@@ -484,7 +507,7 @@ function SettingRow({
     setProblem(null)
   }, [shown])
 
-  const set = (next: number | string | null) => {
+  const set = (next: number | string | boolean | null) => {
     const bad = validate(next)
     setProblem(bad)
     if (bad !== null) return
@@ -507,6 +530,13 @@ function SettingRow({
             agents={agents}
             disabled={busy || !isLocal}
             onChange={set}
+          />
+        ) : def.kind === 'bool' ? (
+          <input
+            type="checkbox"
+            checked={value.effective === true}
+            disabled={busy || !isLocal}
+            onChange={(e) => set(e.target.checked)}
           />
         ) : def.kind === 'choice' ? (
           <select

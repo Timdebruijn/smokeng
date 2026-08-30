@@ -229,10 +229,19 @@ func agentRun(args []string) error {
 	token := fs.String("token", "",
 		"one-time enrolment token from the master; enrols this agent and records its id")
 	insecure := fs.Bool("insecure-allow-http", false,
-		"allow a plain-HTTP master URL; local development only. Note an enrolment "+
-			"token is a usable credential, so this is not merely a transport preference")
+		"allow a plain-HTTP master URL that is not on loopback; note an enrolment "+
+			"token is a usable credential, so this is not merely a transport preference. "+
+			"A loopback master needs no flag: that traffic never leaves the host")
+	tlsCAFiles := fs.String("tls-ca-file", "",
+		"comma-separated PEM files whose certificates https probes trust, in addition "+
+			"to the system roots. An agent verifies certificates itself, so it needs "+
+			"the same CA the master was given — the master does not supply it")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if err := probe.TrustCAFiles(splitList(*tlsCAFiles)); err != nil {
+		return fmt.Errorf("--tls-ca-file: %w", err)
 	}
 
 	key, created, err := agent.LoadOrCreateKey(*keyPath)

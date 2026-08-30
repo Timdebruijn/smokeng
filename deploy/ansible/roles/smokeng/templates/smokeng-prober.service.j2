@@ -12,6 +12,9 @@
 # a second local-only one. That is also its cost: measurements travel over HTTP
 # and are signed and verified rather than handed to the writer directly.
 #
+# Plain HTTP over loopback needs no flag: those packets never reach a network
+# interface, so there is nothing for TLS to protect them from.
+#
 # Assign targets to it by setting `agents` to this agent's name. The master
 # keeps its own built-in prober ("local"); a target names one or the other.
 [Unit]
@@ -32,8 +35,8 @@ ExecStart={{ smokeng_bin }} agent run \
     --master {{ smokeng_prober_master_url }} \
     --agent-id {{ smokeng_prober_agent_id }} \
     --key {{ smokeng_prober_key }} \
-    --db {{ smokeng_prober_db }}{% if smokeng_prober_master_url is match('http://') %} \
-    --insecure-allow-http{% endif %}
+    --db {{ smokeng_prober_db }}{% if smokeng_tls_ca_files | length > 0 %} \
+    --tls-ca-file {{ smokeng_tls_ca_files }}{% endif %}
 
 
 Restart=always

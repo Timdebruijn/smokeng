@@ -48,7 +48,15 @@ type Settings struct {
 	DNSQuery  *string
 	DNSRRType *string
 	// HTTPPath is what an http or https probe requests.
-	HTTPPath *string // space-separated agent names
+	HTTPPath *string
+	// TLSSkipVerify turns off certificate verification for an https probe.
+	//
+	// It exists because the alternative was worse: an internal service on a
+	// private PKI read as 100% loss with no way to say otherwise, which is a
+	// graph that reports an outage where there is none. Prefer adding the
+	// issuing CA with --tls-ca-file, which keeps verification on; this is the
+	// escape hatch for when that is not possible.
+	TLSSkipVerify *bool
 	// TraceIntervalS is how often to discover the path; 0 disables it.
 	// Separate from IntervalS because a traceroute costs a round trip per
 	// hop, and a path changes on a scale of days rather than seconds.
@@ -86,6 +94,7 @@ type Resolved struct {
 	DNSQuery         Value[string]
 	DNSRRType        Value[string]
 	HTTPPath         Value[string]
+	TLSSkipVerify    Value[bool]
 }
 
 // Validate checks one node's field-level invariants — the rules that hold
@@ -207,7 +216,7 @@ func New(targets []Target) (*Tree, error) {
 	if s.IntervalS == nil || s.PingsPerInterval == nil || s.ProbeMode == nil ||
 		s.BurstGapMS == nil || s.TimeoutMS == nil || s.PacketSize == nil ||
 		s.DSCP == nil || s.Agents == nil || s.TraceIntervalS == nil ||
-		s.ProbeType == nil {
+		s.ProbeType == nil || s.TLSSkipVerify == nil {
 		return nil, fmt.Errorf("tree: root %d must set every inheritable default", t.root.ID)
 	}
 	for _, n := range t.nodes {
@@ -313,6 +322,7 @@ func (t *Tree) Resolve(id int64) (Resolved, error) {
 		DNSQuery:         resolve(t, chain, func(s *Settings) *string { return s.DNSQuery }),
 		DNSRRType:        resolve(t, chain, func(s *Settings) *string { return s.DNSRRType }),
 		HTTPPath:         resolve(t, chain, func(s *Settings) *string { return s.HTTPPath }),
+		TLSSkipVerify:    resolve(t, chain, func(s *Settings) *bool { return s.TLSSkipVerify }),
 		TraceIntervalS:   resolve(t, chain, func(s *Settings) *int { return s.TraceIntervalS }),
 	}, nil
 }

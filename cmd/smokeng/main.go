@@ -187,6 +187,10 @@ func serve(args []string) error {
 		"comma-separated CIDRs whose X-Forwarded-For may be believed, e.g. 10.0.0.0/8. "+
 			"Affects log lines only: nothing here is authorised on a client address, so "+
 			"this buys accurate logs behind a proxy and nothing else")
+	tlsCAFiles := fs.String("tls-ca-file", "",
+		"comma-separated PEM files whose certificates https probes trust, in addition "+
+			"to the system roots. Use this for an internal PKI: it keeps verification "+
+			"on, where a target's tls_skip_verify turns it off")
 	defaultRole := fs.String("default-role", "viewer",
 		"what an authenticated user holding no grant may do: `viewer` or none. "+
 			"It is a setting rather than a consequence, so adding the first grant "+
@@ -233,6 +237,10 @@ func serve(args []string) error {
 	trusted, err := api.ParseTrustedProxies(*trustedProxies)
 	if err != nil {
 		return fmt.Errorf("--trusted-proxies: %w", err)
+	}
+
+	if err := probe.TrustCAFiles(splitList(*tlsCAFiles)); err != nil {
+		return fmt.Errorf("--tls-ca-file: %w", err)
 	}
 
 	switch auth.Role(*defaultRole) {
@@ -387,4 +395,17 @@ func isLoopback(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// splitList turns a comma-separated flag into its non-empty entries. Trailing
+// commas and stray spaces are an operator's typo, not a request to open a file
+// named "".
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

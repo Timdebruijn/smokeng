@@ -83,6 +83,7 @@ func targetJSON(sc *Scope, n *tree.Target) (map[string]any, error) {
 			"dns_query":          settingJSON(sc, n.ID, res.DNSQuery),
 			"dns_rr_type":        settingJSON(sc, n.ID, res.DNSRRType),
 			"http_path":          settingJSON(sc, n.ID, res.HTTPPath),
+			"tls_skip_verify":    settingJSON(sc, n.ID, res.TLSSkipVerify),
 		},
 	}, nil
 }
@@ -425,6 +426,9 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 			"trace_interval_s":   &n.Settings.TraceIntervalS,
 			"probe_port":         &n.Settings.ProbePort,
 		}
+		bools := map[string]**bool{
+			"tls_skip_verify": &n.Settings.TLSSkipVerify,
+		}
 		strs := map[string]**string{
 			"probe_mode":  &n.Settings.ProbeMode,
 			"agents":      &n.Settings.Agents,
@@ -455,6 +459,16 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 					return fmt.Errorf("settings.%s: %w", key, err)
 				}
 				*ints[key] = &v
+			case bools[key] != nil:
+				if isNull(raw) {
+					*bools[key] = nil
+					continue
+				}
+				var v bool
+				if err := json.Unmarshal(raw, &v); err != nil {
+					return fmt.Errorf("settings.%s: %w", key, err)
+				}
+				*bools[key] = &v
 			case strs[key] != nil:
 				if isNull(raw) {
 					*strs[key] = nil

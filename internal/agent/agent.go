@@ -17,6 +17,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,9 +95,15 @@ func PublicKey(priv ed25519.PrivateKey) string {
 }
 
 func New(cfg Config, key ed25519.PrivateKey, st *store.SQLite) (*Agent, error) {
-	if !strings.HasPrefix(cfg.Master, "https://") && !cfg.Insecure {
-		return nil, fmt.Errorf("agent: master URL %q is not HTTPS; pass --insecure-allow-http "+
-			"only for local development", cfg.Master)
+	// Plain HTTP to a loopback master needs no flag. The traffic never reaches
+	// a network interface, so there is nothing for TLS to protect it from, and
+	// demanding the flag anyway made the ordinary "prober as its own process
+	// on this host" arrangement look like a compromise it is not — while
+	// teaching operators to reach for --insecure-allow-http by reflex, which
+	// is the opposite of what the flag is for.
+	if !strings.HasPrefix(cfg.Master, "https://") && !cfg.Insecure && !masterIsLoopback(cfg.Master) {
+		return nil, fmt.Errorf("agent: master URL %q is neither HTTPS nor on loopback; "+
+			"pass --insecure-allow-http only for local development", cfg.Master)
 	}
 	return &Agent{
 		cfg:    cfg,
@@ -152,6 +160,7 @@ type assignment struct {
 	DNSQuery      string `json:"dns_query"`
 	DNSRRType     string `json:"dns_rr_type"`
 	HTTPPath      string `json:"http_path"`
+	TLSSkipVerify bool   `json:"tls_skip_verify"`
 }
 
 // pull fetches the agent's assignments and mirrors them into the local store,
@@ -226,6 +235,10 @@ func (a *Agent) mirror(ctx context.Context, targets []assignment) error {
 		if t.HTTPPath != "" {
 			node.Settings.HTTPPath = &t.HTTPPath
 		}
+		// Unlike the others this is set unconditionally: false is a real
+		// value here, not "no opinion", and leaving it unset would make the
+		// agent's own root default decide whether a certificate is checked.
+		node.Settings.TLSSkipVerify = &t.TLSSkipVerify
 		if err := a.st.UpsertTarget(ctx, &node); err != nil {
 			return fmt.Errorf("agent: mirror %s: %w", t.Path, err)
 		}
@@ -318,4 +331,22 @@ func bytesReader(b []byte) io.Reader {
 		return nil
 	}
 	return bytes.NewReader(b)
+}
+
+// masterIsLoopback reports whether the master URL names this host.
+//
+// Only a literal loopback address counts, not a name that resolves to one:
+// "localhost" is usually 127.0.0.1 and occasionally whatever a compromised
+// resolver says, and the point of the exemption is that the packets provably
+// cannot leave the machine.
+func masterIsLoopback(master string) bool {
+	u, err := url.Parse(master)
+	if err != nil {
+		return false
+	}
+	addr, err := netip.ParseAddr(u.Hostname())
+	if err != nil {
+		return false
+	}
+	return addr.IsLoopback()
 }

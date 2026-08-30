@@ -230,6 +230,13 @@ ALTER TABLE targets ADD COLUMN dns_rr_type TEXT;
 ALTER TABLE targets ADD COLUMN http_path TEXT;
 UPDATE targets SET probe_type = 'icmp' WHERE parent_id IS NULL AND probe_type IS NULL;
 `,
+	// v13: whether an https probe verifies the far end's certificate.
+	// Inheritable, and false at the root, so turning it off is a decision
+	// written on one node rather than a property of the installation.
+	`
+ALTER TABLE targets ADD COLUMN tls_skip_verify INTEGER;
+UPDATE targets SET tls_skip_verify = 0 WHERE parent_id IS NULL AND tls_skip_verify IS NULL;
+`,
 }
 
 func (s *SQLite) migrate() error {
@@ -323,7 +330,7 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 
 const targetCols = `id, parent_id, name, host, address_family, title, notes,
 	hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
-	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path`
+	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify`
 
 func (s *SQLite) ListTargets(ctx context.Context) ([]tree.Target, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+targetCols+" FROM targets ORDER BY id")
@@ -348,11 +355,11 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 	var host, af, title, notes, probeMode, agents sql.NullString
 	var probeType, dnsQuery, dnsRRType, httpPath sql.NullString
 	var intervalS, pings, burstGap, timeout, packetSize, dscp, traceInterval sql.NullInt64
-	var probePort sql.NullInt64
+	var probePort, tlsSkipVerify sql.NullInt64
 	err := rows.Scan(&t.ID, &parentID, &t.Name, &host, &af, &title, &notes,
 		&t.Hidden, &t.Enabled, &t.SortOrder, &intervalS, &pings, &probeMode,
 		&burstGap, &timeout, &packetSize, &dscp, &agents, &traceInterval,
-		&probeType, &probePort, &dnsQuery, &dnsRRType, &httpPath)
+		&probeType, &probePort, &dnsQuery, &dnsRRType, &httpPath, &tlsSkipVerify)
 	if err != nil {
 		return t, err
 	}
@@ -378,6 +385,7 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 		DNSQuery:         nullStr(dnsQuery),
 		DNSRRType:        nullStr(dnsRRType),
 		HTTPPath:         nullStr(httpPath),
+		TLSSkipVerify:    nullBool(tlsSkipVerify),
 	}
 	return t, nil
 }
@@ -391,8 +399,8 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 		INSERT INTO targets (id, parent_id, name, host, address_family, title, notes,
 			hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
 			burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s,
-			probe_type, probe_port, dns_query, dns_rr_type, http_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			parent_id = excluded.parent_id, name = excluded.name,
 			host = excluded.host, address_family = excluded.address_family,
@@ -412,7 +420,8 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 			probe_port = excluded.probe_port,
 			dns_query = excluded.dns_query,
 			dns_rr_type = excluded.dns_rr_type,
-			http_path = excluded.http_path`,
+			http_path = excluded.http_path,
+			tls_skip_verify = excluded.tls_skip_verify`,
 		id, ptrOrNil(t.ParentID), t.Name, ptrOrNil(t.Host), ptrOrNil(t.AddressFamily),
 		ptrOrNil(t.Title), ptrOrNil(t.Notes), t.Hidden, t.Enabled, t.SortOrder,
 		ptrOrNil(t.Settings.IntervalS), ptrOrNil(t.Settings.PingsPerInterval),
@@ -422,7 +431,7 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 		ptrOrNil(t.Settings.TraceIntervalS),
 		ptrOrNil(t.Settings.ProbeType), ptrOrNil(t.Settings.ProbePort),
 		ptrOrNil(t.Settings.DNSQuery), ptrOrNil(t.Settings.DNSRRType),
-		ptrOrNil(t.Settings.HTTPPath))
+		ptrOrNil(t.Settings.HTTPPath), ptrOrNil(t.Settings.TLSSkipVerify))
 	if err != nil {
 		return err
 	}
@@ -473,6 +482,18 @@ func nullInt(v sql.NullInt64) *int {
 	}
 	i := int(v.Int64)
 	return &i
+}
+
+// nullBool reads a boolean stored the way SQLite stores one: as an integer.
+// Scanning into sql.NullBool would work with today's driver, but going through
+// the integer the column actually holds keeps the mapping explicit and does
+// not depend on a driver's willingness to convert.
+func nullBool(v sql.NullInt64) *bool {
+	if !v.Valid {
+		return nil
+	}
+	b := v.Int64 != 0
+	return &b
 }
 
 // ptrOrNil converts a *T into a driver value: the pointee, or SQL NULL.

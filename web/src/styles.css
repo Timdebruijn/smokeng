@@ -1280,6 +1280,14 @@ a.button {
   margin-left: 6px;
 }
 
+/* A caveat about how a measurement was taken, not a failure — the same
+   register as the .quality chips on the graphs. */
+.warn-line {
+  color: var(--warn);
+  border-left: 2px solid color-mix(in srgb, var(--warn) 50%, transparent);
+  padding-left: 0.6rem;
+}
+
 .activity-line {
   display: flex;
   gap: 10px;

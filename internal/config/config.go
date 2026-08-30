@@ -52,6 +52,10 @@ type Values struct {
 	DNSQuery  *string `toml:"dns_query,omitempty"`
 	DNSRRType *string `toml:"dns_rr_type,omitempty"`
 	HTTPPath  *string `toml:"http_path,omitempty"`
+	// TLSSkipVerify turns off certificate verification for an https probe.
+	// Prefer trusting the issuing CA with --tls-ca-file; this is the escape
+	// hatch for when that is not possible.
+	TLSSkipVerify *bool `toml:"tls_skip_verify,omitempty"`
 }
 
 // AlertRule is one alert condition in TOML form, keyed by its name within the
@@ -292,6 +296,7 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 			DNSQuery:         e.DNSQuery,
 			DNSRRType:        e.DNSRRType,
 			HTTPPath:         e.HTTPPath,
+			TLSSkipVerify:    e.TLSSkipVerify,
 		}
 		if existed && !reflect.DeepEqual(before, *n) {
 			sum.Updated++
@@ -620,6 +625,7 @@ func valuesFrom(s tree.Settings) Values {
 		DNSQuery:         s.DNSQuery,
 		DNSRRType:        s.DNSRRType,
 		HTTPPath:         s.HTTPPath,
+		TLSSkipVerify:    s.TLSSkipVerify,
 		TraceIntervalS:   s.TraceIntervalS,
 	}
 }
@@ -700,6 +706,7 @@ func validateEntry(p string, e Entry) error {
 			DNSQuery:         e.DNSQuery,
 			DNSRRType:        e.DNSRRType,
 			HTTPPath:         e.HTTPPath,
+			TLSSkipVerify:    e.TLSSkipVerify,
 			TraceIntervalS:   e.TraceIntervalS,
 		},
 	}

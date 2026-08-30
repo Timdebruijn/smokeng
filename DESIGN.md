@@ -187,6 +187,21 @@ draws a healthy band over an outage. An HTTP response of 400 or above, and a ref
 connection. Both are named once per interval in the log, so "100% loss" does not send an
 operator looking at the network for a fault in the application.
 
+**Certificate trust is split deliberately into two unequal halves.** Adding a CA
+(`--tls-ca-file`, process-wide, additive to the system roots) keeps verification on and is
+the answer for an internal PKI. Turning verification off (`tls_skip_verify`, inheritable,
+per target) is the escape hatch, and is shown on the target's page and beside its graph —
+such a measurement says something answered, not that it was the right service, and that is
+a thing the reader has to be told rather than left to find in a settings table.
+
+The asymmetry is the point. The CA is a deployment fact, so it is a flag: a PEM in the
+target tree would mean shipping certificates through the API and inheriting them down the
+tree. Skipping verification is a decision about one endpoint, so it is a setting, and there
+is deliberately **no instance-wide switch** for it — one flag that quietly weakened every
+https target at once is not a decision anyone reviewed. The cost of the flag is that a
+remote agent needs the same CA file deployed to it; the master does not distribute CAs,
+because an agent trusting whatever the master sends is a wider relationship than it needs.
+
 **`tcp` has no default port and none is guessed.** A `tcp` target with no `probe_port`
 resolved is refused by `validateSpec` before it is ever scheduled, named in the log once,
 and flagged on its page in the UI. Guessing 80 would produce a graph of something nobody

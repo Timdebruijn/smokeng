@@ -231,6 +231,7 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 			DNSQuery:       res.DNSQuery.Effective,
 			DNSRRType:      res.DNSRRType.Effective,
 			HTTPPath:       res.HTTPPath.Effective,
+			TLSSkipVerify:  res.TLSSkipVerify.Effective,
 		}
 		// A target that cannot be measured as configured is skipped and said
 		// out loud. Probing it anyway would mean guessing at the missing

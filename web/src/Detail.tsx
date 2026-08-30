@@ -39,6 +39,7 @@ const SETTING_LABELS: {
   { key: 'dns_query', label: 'DNS query', types: ['dns'] },
   { key: 'dns_rr_type', label: 'DNS record type', types: ['dns'] },
   { key: 'http_path', label: 'HTTP path', types: ['http', 'https'] },
+  { key: 'tls_skip_verify', label: 'Skip TLS verification', types: ['https'] },
   { key: 'dscp', label: 'DSCP' },
   { key: 'agents', label: 'Agents' },
   { key: 'trace_interval_s', label: 'Path discovery', unit: 's' },
@@ -128,6 +129,15 @@ export default function Detail({
         </button>
       </div>
 
+      {/* On the page where the graph is actually read, because the number
+          beside it means less than it looks: something answered, not
+          necessarily the service this target names. */}
+      {probeType === 'https' && target.settings.tls_skip_verify.effective === true && (
+        <p className="hint warn-line">
+          Certificates are not verified for this target.
+        </p>
+      )}
+
       <div className="stat-grid">
         <Stat label="Median" value={stats?.median != null ? fmtUs(stats.median) : '—'} />
         <Stat label="p95" value={stats?.p95 != null ? fmtUs(stats.p95) : '—'} />
@@ -188,7 +198,7 @@ export default function Detail({
           {SETTING_LABELS.filter(
             (s) => !s.types || s.types.includes(probeType),
           ).map((s) => {
-            const v = target.settings[s.key] as SettingValue<number | string>
+            const v = target.settings[s.key] as SettingValue<number | string | boolean>
             return (
               <div key={s.key} className="setting-line">
                 <span className="setting-label">{s.label}</span>

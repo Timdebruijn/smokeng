@@ -28,4 +28,6 @@ type TargetSpec struct {
 	DNSQuery  string
 	DNSRRType string
 	HTTPPath  string
+	// TLSSkipVerify turns off certificate verification for an https probe.
+	TLSSkipVerify bool
 }

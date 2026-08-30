@@ -153,6 +153,8 @@ export interface TargetSettings {
   dns_query: SettingValue<string>
   dns_rr_type: SettingValue<string>
   http_path: SettingValue<string>
+  /** Off by default; trusting the issuing CA is the better answer. */
+  tls_skip_verify: SettingValue<boolean>
 }
 
 export type SettingKey = keyof TargetSettings
@@ -207,7 +209,7 @@ export interface TargetPatch {
   enabled?: boolean
   sort_order?: number
   // A setting set to null is cleared, reverting the node to inheritance.
-  settings?: Partial<Record<SettingKey, number | string | null>>
+  settings?: Partial<Record<SettingKey, number | string | boolean | null>>
 }
 
 export function createTarget(body: TargetPatch): Promise<unknown> {

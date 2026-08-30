@@ -168,7 +168,8 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 			"probe_port":  res.ProbePort.Effective,
 			"dns_query":   res.DNSQuery.Effective,
 			"dns_rr_type": res.DNSRRType.Effective,
-			"http_path":   res.HTTPPath.Effective,
+			"http_path":       res.HTTPPath.Effective,
+			"tls_skip_verify": res.TLSSkipVerify.Effective,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"targets": out})

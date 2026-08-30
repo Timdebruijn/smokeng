@@ -85,6 +85,7 @@ table.
 | `dns_query` | string | unset | a domain name | What a `dns` probe asks for |
 | `dns_rr_type` | string | unset | `A`, `AAAA`, `CNAME`, `MX`, `NS`, `PTR`, `SOA`, `SRV`, `TXT` | Which record a `dns` probe asks for |
 | `http_path` | string | unset | a path | What an `http` or `https` probe requests; unset means `/` |
+| `tls_skip_verify` | bool | `false` | | Turn off certificate verification for an `https` probe — read the caveat below |
 | `agents` | array | `["local"]` | every name must be enrolled | Which vantage points measure this target |
 | `trace_interval_s` | int | `300` | ≥ 0 | Seconds between traceroutes; `0` disables path discovery |
 
@@ -169,9 +170,9 @@ Two consequences worth knowing before you point one at production:
 - **Redirects are not followed.** A 3xx is one round trip to this host and is recorded as
   such. Following it would add a second round trip, to a second host, and report the pair
   as one measurement of the first.
-- **Certificates are verified.** An `https` target with a self-signed certificate reads as
-  total loss. There is no switch to turn that off; point such a target at `tcp` on 443 if
-  you only want to know the far end is up.
+- **Certificates are verified**, and an unverifiable one reads as total loss. For an
+  internal PKI the right answer is to trust the issuing CA — see below — which keeps
+  verification on. `tls_skip_verify = true` turns it off for one target, as a last resort.
 
 **`irtt`** needs [`irtt server`](https://github.com/heistp/irtt) running at the far end,
 so it only works where you control both sides. What it buys is a measurement the network
@@ -184,6 +185,51 @@ a target between `icmp` and `irtt` changes what the packets are, not when they g
 IRTT also measures one-way delay in each direction, which is more than smokeng stores.
 Only the round trip is kept: a measurement here is one distribution per interval, and
 splitting it would change what a measurement *is*.
+
+### Internal certificates
+
+Most `https` targets worth watching are internal, and an internal certificate is issued by
+a CA the host does not trust. Two ways out, and they are not equivalent.
+
+**Trust the CA.** Verification stays on; the probe simply knows who signed the certificate.
+
+```bash
+smokeng serve --tls-ca-file /etc/ssl/certs/gemeentex-root.pem
+```
+
+The flag takes a comma-separated list, and each file may hold any number of certificates.
+They are added to the system roots rather than replacing them, so public endpoints keep
+working — a file that parses to no certificate at all is an error rather than a silent
+no-op, because the intent was to trust something.
+
+Two things follow from it being a flag rather than a target setting. It applies to the
+whole instance, which is fine: trusting a CA is not the same as measuring anything through
+it. And **a remote agent needs the same file deployed to it** — the agent verifies
+certificates itself, and the master deliberately does not hand out CAs, because an agent
+trusting whatever the master sends would be a wider relationship than it needs.
+
+```bash
+smokeng agent run --master https://… --agent-id 3 --tls-ca-file /etc/ssl/certs/gemeentex-root.pem
+```
+
+**Or turn verification off for that target.**
+
+```toml
+[targets."Klanten/GemeenteX/oud-apparaat"]
+host = "10.20.0.9"
+address_family = "v4"
+probe_type = "https"
+tls_skip_verify = true
+```
+
+It is inheritable like any other setting, so it can cover a subtree — but prefer not to.
+A measurement taken this way says something answered on port 443; it does not say it was
+the service this target names. smokeng shows it on the target's page and next to the graph
+for exactly that reason, rather than leaving it to be discovered in a settings table.
+
+There is no instance-wide switch for it. Turning verification off is a decision about one
+endpoint, and a flag that quietly weakened every https target at once is not a decision
+anybody reviewed.
 
 ### Timing accuracy
 

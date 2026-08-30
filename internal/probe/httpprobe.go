@@ -61,6 +61,10 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return probeDialer(spec).DialContext(ctx, tcpNetwork(spec.Family), dest)
 		},
+		// The certificate is checked against the target's host, which is what
+		// the URL names — not against the address we dialled. Verifying the
+		// address would fail every correctly-configured virtual host.
+		TLSClientConfig: tlsConfigFor(spec),
 	}
 	defer tr.CloseIdleConnections()
 	// No redirect following: a 302 would add a second round trip, to a second
