@@ -130,11 +130,10 @@ func configCmd(args []string) error {
 		if fs.NArg() != 1 {
 			return errors.New("usage: smokeng config import-smokeping [--db path] [--also-ipv6] [--dry-run] TARGETS-FILE")
 		}
-		data, err := os.ReadFile(fs.Arg(0))
-		if err != nil {
-			return err
-		}
-		f, warnings, err := config.ParseSmokePing(data, *alsoIPv6)
+		// The file form, not the byte form, so @include is followed relative to
+		// the file — a real SmokePing install is almost always split across
+		// included files.
+		f, warnings, err := config.ParseSmokePingFile(fs.Arg(0), *alsoIPv6)
 		// Warnings name what SmokePing expressed that smokeng will not, so
 		// they go to stderr even when the import itself fails.
 		for _, w := range warnings {

@@ -28,7 +28,8 @@ dropped in silence. You will typically see some of these:
 
 | SmokePing construct | What happens |
 | --- | --- |
-| `@include` | Not followed. Import each included file separately. |
+| `@include` | **Followed**, relative to the including file, so pointing the importer at your main config pulls the whole install in one command. An include cycle is broken with a warning rather than looping. |
+| `probe = …` | **Mapped to a smokeng probe type** — see below. |
 | `host = DYNAMIC` | Not imported. smokeng re-resolves hostnames on their DNS TTL instead, so a dynamic address needs no special mode. |
 | `host = a b c` (overlay graphs) | Not imported. Multi-host overlays are a rendering feature; add the hosts as separate targets. |
 | `parents = …` | Not imported. smokeng has one target tree, not alternative hierarchies. |
@@ -36,12 +37,26 @@ dropped in silence. You will typically see some of these:
 | `slaves = …` | Imported as an `agents` list, but the agents must be enrolled separately first — with a one-time enrolment token or with `smokeng agent add` — or the import refuses the unknown names. See [Remote agents](agents.md). |
 | `nomasterpoll` with no slaves | Warned about — the target would never be measured. |
 
-SmokePing's `probe = …` lines are not translated, and every imported target arrives as
-`icmp`. smokeng has its own probe types — `dns`, `tcp`, `http`, `https` and `irtt` as well
-as `icmp` — but the names and per-probe settings do not map one to one onto SmokePing's,
-and a wrong guess would measure something other than what you asked for while looking
-correct. Set `probe_type` on the imported targets yourself; see
-[Configuration](configuration.md#probe-types).
+## Probe types come across
+
+The importer reads the `*** Probes ***` section and maps each target's probe module to a
+smokeng probe type, following the subclass chain so a renamed probe still resolves:
+
+| SmokePing module | smokeng `probe_type` | Parameters carried |
+| --- | --- | --- |
+| `FPing`, `FPing6` | `icmp` | — (left implicit; icmp is the default) |
+| `EchoPingDNS`, `AnotherDNS`, `DNS` | `dns` | `lookup` → `dns_query`, `recordtype` → `dns_rr_type` |
+| `EchoPingHttp`, `Curl` | `http` | `port` → `probe_port` |
+| `EchoPingHttps` | `https` | `port` → `probe_port` |
+| `TCPPing`, `EchoPingTcp` | `tcp` | `port` → `probe_port` |
+
+Two things need your eye afterwards. A `tcp` target with no port in the SmokePing config is
+imported without one and warned about — smokeng will not measure a `tcp` target until you
+set `probe_port`. And an `http`/`https` probe's path is left at `/`: SmokePing hides it in
+`urlformat`/`url` in ways too varied to reconstruct safely, so set `http_path` by hand where
+a probe requested a specific path. A probe module the importer does not recognise is
+imported as `icmp` with a warning naming it, so nothing is measured as something it is not
+without saying so.
 
 ## What is different once you are across
 
