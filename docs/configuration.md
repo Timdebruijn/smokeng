@@ -182,6 +182,13 @@ behalf. It runs one session per interval rather than N independent probes — th
 paces the train itself and reports each packet — and it honours `probe_mode`, so switching
 a target between `icmp` and `irtt` changes what the packets are, not when they go out.
 
+`irtt` in burst mode needs a `burst_gap_ms` above zero: a zero send interval is one the
+library rejects before a packet leaves, so smokeng refuses such a target up front rather
+than schedule it to fail every interval. When a session cannot open at all — the server is
+down, or the far end is unreachable — the interval is recorded as a *send failure*, flagged
+as smokeng's own, rather than as clean network loss: no round trip was attempted, so
+blaming the far end for losing one would be the wrong story.
+
 IRTT also measures one-way delay in each direction, which is more than smokeng stores.
 Only the round trip is kept: a measurement here is one distribution per interval, and
 splitting it would change what a measurement *is*.

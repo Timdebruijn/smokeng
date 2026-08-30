@@ -38,13 +38,7 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 		port = defaultIRTTPort
 	}
 
-	// Pace the session the way the target's probe mode asks for, so switching
-	// a target between icmp and irtt does not silently change when the packets
-	// go out — only what they are.
-	step := time.Duration(spec.BurstGapMS) * time.Millisecond
-	if spec.Mode == "spread" {
-		step = time.Duration(spec.IntervalS) * time.Second / time.Duration(spec.Pings)
-	}
+	step := irttStep(spec)
 
 	cfg := irtt.NewClientConfig()
 	cfg.RemoteAddress = net.JoinHostPort(addr.String(), strconv.Itoa(port))
@@ -69,31 +63,68 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 
 	r, err := irtt.NewClient(cfg).Run(rctx)
 	if err != nil {
-		// The session never opened, so no test packet was sent. It is still
-		// recorded as a fully attempted, fully lost interval rather than as a
-		// gap: an unreachable irtt server is total loss in the same sense that
-		// an unreachable host is, and leaving a hole in the graph would show
-		// nothing wrong where something is.
-		now := time.Now()
+		// The session never opened, so not one test packet reached the wire.
+		// That is a send failure, not network loss: recording it as clean
+		// total loss would blame the far end for a round trip that was never
+		// attempted — and when the cause is local (a rejected config, a socket
+		// the host would not give us) it says the server is down when it is
+		// fine. markSendFailed flags the interval so the loss rail still shows
+		// it, but labelled as ours rather than the network's.
 		for i := range spec.Pings {
-			col.markSent(i, 0, now)
+			col.markSendFailed(i)
 		}
-		log.Printf("probe: target %d (%s): irtt session to %s failed: %v; interval recorded as total loss",
+		log.Printf("probe: target %d (%s): irtt session to %s never opened: %v; recorded as a send failure",
 			spec.TargetID, spec.Host, cfg.RemoteAddress, err)
 		return
 	}
 
+	// Run returns nil even when the session broke part-way: irtt reports a send
+	// or receive error inside the Result rather than from Run. A send error
+	// means the un-sent tail never left the host, and a receive error means
+	// replies that did arrive were dropped on our side — both are our loss, not
+	// the network's, and the ICMP path has FlagSocketOverflow for exactly this.
+	if r.SendErr != nil || r.ReceiveErr != nil {
+		log.Printf("probe: target %d (%s): irtt session to %s ended early (send=%v receive=%v); "+
+			"the loss in this interval may be ours, not the network's",
+			spec.TargetID, spec.Host, cfg.RemoteAddress, r.SendErr, r.ReceiveErr)
+	}
+
 	now := time.Now()
+	seen := 0
 	for i, rt := range r.RoundTrips {
 		// Never write past the collector: a server that paced differently than
 		// asked could return more results than the interval has room for.
 		if i >= spec.Pings {
 			break
 		}
+		seen++
 		if rt.RoundTripData == nil || !rt.ReplyReceived() {
-			col.markSent(i, 0, now) // sent, unanswered: loss
+			// A send error truncates RoundTrips, so an unanswered slot below the
+			// break is a genuine send failure; above it, an ordinary lost reply.
+			if r.SendErr != nil {
+				col.markSendFailed(i)
+			} else {
+				col.markSent(i, 0, now) // sent, unanswered: loss
+			}
 			continue
 		}
 		col.recordRoundTrip(i, rt.RTT())
 	}
+	// A send error leaves RoundTrips short of Pings; the tail never went out, so
+	// it is a send failure, not silent absence — otherwise Sent would under-count
+	// and the interval would look narrower than it was asked to be.
+	for i := seen; i < spec.Pings; i++ {
+		col.markSendFailed(i)
+	}
+}
+
+// irttStep is the spacing between an irtt session's packets, paced to match the
+// target's probe mode so switching a target between icmp and irtt changes what
+// the packets are, not when they go out. Shared with validateSpec, which
+// refuses a target whose step is not positive.
+func irttStep(spec TargetSpec) time.Duration {
+	if spec.Mode == "spread" && spec.Pings > 0 {
+		return time.Duration(spec.IntervalS) * time.Second / time.Duration(spec.Pings)
+	}
+	return time.Duration(spec.BurstGapMS) * time.Millisecond
 }

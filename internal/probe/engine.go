@@ -251,11 +251,24 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 // is only answerable once inheritance has been resolved, which is here.
 func validateSpec(spec TargetSpec) error {
 	switch spec.ProbeType {
-	case "", "icmp", "dns", "http", "https", "irtt":
+	case "", "icmp", "dns", "http", "https":
 		return nil
 	case "tcp":
 		if spec.ProbePort == 0 {
 			return errors.New("probe_type tcp needs a probe_port, and there is no sensible port to guess")
+		}
+		return nil
+	case "irtt":
+		// A zero send interval makes irtt's own config validation reject the
+		// session before a single packet leaves — so the target would be
+		// scheduled to fail every interval, and finalize would record a
+		// healthy server as total loss forever. burst mode with burst_gap_ms=0
+		// is the way to reach it (tree.Validate allows a zero gap because it is
+		// fine for icmp). Refuse it here, the way a portless tcp target is
+		// refused, rather than measure a lie.
+		if irttStep(spec) <= 0 {
+			return errors.New("probe_type irtt needs a positive send interval; in burst mode " +
+				"that means burst_gap_ms > 0")
 		}
 		return nil
 	}

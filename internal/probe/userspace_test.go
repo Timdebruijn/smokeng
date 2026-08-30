@@ -168,10 +168,20 @@ func TestValidateSpecRequiresAPortForTCP(t *testing.T) {
 	if err := validateSpec(TargetSpec{ProbeType: "tcp", ProbePort: 443}); err != nil {
 		t.Fatalf("tcp with a port was refused: %v", err)
 	}
-	for _, ty := range []string{"", "icmp", "dns", "http", "https", "irtt"} {
+	for _, ty := range []string{"", "icmp", "dns", "http", "https"} {
 		if err := validateSpec(TargetSpec{ProbeType: ty}); err != nil {
 			t.Fatalf("%q was refused without a port, but has a default: %v", ty, err)
 		}
+	}
+	// irtt needs no port either, but it does need a positive send interval —
+	// with one it is accepted, without one (a zero burst gap) it is refused,
+	// because a zero-interval session is one irtt rejects before a packet goes
+	// out and would otherwise graph a healthy server as total loss forever.
+	if err := validateSpec(TargetSpec{ProbeType: "irtt", Mode: "burst", BurstGapMS: 50}); err != nil {
+		t.Fatalf("irtt with a positive gap was refused: %v", err)
+	}
+	if err := validateSpec(TargetSpec{ProbeType: "irtt", Mode: "burst", BurstGapMS: 0}); err == nil {
+		t.Fatal("irtt with a zero send interval was accepted; it would fail every interval")
 	}
 	if err := validateSpec(TargetSpec{ProbeType: "carrier-pigeon"}); err == nil {
 		t.Fatal("a type with no prober behind it was accepted")

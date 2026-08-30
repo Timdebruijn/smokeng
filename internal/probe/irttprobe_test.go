@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/heistp/irtt"
+
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 // irttServer starts a real irtt server on a free loopback port. The probe is a
@@ -123,9 +125,16 @@ func TestProbeIRTTUnreachableServerIsTotalLoss(t *testing.T) {
 		time.Now().Add(2*time.Second))
 	m := col.finalize(spec, 0, conditions{})
 
+	// The session never opened, so no packet reached the wire. It is a send
+	// failure, flagged as ours — not clean network loss, which would blame the
+	// far end for a round trip that was never attempted.
 	if m.Sent != spec.Pings || m.Received != 0 {
-		t.Fatalf("got %d sent %d received, want the interval recorded as fully attempted and fully lost",
+		t.Fatalf("got %d sent %d received, want the interval fully attempted and fully unanswered",
 			m.Sent, m.Received)
+	}
+	if m.Flags&store.FlagSendFailed == 0 {
+		t.Fatalf("flags 0x%x do not mark this as a send failure; an unreachable irtt server that "+
+			"never received a packet must not read as clean network loss", m.Flags)
 	}
 }
 
