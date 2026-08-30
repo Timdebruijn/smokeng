@@ -48,6 +48,15 @@ type conn struct {
 	pending   map[uint16]*pendingPing
 	byCounter map[uint32]*pendingPing
 
+	// txDesync latches once a send fails in a way that may have left the
+	// kernel's SO_TIMESTAMPING_OPT_ID counter out of step with ours (see the
+	// Sendto error path). From that point the byCounter map cannot be trusted
+	// to attribute a transmit stamp to the right ping, so kernel TX timestamps
+	// are abandoned for the socket's life and every later measurement falls
+	// back to a userspace TX stamp, flagged. Losing sync is unrecoverable
+	// without a reference point, and the socket lives until the process exits.
+	txDesync atomic.Bool
+
 	closed atomic.Bool
 	late   *atomic.Int64
 	strays atomic.Int64
@@ -212,7 +221,13 @@ func (c *conn) send(col *collector, idx int, dst netip.Addr, packetSize int) err
 	// ping — see the marshal path below, which rolls it back.
 	p := &pendingPing{col: col, idx: idx, counter: c.txCount}
 	c.pending[seq] = p
-	if c.caps.KernelTX {
+	// Once the counter may be desynced, a byCounter entry would attribute a
+	// later packet's transmit stamp to this ping — the stamp of the next send
+	// usually lands inside this ping's [txUser, rx] window, so finalize's
+	// bounds check passes it as a confident, wrong, fully-kernel-timestamped
+	// RTT. Skip the map entirely instead: no entry means no kernel TX stamp
+	// means a flagged userspace fallback, which is the honest outcome.
+	if c.caps.KernelTX && !c.txDesync.Load() {
 		c.byCounter[c.txCount] = p
 	}
 	c.txCount++
@@ -242,13 +257,20 @@ func (c *conn) send(col *collector, idx int, dst netip.Addr, packetSize int) err
 	}
 	col.markSent(idx, seq, time.Now())
 	if err := unix.Sendto(c.fd, wire, 0, sa); err != nil {
-		// Deliberately does not wind the counter back. Some errors are
-		// returned before the kernel assigns a timestamp id and some after —
-		// ENOBUFS at the queue has already consumed one — so guessing would be
-		// wrong half the time. finalize() checks each kernel stamp against the
-		// ping it is attributed to instead, which catches a drift from any
-		// cause and degrades to userspace timestamps, flagged, rather than
-		// reporting a confident wrong number.
+		// The counter is not wound back, because whether the kernel consumed a
+		// timestamp id here is unknowable: a route-lookup failure
+		// (EHOSTUNREACH) fails before sk_tskey is incremented, while ENOBUFS at
+		// the queue has already consumed one. Either way our count and the
+		// kernel's may now differ by one, permanently — so from here kernel TX
+		// stamps on this socket cannot be trusted to land on the right ping.
+		// Latch that and abandon them; every later measurement degrades to a
+		// flagged userspace TX stamp, which is honest, where the old bounds
+		// check silently passed the neighbour's stamp as a confident wrong RTT.
+		if c.caps.KernelTX && !c.txDesync.Swap(true) {
+			log.Printf("probe: %s ICMP socket: a send failed (%v); the kernel transmit-stamp "+
+				"counter may be desynced, so kernel TX timestamps are abandoned for this "+
+				"socket and measurements fall back to userspace TX (flagged)", c.family, err)
+		}
 		c.forgetSeq(seq)
 		col.markSendFailed(idx)
 		return err
