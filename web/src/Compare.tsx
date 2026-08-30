@@ -79,6 +79,12 @@ export default function Compare({
     new Map(),
   )
   const [error, setError] = useState<string | null>(null)
+  // The canvas is width:100%, so its box changes without any of the draw
+  // effect's data dependencies changing — a sidebar toggle, a window resize,
+  // or the "Larger text" a11y zoom. Observe the box and feed it back in, or
+  // the backing store keeps its old pixel size and the browser stretches a
+  // stale bitmap. Plot.tsx does exactly this; Compare must too.
+  const [boxW, setBoxW] = useState(0)
 
   const keys = useMemo(() => series.map((s) => s.key).join('|'), [series])
 
@@ -106,6 +112,17 @@ export default function Compare({
     }
     // keys rather than series: the array identity changes on every render.
   }, [keys, from, to, refreshKey])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ro = new ResizeObserver(([entry]) => {
+      setBoxW(Math.round(entry.contentRect.width))
+    })
+    ro.observe(canvas)
+    setBoxW(canvas.clientWidth)
+    return () => ro.disconnect()
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -208,7 +225,7 @@ export default function Compare({
       }
       ctx.stroke()
     })
-  }, [data, series, from, to, logScale])
+  }, [data, series, from, to, logScale, boxW])
 
   return (
     <div className="card compare">

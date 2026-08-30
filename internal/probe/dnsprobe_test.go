@@ -111,3 +111,27 @@ func TestProbeDNSIgnoresAForeignTransactionID(t *testing.T) {
 		t.Fatalf("got %+v; a reply under another id was counted as this query's answer", got)
 	}
 }
+
+// A DNS query that fails to reach the wire (here an oversized datagram forcing
+// EMSGSIZE) must come back with Sent=false so probeDNS records it as a send
+// failure, not as the resolver going lossy. TXUser is still stamped — it is set
+// just before the write — which is exactly why Sent, not TXUser, is the signal.
+func TestDNSRoundTripWriteFailureIsNotSent(t *testing.T) {
+	port := dnsResponder(t) // a real listener, so connect() succeeds
+	spec := dnsSpec(t, port)
+
+	oversized := make([]byte, 70000) // larger than a UDP datagram can carry
+	res, err := dnsRoundTrip(context.Background(), oversized, 0,
+		netip.MustParseAddr("127.0.0.1"), port, spec)
+	if err == nil {
+		t.Fatal("an oversized query was sent without error; expected the write to fail")
+	}
+	if res.Sent {
+		t.Fatal("Sent is true after a failed write; probeDNS would record resolver loss for a " +
+			"query that never left the host")
+	}
+	if res.TXUser.IsZero() {
+		t.Fatal("TXUser should still be stamped — the point is that Sent, not TXUser, tells the " +
+			"caller the query never went out")
+	}
+}

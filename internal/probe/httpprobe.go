@@ -92,7 +92,19 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 	col.markSent(idx, 0, time.Now())
 	resp, err := client.Do(req)
 	if err != nil {
-		return // no response inside the timeout: loss
+		// fd or ephemeral-port exhaustion on the prober is ours, not the
+		// service failing — the same distinction the tcp probe draws. Every
+		// other error (refused, timed out, TLS rejected) is a real measurement
+		// of the endpoint and stays loss.
+		if isLocalResourceError(err) {
+			col.markSendFailed(idx)
+			if idx == 0 {
+				log.Printf("probe: target %d (%s): request to %s failed locally: %v; "+
+					"recorded as a send failure, not loss", spec.TargetID, spec.Host, url, err)
+			}
+			return
+		}
+		return // no response inside the timeout, or a refused/reset connection: loss
 	}
 	// Do returns once the headers are in hand; the body is still streaming.
 	// Stamp here, which is time-to-first-byte, and do not read the body: how

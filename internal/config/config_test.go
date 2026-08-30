@@ -683,3 +683,63 @@ dns_rr_type = "AAAA"
 		}
 	}
 }
+
+// H1 regression: a boolean default in [defaults] must survive an import.
+//
+// overlayValues copies every inheritable default from the file onto the root
+// row; tls_skip_verify was the one field it omitted, so setting it in
+// [defaults] and importing silently changed nothing — a security-relevant
+// setting the operator believed they had turned on. This also exercises the
+// full round-trip, since an exported-then-reimported file must be stable.
+func TestImportDefaultsTLSSkipVerify(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+
+	const cfg = `
+[defaults]
+interval_s = 60
+pings_per_interval = 20
+probe_mode = "burst"
+burst_gap_ms = 10
+tls_skip_verify = true
+
+[targets."Svc"]
+host = "192.0.2.9"
+address_family = "v4"
+probe_type = "https"
+`
+	if _, err := Import(ctx, s, []byte(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+
+	_, byPath := mustTree(t, s)
+	root := byPath["/"]
+	if root.Settings.TLSSkipVerify == nil || !*root.Settings.TLSSkipVerify {
+		t.Fatal("[defaults] tls_skip_verify = true was dropped on import; the root still verifies")
+	}
+
+	// And the leaf inherits it, which is the whole point of setting it on the
+	// root — the operator's intent was every https target under it.
+	tr, _ := mustTree(t, s)
+	res, err := tr.Resolve(byPath["/Svc"].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.TLSSkipVerify.Effective {
+		t.Fatal("the https leaf did not inherit tls_skip_verify from the root")
+	}
+
+	// Round-trip: export and re-import must preserve it.
+	data, err := Export(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2 := open(t)
+	if _, err := Import(ctx, s2, data, false); err != nil {
+		t.Fatalf("re-import of exported config: %v", err)
+	}
+	_, byPath2 := mustTree(t, s2)
+	if v := byPath2["/"].Settings.TLSSkipVerify; v == nil || !*v {
+		t.Fatal("tls_skip_verify did not survive an export/import round-trip")
+	}
+}

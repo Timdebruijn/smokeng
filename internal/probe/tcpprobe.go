@@ -31,6 +31,17 @@ func probeTCP(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 	col.markSent(idx, 0, time.Now())
 	c, err := probeDialer(spec).DialContext(dctx, tcpNetwork(spec.Family), dest)
 	if err != nil {
+		// The prober running out of file descriptors or ephemeral ports is not
+		// the target failing — recording it as loss would draw an outage on a
+		// service that may be answering fine. Flag it as ours instead.
+		if isLocalResourceError(err) {
+			col.markSendFailed(idx)
+			if idx == 0 {
+				log.Printf("probe: target %d (%s): tcp/%d dial failed locally: %v; "+
+					"recorded as a send failure, not loss", spec.TargetID, spec.Host, spec.ProbePort, err)
+			}
+			return
+		}
 		// A refusal is a completed round trip to the host, but not to the
 		// service — and the service is what a tcp probe is pointed at, so it
 		// counts as loss exactly as a timeout does. Said once per interval

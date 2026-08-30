@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"errors"
 	"net"
 	"syscall"
 
@@ -60,4 +61,32 @@ func dscpControl(dscp int, family string) func(network, address string, c syscal
 // probeDialer is the dialer every connection-based userspace probe uses.
 func probeDialer(spec TargetSpec) *net.Dialer {
 	return &net.Dialer{Control: dscpControl(spec.DSCP, spec.Family)}
+}
+
+// isLocalResourceError reports whether a dial error was smokeng's own machine
+// running out of something, rather than a statement about the target or the
+// path to it.
+//
+// The distinction matters because the two are recorded differently: a target
+// that refuses a connection or times out is genuine loss, measured; but the
+// prober running out of file descriptors or ephemeral ports is a failure to
+// measure at all, and recording that as loss would draw an outage on a target
+// that may be perfectly healthy. Only the unambiguous local-exhaustion errnos
+// are treated this way — EMFILE and friends can only be ours. ECONNREFUSED,
+// timeouts, and unreachable-host/network are left as loss, because for a
+// remote target those describe the thing being measured, and a monitoring
+// tool should show them.
+func isLocalResourceError(err error) bool {
+	for _, e := range []syscall.Errno{
+		syscall.EMFILE,        // this process is out of file descriptors
+		syscall.ENFILE,        // the whole machine is out of file descriptors
+		syscall.EADDRNOTAVAIL, // no ephemeral port to source the connection from
+		syscall.ENOBUFS,       // no kernel buffer to build the packet
+		syscall.ENOMEM,        // out of memory
+	} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
 }

@@ -18,6 +18,12 @@ import (
 
 // dnsResult is one query's outcome, in the terms the collector records.
 type dnsResult struct {
+	// Sent is true once the query is actually on the wire. A write that fails
+	// (EPERM from a firewall, ENOBUFS, EMSGSIZE) leaves it false with TXUser
+	// already stamped, so the caller can tell a local send failure — which is
+	// ours — from a query that went out and drew no answer, which is the
+	// resolver's. TXUser alone cannot: it is set just before the write.
+	Sent bool
 	// TXUser is stamped just before the query is handed to the kernel, and is
 	// what finalize falls back to when there is no kernel stamp.
 	TXUser time.Time
@@ -132,8 +138,11 @@ func dnsRoundTrip(ctx context.Context, query []byte, wantID uint16, addr netip.A
 
 	res.TXUser = time.Now()
 	if _, err := conn.Write(query); err != nil {
+		// Sent stays false: the query never reached the wire, so this is a
+		// send failure, not resolver loss.
 		return res, fmt.Errorf("dns: send: %w", err)
 	}
+	res.Sent = true
 
 	buf := make([]byte, 1500)
 	oob := make([]byte, 256)

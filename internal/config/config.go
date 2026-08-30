@@ -670,6 +670,9 @@ func overlayValues(dst *tree.Settings, v Values) {
 	if v.HTTPPath != nil {
 		dst.HTTPPath = v.HTTPPath
 	}
+	if v.TLSSkipVerify != nil {
+		dst.TLSSkipVerify = v.TLSSkipVerify
+	}
 	if v.TraceIntervalS != nil {
 		dst.TraceIntervalS = v.TraceIntervalS
 	}

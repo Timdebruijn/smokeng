@@ -59,19 +59,22 @@ func probeDNS(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 	}
 
 	res, err := dnsRoundTrip(ctx, m.Data, m.ID, addr, port, spec)
-	if res.TXUser.IsZero() {
-		// It never left: opening or connecting the socket failed.
+	if !res.Sent {
+		// The query never reached the wire — the socket would not open or
+		// connect, or the write itself failed (a firewall REJECT on OUTPUT,
+		// ENOBUFS, an oversized query). That is smokeng's side, not the
+		// resolver's, so it must not read as a healthy resolver going lossy.
 		col.markSendFailed(idx)
 		if idx == 0 {
-			log.Printf("probe: target %d (%s): dns query to %s: %v",
+			log.Printf("probe: target %d (%s): dns query to %s never sent: %v",
 				spec.TargetID, spec.Host, server, err)
 		}
 		return
 	}
 	col.markSent(idx, 0, res.TXUser)
 	if err != nil {
-		// No answer inside the timeout is loss, the same as an unanswered
-		// echo. It is not a send failure: the query did go out.
+		// The query went out and no answer came back inside the timeout: loss,
+		// the same as an unanswered echo, and genuinely the resolver's.
 		return
 	}
 	// Hand both stamps to the collector and let finalize decide. It already

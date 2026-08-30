@@ -259,6 +259,16 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	if cond.overflowed {
 		m.Flags |= store.FlagSocketOverflow
 	}
+	// A truncated bucket is not comparable in width with a whole one, and that
+	// is exactly what the flag says. It was only ever set inside the per-ping
+	// loop, for a probe still in flight when the bucket was cut short — so an
+	// interval whose sent probes had all answered before shutdown was stored
+	// as a complete one, a quarter-width distribution claiming to be whole.
+	// The condition is a property of the bucket, so it belongs here, not on a
+	// ping that may or may not exist.
+	if cond.truncated {
+		m.Flags |= store.FlagTruncated
+	}
 	now := time.Now()
 	if clockStepped(now.Round(0).Sub(c.startWall), now.Sub(c.startMono)) {
 		m.Flags |= store.FlagClockStep
@@ -274,10 +284,11 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 			continue
 		}
 		// Cut short: a probe still within its timeout was abandoned, not
-		// lost. Counting it as attempted would report loss that never
-		// happened, and a service restart would look like an outage.
+		// lost, so it is excluded from the count. (The bucket-level flag is
+		// already set above; this only decides not to count the probe.)
+		// Counting it as attempted would report loss that never happened, and
+		// a service restart would look like an outage.
 		if cond.truncated && p.rx.IsZero() && !p.sendFailed && p.txUser.After(deadline) {
-			m.Flags |= store.FlagTruncated
 			continue
 		}
 		// A probe the kernel refused to transmit was still attempted, and is
