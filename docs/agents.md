@@ -36,8 +36,8 @@ naming is an administrative act, and an agent that named itself could claim a
 name your targets are already assigned to.
 
 The token is the only credential on that request, which is why the agent refuses
-a plain-HTTP master unless you pass `--insecure-allow-http`. That refusal is not
-a preference about transports.
+a plain-HTTP master unless it is on loopback or you pass `--insecure-allow-http`.
+That refusal is not a preference about transports.
 
 ### Without a token
 
@@ -146,5 +146,31 @@ intervals are not stranded.
 
 The signature authenticates the agent and protects the body's integrity; it does not
 encrypt anything. Run the master behind TLS. smokeng refuses a plain-HTTP master URL
-unless you pass `--insecure-allow-http`, which exists for development on a loopback
-address and nothing else.
+unless you pass `--insecure-allow-http`.
+
+A master on a **literal loopback address** is the one exception and needs no flag: those
+packets never reach a network interface, so there is nothing for TLS to protect them from.
+That is the [prober-as-its-own-process](operations.md#running-the-prober-as-its-own-process)
+arrangement. A hostname that merely resolves to loopback does not qualify — the exemption
+rests on the packets provably not leaving the machine.
+
+### Certificates the agent has to trust
+
+Two different trust relationships live here, and only one of them is the master's business.
+
+The agent verifies the **master's** certificate the way any HTTP client does, so a master
+behind an internally-issued certificate needs that CA in the agent host's system trust
+store.
+
+Separately, an agent measuring an `https` **target** verifies that target's certificate
+itself, and needs the same `--tls-ca-file` the master was given:
+
+```bash
+smokeng agent run --master https://smokeng.example.org --agent-id 3 \
+    --tls-ca-file /etc/ssl/certs/gemeentex-root.pem
+```
+
+The master does not distribute CAs. It could — they are public certificates, not secrets —
+but an agent that trusted whatever the master sent would have a wider relationship with it
+than the design gives it anywhere else: assignments are pure data, never anything that
+changes what the agent trusts. See [Configuration](configuration.md#internal-certificates).

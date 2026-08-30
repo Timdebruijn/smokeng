@@ -286,7 +286,9 @@ nothing else. Pure data, pull-only, never code. (SmokePing's equivalent has slav
 agent's own database first and only forgotten once the master confirms them, so an
 unreachable master costs latency rather than measurements.
 
-TLS is expected; `--insecure-allow-http` exists for local development and says so.
+TLS is expected everywhere the traffic can be observed. A master on a literal loopback
+address is exempt — those packets never reach an interface — and `--insecure-allow-http`
+covers anything else that is not HTTPS, and says so.
 
 ## Authentication
 
