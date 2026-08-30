@@ -11,8 +11,8 @@ rail, stacked on a shared time axis](docs/images/smokeng.png)
 **Status: released, [v0.7.1](https://github.com/timdebruijn/smokeng/releases/tag/v0.7.1).**
 The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the prober — ICMP, DNS, TCP-connect, HTTP(S)
-and IRTT, burst and spread, kernel
-kernel timestamping for ICMP and DNS with an observable fallback, and a userspace flag on
+and IRTT, burst and spread, kernel timestamping for ICMP and DNS with an observable
+fallback, and a userspace flag on
 the types that cannot be stamped — the SQLite store, TOML import/export of the
 target tree, a SmokePing `Targets` importer, the Arrow measurements API, the browser
 renderer — density smoke, pooled median, loss rail, stacked plots with a shared
