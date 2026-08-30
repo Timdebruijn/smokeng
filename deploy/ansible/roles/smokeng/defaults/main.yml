@@ -49,6 +49,23 @@ smokeng_oidc_admin_value: ""
 # within a poll.
 smokeng_tls_ca_files: ""
 
+# Shared HMAC secrets for irtt servers that require one, so only this prober may
+# use them — closing the reflection/amplification and spoofing an open UDP
+# server invites. A map of "host:port" (the target's configured host, as
+# written in the tree) to the secret. Put the values in a vault, never here in
+# the clear:
+#
+#   smokeng_irtt_hmac_keys:
+#     "resolver.gemeentex.nl:2112": "{{ vault_irtt_gemeentex }}"
+#     "10.30.0.5:2112": "{{ vault_irtt_other }}"
+#
+# The secrets live only in the keyfile this renders on the host; they never
+# enter the target tree, the API or an export. Each prober host that measures an
+# HMAC-required endpoint needs the relevant entries — the master does not hand
+# these down, because they are secrets and assignments carry only data.
+smokeng_irtt_hmac_keys: {}
+smokeng_irtt_hmac_keyfile: "{{ smokeng_state_dir }}/irtt-hmac-keys.toml"
+
 # Run the prober as its own process next to the master, instead of inside it.
 #
 # Off by default: one process is the right shape for one host, and this trades

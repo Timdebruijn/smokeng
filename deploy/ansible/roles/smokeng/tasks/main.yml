@@ -77,6 +77,22 @@
     mode: "0755"
   notify: Restart smokeng
 
+# The irtt HMAC secrets, service-owned and 0600. Rendered before the units so
+# the flag that points at it never names a file that is not there yet. Both the
+# master and the prober restart when it changes, since either may hold the key.
+- name: Install the irtt HMAC keyfile
+  ansible.builtin.template:
+    src: irtt-hmac-keys.toml.j2
+    dest: "{{ smokeng_irtt_hmac_keyfile }}"
+    owner: "{{ smokeng_user }}"
+    group: "{{ smokeng_group }}"
+    mode: "0600"
+  when: smokeng_irtt_hmac_keys | length > 0
+  no_log: true
+  notify:
+    - Restart smokeng
+    - Restart smokeng prober
+
 - name: Install the systemd unit
   ansible.builtin.template:
     src: smokeng.service.j2

@@ -12,6 +12,8 @@
   ansible.builtin.systemd_service:
     name: smokeng-prober
     state: restarted
-  # A check run never wrote the unit, so systemd cannot be asked to restart it.
-  # Reporting that as a failure would describe the check, not the host.
-  when: not ansible_check_mode
+  # Only when the prober is actually installed: another task (the HMAC keyfile)
+  # may notify this handler on a host that runs the master alone, and asking
+  # systemd to restart a unit that was never written would fail. A check run
+  # never wrote the unit either, so it is excluded for the same reason.
+  when: smokeng_prober_enabled | bool and not ansible_check_mode

@@ -194,3 +194,18 @@ address that target names, so it could point the target anywhere regardless. The
 gains is over endpoints whose definition it already controls.
 
 See [Configuration](configuration.md#internal-certificates).
+
+### irtt HMAC keys the agent needs
+
+An agent measuring an HMAC-protected irtt server needs that server's key, and unlike the
+CAs the master does **not** hand it down: the key is a shared secret, and assignments carry
+only data, never secrets. Deploy the keyfile to the agent host and point the agent at it:
+
+```bash
+smokeng agent run --master https://… --agent-id 3 \
+    --irtt-hmac-keys /var/lib/smokeng/irtt-hmac-keys.toml
+```
+
+The file has the same shape as the master's — `"host:port" = "secret"` per endpoint — and
+holds only the endpoints this agent measures. Keep it in a vault and render it per host;
+see [Configuration](configuration.md#authenticating-to-an-irtt-server).

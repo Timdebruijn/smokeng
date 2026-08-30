@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/heistp/irtt"
@@ -13,6 +14,46 @@ import (
 
 // defaultIRTTPort is where `irtt server` listens unless told otherwise.
 const defaultIRTTPort = 2112
+
+// irttHMACKeys maps an irtt endpoint — the target's configured host:port — to
+// the shared secret that server requires. It authenticates this prober to a
+// server configured with `--hmac`, so only smokeng may use it, closing the
+// reflection/amplification and off-path spoofing an open UDP server otherwise
+// invites. Set once at startup, read per probe.
+//
+// The key belongs to the server, not to the smokeng target, so it is keyed on
+// where the server listens and lives in a file on whichever host runs the
+// probe — the master, or an agent — the same shape as --tls-ca-file. This is
+// deliberately NOT a tree setting: a secret in the tree would travel through
+// the API and the exported TOML, which is exactly where it must not be. Keeping
+// it out of the tree entirely makes that structural rather than a matter of
+// discipline. An endpoint with no entry is probed without HMAC; if its server
+// requires one, the session is refused and recorded as a flagged send failure.
+var irttHMACKeys atomic.Pointer[map[string][]byte]
+
+// SetIRTTHMACKeys sets the endpoint→secret map every irtt probe authenticates
+// with. A nil or empty map clears it. A copy is stored, so the caller may reuse
+// or wipe the map and its values.
+func SetIRTTHMACKeys(m map[string][]byte) {
+	if len(m) == 0 {
+		irttHMACKeys.Store(nil)
+		return
+	}
+	cp := make(map[string][]byte, len(m))
+	for k, v := range m {
+		cp[k] = append([]byte(nil), v...)
+	}
+	irttHMACKeys.Store(&cp)
+}
+
+// irttKeyFor returns the HMAC key for an endpoint, or nil if none is configured.
+func irttKeyFor(endpoint string) []byte {
+	m := irttHMACKeys.Load()
+	if m == nil {
+		return nil
+	}
+	return (*m)[endpoint]
+}
 
 // probeIRTT runs one IRTT session for the whole bucket.
 //
@@ -42,6 +83,12 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 
 	cfg := irtt.NewClientConfig()
 	cfg.RemoteAddress = net.JoinHostPort(addr.String(), strconv.Itoa(port))
+	// Keyed on the target's configured host, not the resolved address, so the
+	// keyfile stays stable across DNS changes and matches what the operator
+	// wrote in the target. An endpoint with no key is probed without HMAC.
+	if k := irttKeyFor(net.JoinHostPort(spec.Host, strconv.Itoa(port))); k != nil {
+		cfg.HMACKey = k
+	}
 	cfg.Interval = step
 	// The first packet leaves at t=0, so N packets need the run to last past
 	// the (N-1)th interval. Half a step of margin keeps a scheduling hiccup

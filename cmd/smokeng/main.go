@@ -191,6 +191,10 @@ func serve(args []string) error {
 		"comma-separated PEM files whose certificates https probes trust, in addition "+
 			"to the system roots. Use this for an internal PKI: it keeps verification "+
 			"on, where a target's tls_skip_verify turns it off")
+	irttHMACKeys := fs.String("irtt-hmac-keys", "",
+		"path to a TOML keyfile mapping irtt \"host:port\" endpoints to their shared "+
+			"HMAC secrets, so only this prober may use those servers. The secrets stay "+
+			"in this file and never touch the tree, the API or an export")
 	defaultRole := fs.String("default-role", "viewer",
 		"what an authenticated user holding no grant may do: `viewer` or none. "+
 			"It is a setting rather than a consequence, so adding the first grant "+
@@ -241,6 +245,9 @@ func serve(args []string) error {
 
 	if err := probe.TrustCAFiles(splitList(*tlsCAFiles)); err != nil {
 		return fmt.Errorf("--tls-ca-file: %w", err)
+	}
+	if err := loadIRTTHMACKeys(*irttHMACKeys); err != nil {
+		return fmt.Errorf("--irtt-hmac-keys: %w", err)
 	}
 
 	switch auth.Role(*defaultRole) {
@@ -409,4 +416,38 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// loadIRTTHMACKeys reads a keyfile mapping irtt endpoints to their shared HMAC
+// secrets and installs it. The file is TOML, one entry per line:
+//
+//	"resolver.gemeentex.nl:2112" = "the-shared-secret"
+//	"10.20.0.5:2112"             = "another-secret"
+//
+// The endpoint is the target's configured host and port — the host as written
+// in the target, not its resolved address — so it stays stable across DNS
+// changes. An empty path installs nothing. The secrets live only in this file
+// on this host (deploy it from a vault); they never enter the target tree, the
+// API or an export.
+func loadIRTTHMACKeys(path string) error {
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var raw map[string]string
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("not a TOML map of \"host:port\" = \"key\": %w", err)
+	}
+	m := make(map[string][]byte, len(raw))
+	for endpoint, key := range raw {
+		if key == "" {
+			return fmt.Errorf("empty HMAC key for endpoint %q", endpoint)
+		}
+		m[endpoint] = []byte(key)
+	}
+	probe.SetIRTTHMACKeys(m)
+	return nil
 }

@@ -1,0 +1,6 @@
+{{ ansible_managed | comment }}
+# irtt HMAC secrets, one per endpoint. Rendered from smokeng_irtt_hmac_keys —
+# keep the values in a vault, not in plain group_vars. Mode 0600, service-owned.
+{% for endpoint, key in smokeng_irtt_hmac_keys.items() %}
+"{{ endpoint }}" = "{{ key }}"
+{% endfor %}

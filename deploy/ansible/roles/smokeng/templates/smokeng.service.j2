@@ -14,7 +14,8 @@ ExecStart={{ smokeng_bin }} serve \
     --listen {{ smokeng_listen }}{% if smokeng_external_url | length > 0 %} \
     --external-url {{ smokeng_external_url }}{% endif %}{% if smokeng_trusted_proxies | length > 0 %} \
     --trusted-proxies {{ smokeng_trusted_proxies }}{% endif %}{% if smokeng_tls_ca_files | length > 0 %} \
-    --tls-ca-file {{ smokeng_tls_ca_files }}{% endif %}{% if smokeng_allow_unauthenticated | bool %} \
+    --tls-ca-file {{ smokeng_tls_ca_files }}{% endif %}{% if smokeng_irtt_hmac_keys | length > 0 %} \
+    --irtt-hmac-keys {{ smokeng_irtt_hmac_keyfile }}{% endif %}{% if smokeng_allow_unauthenticated | bool %} \
     --i-know-this-is-unauthenticated{% endif %}{% if smokeng_metrics_public | bool %} \
     --metrics-public{% endif %}{% if smokeng_alert_webhook | length > 0 %} \
     --alert-webhook {{ smokeng_alert_webhook }}{% endif %}{% if smokeng_oidc_issuer | length > 0 %} \

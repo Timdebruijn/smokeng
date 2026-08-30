@@ -193,6 +193,18 @@ end paces the train and reports every packet, so the engine calls it once per in
 rather than once per probe. It still honours `probe_mode` — switching a target between
 `icmp` and `irtt` changes what the packets are, not when they leave.
 
+**An irtt server can require an HMAC key, and smokeng carries it as a local secret, never
+in the tree.** An open irtt server is a UDP reflection/amplification vector; `--hmac` on
+the server closes it to all but key-holders. The key is a shared secret, so putting it in
+the target tree — where it would travel through the API and the exported TOML — is exactly
+wrong. It lives instead in a keyfile on each prober host, mapping the target's configured
+`host:port` to the secret, loaded with `--irtt-hmac-keys`. This is the same shape as
+`--tls-ca-file`, with one difference that follows from it being a secret rather than a
+public certificate: the master does **not** hand it down to agents (assignments carry only
+data), so an agent measuring an HMAC-protected endpoint gets its own keyfile. Keying on the
+configured host rather than the resolved address keeps the mapping stable across DNS
+changes and lets different servers hold different keys.
+
 **`icmp` and `dns` are kernel-timestamped; the rest are not.** dns runs on a socket of our
 own rather than the library's, precisely so SO_TIMESTAMPING can be set on it — a resolver's
 latency deserves the same standard as a ping's. `tcp`, `http`, `https` and `irtt` carry

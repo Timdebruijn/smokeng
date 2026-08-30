@@ -193,6 +193,36 @@ IRTT also measures one-way delay in each direction, which is more than smokeng s
 Only the round trip is kept: a measurement here is one distribution per interval, and
 splitting it would change what a measurement *is*.
 
+#### Authenticating to an irtt server
+
+An open irtt server is a UDP reflection and amplification vector, and UDP is spoofable, so
+a server you expose should require an HMAC key — `irtt server --hmac=<secret>`. It then
+drops any packet without a valid HMAC, so only a prober holding the key can use it. (The
+HMAC authenticates and protects the packets; it does not encrypt the timing, which is not
+a secret.)
+
+The key is a shared secret, so it is **not** a target setting — a secret in the tree would
+travel through the API and the exported TOML. It lives instead in a keyfile on whichever
+host runs the probe, mapping each irtt endpoint to its secret:
+
+```toml
+# /var/lib/smokeng/irtt-hmac-keys.toml — mode 0600, deploy from a vault
+"resolver.gemeentex.nl:2112" = "the-shared-secret"
+"10.30.0.5:2112"             = "another-secret"
+```
+
+```bash
+smokeng serve --irtt-hmac-keys /var/lib/smokeng/irtt-hmac-keys.toml
+```
+
+The endpoint is the target's *configured* host and port — the host as written in the
+target, not its resolved address — so the mapping is stable across DNS changes and
+different servers can hold different keys. An endpoint with no entry is probed without
+HMAC; if its server requires one, the session is refused and recorded as a flagged send
+failure, which tells you the key is missing rather than the server down. The Ansible role
+renders this file from `smokeng_irtt_hmac_keys` (keep the values in a vault). A remote
+agent needs its own keyfile — see [Remote agents](agents.md).
+
 ### Internal certificates
 
 Most `https` targets worth watching are internal, and an internal certificate is issued by

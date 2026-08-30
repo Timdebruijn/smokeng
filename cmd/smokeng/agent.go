@@ -235,6 +235,10 @@ func agentRun(args []string) error {
 	tlsCAFiles := fs.String("tls-ca-file", "",
 		"comma-separated PEM files whose certificates https probes trust, in addition "+
 			"to the system roots and to whatever the master hands down")
+	irttHMACKeys := fs.String("irtt-hmac-keys", "",
+		"path to a TOML keyfile mapping irtt \"host:port\" endpoints to their shared "+
+			"HMAC secrets. Deploy it to this agent host; the master does not hand these "+
+			"down, because they are secrets and assignments are not")
 	noRemoteCAs := fs.Bool("no-remote-cas", false,
 		"refuse the CA certificates the master supplies. They only ever reach https "+
 			"probes, never this agent's own connection to the master, but this puts "+
@@ -245,6 +249,9 @@ func agentRun(args []string) error {
 
 	if err := probe.TrustCAFiles(splitList(*tlsCAFiles)); err != nil {
 		return fmt.Errorf("--tls-ca-file: %w", err)
+	}
+	if err := loadIRTTHMACKeys(*irttHMACKeys); err != nil {
+		return fmt.Errorf("--irtt-hmac-keys: %w", err)
 	}
 
 	key, created, err := agent.LoadOrCreateKey(*keyPath)

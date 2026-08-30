@@ -38,7 +38,8 @@ ExecStart={{ smokeng_bin }} agent run \
     --master {{ smokeng_prober_master_url }} \
     --agent-id {{ smokeng_prober_agent_id }} \
     --key {{ smokeng_prober_key }} \
-    --db {{ smokeng_prober_db }}
+    --db {{ smokeng_prober_db }}{% if smokeng_irtt_hmac_keys | length > 0 %} \
+    --irtt-hmac-keys {{ smokeng_irtt_hmac_keyfile }}{% endif %}
 
 
 Restart=always
