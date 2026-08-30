@@ -43,7 +43,7 @@ The ones that matter:
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `smokeng_version` | `v0.7.1` | Pin it. An unattended "latest" is an unreviewed upgrade. |
+| `smokeng_version` | `v0.7.2` | Pin it. An unattended "latest" is an unreviewed upgrade. |
 | `smokeng_listen` | `127.0.0.1:8080` | |
 | `smokeng_external_url` | `""` | The address agents and browsers reach this master at, when a proxy sits in front. Set it or the enrolment command names the listen address. |
 | `smokeng_trusted_proxies` | `""` | CIDRs whose `X-Forwarded-For` may be believed. Log accuracy only. |
