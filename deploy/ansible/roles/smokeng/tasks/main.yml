@@ -175,12 +175,21 @@
     - Reload systemd
     - Restart smokeng prober
 
+# Handlers otherwise run at the end of the play, which is after the task below
+# — and systemd cannot enable a unit it has not read yet. The master service
+# needs the same flush for the same reason.
+- name: Flush handlers so systemd knows the prober unit before it is enabled
+  ansible.builtin.meta: flush_handlers
+
 - name: Enable and start the prober
   ansible.builtin.systemd_service:
     name: smokeng-prober
     enabled: true
     state: started
-  when: smokeng_prober_enabled | bool
+  # Skipped in --check: the unit was never written there, so systemd cannot be
+  # asked about it. Failing on that would report a fault in the play rather
+  # than the absence of a file the check run declined to create.
+  when: smokeng_prober_enabled | bool and not ansible_check_mode
 
 # Turning the flag off stops the prober rather than leaving an orphan unit
 # running. Targets assigned to it stop being measured, which is the operator's

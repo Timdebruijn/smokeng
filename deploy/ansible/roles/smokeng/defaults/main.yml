@@ -62,9 +62,15 @@ smokeng_tls_ca_files: ""
 # names smokeng_prober_agent_name.
 smokeng_prober_enabled: false
 smokeng_prober_agent_name: local-probe
-# Where the prober reaches the master. Loopback, so nothing leaves the host —
-# note that plain http is only accepted because of that.
-smokeng_prober_master_url: "http://{{ smokeng_listen }}"
+# Where the prober reaches the master. Always loopback: the prober is on the
+# same host, so nothing has to leave it, and plain http is accepted for exactly
+# that reason.
+#
+# Only the port is taken from smokeng_listen. Reusing the whole value breaks
+# the moment the master binds a wildcard — "0.0.0.0:8080" is where to listen,
+# not somewhere to connect, and the agent rightly refuses it as neither HTTPS
+# nor loopback.
+smokeng_prober_master_url: "http://127.0.0.1:{{ smokeng_listen.split(':') | last }}"
 smokeng_prober_key: "{{ smokeng_state_dir }}/prober.key"
 smokeng_prober_db: "{{ smokeng_state_dir }}/prober.db"
 

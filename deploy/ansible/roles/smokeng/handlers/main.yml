@@ -12,3 +12,6 @@
   ansible.builtin.systemd_service:
     name: smokeng-prober
     state: restarted
+  # A check run never wrote the unit, so systemd cannot be asked to restart it.
+  # Reporting that as a failure would describe the check, not the host.
+  when: not ansible_check_mode
