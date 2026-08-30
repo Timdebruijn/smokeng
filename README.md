@@ -8,7 +8,7 @@ actual density — no rollup, no consolidation, no single-value-per-check.
 ![The smokeng graphs view: a target's RTT distribution drawn as density smoke, with the
 pooled median line and the loss rail beneath it on a shared time axis](docs/images/smokeng.png)
 
-**Status: released, [v0.9.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.9.0).**
+**Status: released, [v0.10.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.10.0).**
 The design is agreed and frozen in
 [DESIGN.md](DESIGN.md). Working end to end: the prober — ICMP, DNS, TCP-connect, HTTP(S)
 and IRTT, burst and spread, kernel timestamping for ICMP and DNS with an observable
@@ -127,10 +127,11 @@ smokeng config import-smokeping --db smokeng.db --dry-run /etc/smokeping/config.
 ```
 
 The `+`/`++`/`+++` hierarchy becomes the target tree, per-node keys become local settings
-so inheritance survives, and `probe = FPing6` or a literal address decides the address
-family that smokeng insists on stating. Anything smokeng deliberately does not implement
-— alert definitions, alternative hierarchies, multi-host overlay graphs, `DYNAMIC` hosts
-— is reported as a warning rather than dropped in silence. Drop `--dry-run` to write it.
+so inheritance survives, `@include` is followed relative to the file, and each probe module
+maps to a smokeng probe type — `EchoPingDNS` to `dns`, `EchoPingHttps` to `https`, `TCPPing`
+to `tcp`, `FPing` to `icmp`. Anything smokeng deliberately does not implement — alert
+definitions, alternative hierarchies, multi-host overlay graphs, `DYNAMIC` hosts — is
+reported as a warning rather than dropped in silence. Drop `--dry-run` to write it.
 
 Without `--oidc-issuer` there is no authentication, so `serve` refuses to listen on
 anything but loopback unless you pass `--i-know-this-is-unauthenticated`. See
