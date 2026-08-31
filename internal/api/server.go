@@ -32,6 +32,11 @@ type AlertView interface {
 	// Acknowledge marks a firing alert seen (or clears it), returning whether a
 	// firing alert existed to change.
 	Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, ack bool, by string) (bool, error)
+	// Silences: suppress delivery and attention for matching alerts over a time
+	// window, applied at once rather than at the next reload.
+	ListSilences(ctx context.Context) ([]alert.Silence, error)
+	AddSilence(ctx context.Context, s alert.Silence) (alert.Silence, error)
+	RemoveSilence(ctx context.Context, id int64) (bool, error)
 }
 
 // Store is everything the API persists through: the measurement store plus
@@ -182,6 +187,9 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	rt.handle(classScopedWrite, "DELETE /api/v1/alert-rules/{id}", s.handleDeleteAlertRule)
 	rt.handle(classScopedRead, "GET /api/v1/alerts", s.handleFiringAlerts)
 	rt.handle(classScopedWrite, "POST /api/v1/alerts/ack", s.handleAckAlert)
+	rt.handle(classScopedRead, "GET /api/v1/silences", s.handleListSilences)
+	rt.handle(classScopedWrite, "POST /api/v1/silences", s.handleCreateSilence)
+	rt.handle(classScopedWrite, "DELETE /api/v1/silences/{id}", s.handleDeleteSilence)
 	if s.events != nil {
 		rt.handle(classScopedRead, "GET /api/v1/alert-events", s.handleAlertEvents)
 	}

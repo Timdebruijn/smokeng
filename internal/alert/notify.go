@@ -27,6 +27,12 @@ type Alert struct {
 	Acked   bool
 	AckedAt time.Time
 	AckedBy string
+	// Silenced and SilencedUntil describe a silence covering this alert now: it
+	// is still firing, but delivery is suppressed and the UI shows it muted
+	// until the window closes. Unlike an acknowledgement, a silence does stop
+	// delivery — that is the point of a maintenance window.
+	Silenced      bool
+	SilencedUntil time.Time
 }
 
 // Notifier delivers alerts. smokeng ships exactly one implementation, a

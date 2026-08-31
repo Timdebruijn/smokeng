@@ -229,6 +229,7 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 			"target_id": a.TargetID,
 			"agent_id":  a.AgentID,
 			"acked":     a.Acked,
+			"silenced":  a.Silenced,
 		}
 		if !a.Since.IsZero() {
 			item["since"] = a.Since.Unix()
@@ -238,6 +239,9 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 			if !a.AckedAt.IsZero() {
 				item["acked_at"] = a.AckedAt.Unix()
 			}
+		}
+		if a.Silenced && !a.SilencedUntil.IsZero() {
+			item["silenced_until"] = a.SilencedUntil.Unix()
 		}
 		out = append(out, item)
 	}

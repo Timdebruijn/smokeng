@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	stdlog "log"
+	"slices"
 	"sync"
 	"time"
 
@@ -20,6 +21,9 @@ type Store interface {
 	// notification can say which agent an alert came from instead of
 	// assuming it was always the local one.
 	AgentNames(ctx context.Context) (map[int64]string, error)
+	ListSilences(ctx context.Context) ([]Silence, error)
+	CreateSilence(ctx context.Context, s *Silence) error
+	DeleteSilence(ctx context.Context, id int64) (bool, error)
 }
 
 // EventLog records transitions. It is optional so a store that cannot keep
@@ -53,6 +57,11 @@ type Manager struct {
 	states     map[stateKey]*State
 	rules      map[int64]*Rule
 	agentNames map[int64]string
+	silences   []Silence
+	// ancestors maps a target id to the set of its ancestor ids, itself
+	// included, so a silence scoped to a group can be matched against a leaf
+	// under it without walking the tree on every alert.
+	ancestors map[int64]map[int64]bool
 }
 
 // NewManager evaluates rules and, when notifier is non-nil, delivers the
@@ -66,6 +75,7 @@ func NewManager(st Store, notifier Notifier) *Manager {
 		states:     map[stateKey]*State{},
 		rules:      map[int64]*Rule{},
 		agentNames: map[int64]string{},
+		ancestors:  map[int64]map[int64]bool{},
 	}
 }
 
@@ -94,6 +104,30 @@ func (m *Manager) Reload(ctx context.Context) error {
 	agentNames, err := m.st.AgentNames(ctx)
 	if err != nil {
 		return err
+	}
+	silences, err := m.st.ListSilences(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Ancestor sets, so a silence scoped to a group can be matched against any
+	// leaf beneath it by a map lookup rather than a walk. Each target maps to
+	// itself and every id above it.
+	byNodeID := map[int64]*tree.Target{}
+	for i := range targets {
+		byNodeID[targets[i].ID] = &targets[i]
+	}
+	ancestors := map[int64]map[int64]bool{}
+	for i := range targets {
+		set := map[int64]bool{}
+		for cur := &targets[i]; cur != nil; {
+			set[cur.ID] = true
+			if cur.ParentID == nil {
+				break
+			}
+			cur = byNodeID[*cur.ParentID]
+		}
+		ancestors[targets[i].ID] = set
 	}
 
 	byNode := map[int64][]*Rule{}
@@ -161,6 +195,12 @@ func (m *Manager) Reload(ctx context.Context) error {
 		}
 	}
 	m.byTarget, m.rules, m.states, m.agentNames = resolved, byID, kept, agentNames
+	m.ancestors = ancestors
+	// Silences are owned by the API between reloads (AddSilence/RemoveSilence
+	// keep the in-memory copy current the moment a change is made), so this
+	// wholesale refresh is only for a restart or a change made straight to the
+	// database. It is safe because a create or delete also writes through here.
+	m.silences = silences
 	m.mu.Unlock()
 	return nil
 }
@@ -233,11 +273,14 @@ func (m *Manager) Repeat(ctx context.Context) {
 	m.deliver(ctx, out)
 }
 
-// Firing returns the alerts currently firing, for the API.
+// Firing returns the alerts currently firing, for the API. A silenced alert is
+// still firing and still listed — the operator should see it — but marked so the
+// UI can show it as muted rather than as demanding attention.
 func (m *Manager) Firing() []Alert {
 	var out []Alert
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now().Unix()
 	for key, st := range m.states {
 		if !st.Firing {
 			continue
@@ -250,7 +293,12 @@ func (m *Manager) Firing() []Alert {
 		if !ok {
 			continue
 		}
-		out = append(out, m.alertLocked(r, st, app, true))
+		a := m.alertLocked(r, st, app, true)
+		if silenced, until := m.silencedLocked(now, a); silenced {
+			a.Silenced = true
+			a.SilencedUntil = time.Unix(until, 0)
+		}
+		out = append(out, a)
 	}
 	return out
 }
@@ -315,16 +363,105 @@ func (m *Manager) deliver(ctx context.Context, alerts []Alert) {
 	if len(alerts) == 0 {
 		return
 	}
-	// Record before delivering. A transition that happened is a fact whether
-	// or not the webhook was reachable, and the log is the only place anyone
-	// can answer "when did this last fire" afterwards.
+	// Record before delivering, and record everything — a silence suppresses
+	// the notification, not the fact. A transition that happened is a fact
+	// whether or not the webhook was reachable or the alert was silenced, and
+	// the log is the only place anyone can answer "when did this last fire"
+	// afterwards.
 	m.record(ctx, alerts)
 	if m.notifier == nil {
 		return
 	}
-	if err := m.notifier.Notify(ctx, alerts); err != nil {
-		stdlog.Printf("alert: deliver %d alert(s): %v", len(alerts), err)
+	// Drop what a silence covers right now. A maintenance window means "do not
+	// page during this", so the fire and any resolve inside it are not posted;
+	// when the window closes, Repeat re-announces whatever is still firing.
+	now := time.Now().Unix()
+	send := make([]Alert, 0, len(alerts))
+	m.mu.Lock()
+	for _, a := range alerts {
+		if silenced, _ := m.silencedLocked(now, a); !silenced {
+			send = append(send, a)
+		}
 	}
+	m.mu.Unlock()
+	if len(send) == 0 {
+		return
+	}
+	if err := m.notifier.Notify(ctx, send); err != nil {
+		stdlog.Printf("alert: deliver %d alert(s): %v", len(send), err)
+	}
+}
+
+// silencedLocked reports whether an active silence covers this alert, and until
+// when (the latest end among the silences that do, for the UI to show). The
+// caller holds m.mu.
+func (m *Manager) silencedLocked(now int64, a Alert) (bool, int64) {
+	ruleID := int64(0)
+	if a.Rule != nil {
+		ruleID = a.Rule.ID
+	}
+	var until int64
+	silenced := false
+	for i := range m.silences {
+		s := &m.silences[i]
+		if !s.activeAt(now) {
+			continue
+		}
+		if s.RuleID != nil && *s.RuleID != ruleID {
+			continue
+		}
+		if s.AgentID != nil && *s.AgentID != a.AgentID {
+			continue
+		}
+		if s.TargetID != nil && !m.ancestors[a.TargetID][*s.TargetID] {
+			continue
+		}
+		silenced = true
+		if s.EndsAt > until {
+			until = s.EndsAt
+		}
+	}
+	return silenced, until
+}
+
+// AddSilence stores a silence and applies it at once, returning it with its
+// assigned id. Applying immediately, rather than at the next reload, is the
+// point: an operator silencing a target before starting maintenance expects the
+// paging to stop now, not on the next poll.
+func (m *Manager) AddSilence(ctx context.Context, s Silence) (Silence, error) {
+	if err := s.Validate(); err != nil {
+		return Silence{}, err
+	}
+	s.CreatedAt = time.Now().Unix()
+	if err := m.st.CreateSilence(ctx, &s); err != nil {
+		return Silence{}, err
+	}
+	m.mu.Lock()
+	m.silences = append(m.silences, s)
+	m.mu.Unlock()
+	return s, nil
+}
+
+// RemoveSilence deletes a silence and lifts it at once, reporting whether one
+// existed to remove.
+func (m *Manager) RemoveSilence(ctx context.Context, id int64) (bool, error) {
+	ok, err := m.st.DeleteSilence(ctx, id)
+	if err != nil || !ok {
+		return ok, err
+	}
+	m.mu.Lock()
+	m.silences = slices.DeleteFunc(m.silences, func(s Silence) bool { return s.ID == id })
+	m.mu.Unlock()
+	return true, nil
+}
+
+// ListSilences returns every silence, past and future, for the API to show.
+func (m *Manager) ListSilences(context.Context) ([]Silence, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Silence, len(m.silences))
+	copy(out, m.silences)
+	return out, nil
 }
 
 func (m *Manager) record(ctx context.Context, alerts []Alert) {

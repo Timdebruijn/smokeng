@@ -257,6 +257,25 @@ ALTER TABLE alert_state ADD COLUMN acked_by TEXT;
 ALTER TABLE targets ADD COLUMN retention_s INTEGER;
 UPDATE targets SET retention_s = 0 WHERE parent_id IS NULL AND retention_s IS NULL;
 `,
+	// v16: silences. A silence suppresses delivery and attention for matching
+	// alerts over a time window — a maintenance window booked ahead, or a known
+	// issue muted for a few hours — without touching the rule. A NULL scope
+	// column is a wildcard; target_id matches a node and its subtree, and falls
+	// away with the node (ON DELETE CASCADE). The window is [starts_at, ends_at).
+	`
+CREATE TABLE silences (
+  id         INTEGER PRIMARY KEY,
+  target_id  INTEGER REFERENCES targets(id) ON DELETE CASCADE,
+  agent_id   INTEGER,
+  rule_id    INTEGER,
+  starts_at  INTEGER NOT NULL,
+  ends_at    INTEGER NOT NULL,
+  reason     TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX silences_window ON silences (ends_at);
+`,
 }
 
 func (s *SQLite) migrate() error {

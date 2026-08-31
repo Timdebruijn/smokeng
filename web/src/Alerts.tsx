@@ -12,6 +12,10 @@ import {
   type Target,
   fetchAlertEvents,
   type AlertEvent,
+  fetchSilences,
+  createSilence,
+  deleteSilence,
+  type Silence,
 } from './api'
 
 const METRICS: { value: AlertRule['metric']; label: string; unit: string }[] = [
@@ -27,16 +31,23 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   const [firing, setFiring] = useState<FiringAlert[]>([])
   const [delivering, setDelivering] = useState(true)
   const [targets, setTargets] = useState<Target[]>([])
+  const [silences, setSilences] = useState<Silence[]>([])
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
 
   const reload = useCallback(async () => {
     try {
-      const [r, f, t] = await Promise.all([fetchAlertRules(), fetchFiringAlerts(), fetchTargets()])
+      const [r, f, t, s] = await Promise.all([
+        fetchAlertRules(),
+        fetchFiringAlerts(),
+        fetchTargets(),
+        fetchSilences(),
+      ])
       setRules(r)
       setFiring(f.alerts ?? [])
       setDelivering(f.delivering)
       setTargets(t)
+      setSilences(s)
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -94,53 +105,81 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
         ) : (
           <table className="alerts">
             <tbody>
-              {firing.map((a) => (
-                <tr key={`${a.target}-${a.rule}`} className={a.acked ? 'disabled-row' : undefined}>
-                  <td>
-                    <span className="dot-label">
-                      <span
-                        className="dot"
-                        style={{ background: a.acked ? 'var(--dim)' : 'var(--bad)' }}
-                      />
-                      <span className="chip firing">{a.rule}</span>
-                    </span>
-                  </td>
-                  <td>
-                    <code>{a.target}</code>
-                  </td>
-                  <td>
-                    {a.metric} is {a.value.toFixed(a.metric === 'loss' ? 0 : 2)}
-                    {a.metric === 'loss' ? '%' : 'ms'}
-                  </td>
-                  <td className="dim">
-                    {a.since ? (
-                      <>
-                        since <span className="mono">{new Date(a.since * 1000).toLocaleString()}</span>
-                      </>
-                    ) : (
-                      ''
-                    )}
-                    {a.acked && a.acked_by ? (
-                      <span className="hint small"> · acknowledged by {a.acked_by}</span>
-                    ) : (
-                      ''
-                    )}
-                  </td>
-                  <td>
-                    <button
-                      className="pill small"
-                      title={
-                        a.acked
-                          ? 'Un-acknowledge'
-                          : 'Acknowledge — the alert keeps firing, it just stops demanding attention'
-                      }
-                      onClick={() => void ackAlert(a)}
-                    >
-                      {a.acked ? 'un-acknowledge' : 'acknowledge'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {firing.map((a) => {
+                const muted = a.acked || a.silenced
+                return (
+                  <tr key={`${a.target}-${a.rule}`} className={muted ? 'disabled-row' : undefined}>
+                    <td>
+                      <span className="dot-label">
+                        <span
+                          className="dot"
+                          style={{ background: muted ? 'var(--dim)' : 'var(--bad)' }}
+                        />
+                        <span className="chip firing">{a.rule}</span>
+                      </span>
+                    </td>
+                    <td>
+                      <code>{a.target}</code>
+                    </td>
+                    <td>
+                      {a.metric} is {a.value.toFixed(a.metric === 'loss' ? 0 : 2)}
+                      {a.metric === 'loss' ? '%' : 'ms'}
+                    </td>
+                    <td className="dim">
+                      {a.since ? (
+                        <>
+                          since <span className="mono">{new Date(a.since * 1000).toLocaleString()}</span>
+                        </>
+                      ) : (
+                        ''
+                      )}
+                      {a.silenced ? (
+                        <span className="hint small">
+                          {' '}
+                          · silenced
+                          {a.silenced_until
+                            ? ` until ${new Date(a.silenced_until * 1000).toLocaleString()}`
+                            : ''}
+                        </span>
+                      ) : a.acked && a.acked_by ? (
+                        <span className="hint small"> · acknowledged by {a.acked_by}</span>
+                      ) : (
+                        ''
+                      )}
+                    </td>
+                    <td>
+                      <span className="pill-row">
+                        <button
+                          className="pill small"
+                          title={
+                            a.acked
+                              ? 'Un-acknowledge'
+                              : 'Acknowledge — the alert keeps firing, it just stops demanding attention'
+                          }
+                          onClick={() => void ackAlert(a)}
+                        >
+                          {a.acked ? 'un-acknowledge' : 'acknowledge'}
+                        </button>
+                        {!a.silenced && (
+                          <SilenceQuick
+                            onSilence={(duration_s) =>
+                              void run(() =>
+                                createSilence({
+                                  target_id: a.target_id,
+                                  rule_id: a.rule_id,
+                                  agent_id: a.agent_id,
+                                  duration_s,
+                                  reason: `silenced from the firing list`,
+                                }),
+                              )
+                            }
+                          />
+                        )}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}
@@ -210,8 +249,275 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
           ))}
       </section>
 
+      <SilencesSection
+        silences={silences}
+        targets={targets}
+        onCreate={(body) => run(() => createSilence(body))}
+        onCancel={(id) => run(() => deleteSilence(id))}
+      />
+
       <AlertHistory />
     </>
+  )
+}
+
+// A compact "silence for…" control on a firing row: one click to reveal a few
+// durations, one more to book a silence scoped to exactly that alert.
+function SilenceQuick({ onSilence }: { onSilence: (durationS: number) => void }) {
+  const [open, setOpen] = useState(false)
+  const CHOICES: { label: string; s: number }[] = [
+    { label: '1h', s: 3600 },
+    { label: '4h', s: 4 * 3600 },
+    { label: '24h', s: 24 * 3600 },
+  ]
+  if (!open) {
+    return (
+      <button
+        className="pill small"
+        title="Silence this alert for a while — suppresses delivery and mutes it, without touching the rule"
+        onClick={() => setOpen(true)}
+      >
+        silence…
+      </button>
+    )
+  }
+  return (
+    <span className="pill-row">
+      {CHOICES.map((c) => (
+        <button
+          key={c.s}
+          className="pill small"
+          onClick={() => {
+            setOpen(false)
+            onSilence(c.s)
+          }}
+        >
+          {c.label}
+        </button>
+      ))}
+      <button className="pill small" onClick={() => setOpen(false)}>
+        ✕
+      </button>
+    </span>
+  )
+}
+
+/**
+ * Silences: windows during which matching alerts are suppressed — delivery and
+ * attention both — without changing the rule. A silence that starts now is the
+ * quick "mute this for a bit"; one that starts later is a maintenance window
+ * booked ahead, so planned work does not page.
+ */
+function SilencesSection({
+  silences,
+  targets,
+  onCreate,
+  onCancel,
+}: {
+  silences: Silence[]
+  targets: Target[]
+  onCreate: (body: Parameters<typeof createSilence>[0]) => Promise<boolean>
+  onCancel: (id: number) => Promise<boolean>
+}) {
+  const [adding, setAdding] = useState(false)
+  const now = Date.now() / 1000
+  // Active first, then upcoming, then the spent ones for reference.
+  const live = silences.filter((s) => s.active || s.upcoming)
+  const past = silences.filter((s) => !s.active && !s.upcoming)
+
+  return (
+    <section className="card section-card">
+      <div className="section-card-head">
+        <span className="section-card-title">Silences &amp; maintenance windows</span>
+      </div>
+      <p className="hint">
+        A silence suppresses delivery and mutes matching alerts over a time window, without
+        touching the rule. Scope it to a node and its subtree, or leave it global. A window that
+        starts in the future is a maintenance window: planned work stops paging without anyone
+        editing a rule.
+      </p>
+
+      {live.length === 0 ? (
+        <p className="hint">No active or upcoming silences.</p>
+      ) : (
+        <table className="alerts">
+          <tbody>
+            {live.map((s) => (
+              <tr key={s.id}>
+                <td>
+                  <span className="dot-label">
+                    <span
+                      className="dot"
+                      style={{ background: s.active ? 'var(--warn)' : 'var(--dim)' }}
+                    />
+                    <span className="chip">{s.active ? 'active' : 'upcoming'}</span>
+                  </span>
+                </td>
+                <td>
+                  <code>{s.target ?? 'everything'}</code>
+                  {s.agent_id !== undefined ? <span className="hint small"> · agent {s.agent_id}</span> : ''}
+                </td>
+                <td className="dim">
+                  {s.upcoming && now < s.starts_at ? (
+                    <>from <span className="mono">{new Date(s.starts_at * 1000).toLocaleString()}</span> </>
+                  ) : null}
+                  until <span className="mono">{new Date(s.ends_at * 1000).toLocaleString()}</span>
+                </td>
+                <td className="hint">{s.reason}</td>
+                <td>
+                  <button className="pill small danger" onClick={() => void onCancel(s.id)}>
+                    cancel
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {past.length > 0 && (
+        <details className="hint">
+          <summary>{past.length} past silence(s)</summary>
+          <table className="alerts">
+            <tbody>
+              {past.map((s) => (
+                <tr key={s.id} className="disabled-row">
+                  <td>
+                    <code>{s.target ?? 'everything'}</code>
+                  </td>
+                  <td className="dim mono">{new Date(s.ends_at * 1000).toLocaleString()}</td>
+                  <td className="hint">{s.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+
+      {adding ? (
+        <SilenceForm
+          targets={targets}
+          onCancel={() => setAdding(false)}
+          onSubmit={async (body) => {
+            if (await onCreate(body)) setAdding(false)
+          }}
+        />
+      ) : (
+        <div className="pill-row">
+          <button className="pill accent" onClick={() => setAdding(true)}>
+            Schedule a silence…
+          </button>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function SilenceForm({
+  targets,
+  onSubmit,
+  onCancel,
+}: {
+  targets: Target[]
+  onSubmit: (body: Parameters<typeof createSilence>[0]) => void
+  onCancel: () => void
+}) {
+  // "now" mode books a duration from this moment; "window" mode books an
+  // explicit from/until, which is how a maintenance window is planned ahead.
+  const [mode, setMode] = useState<'now' | 'window'>('now')
+  const [scope, setScope] = useState<number>(0) // 0 = everything
+  const [durationH, setDurationH] = useState('2')
+  const [startsAt, setStartsAt] = useState('')
+  const [endsAt, setEndsAt] = useState('')
+  const [reason, setReason] = useState('')
+
+  const submit = () => {
+    const body: Parameters<typeof createSilence>[0] = { reason }
+    if (scope > 0) body.target_id = scope
+    if (mode === 'now') {
+      body.duration_s = Math.round(Number(durationH) * 3600)
+    } else {
+      body.starts_at = Math.floor(new Date(startsAt).getTime() / 1000)
+      body.ends_at = Math.floor(new Date(endsAt).getTime() / 1000)
+    }
+    onSubmit(body)
+  }
+
+  return (
+    <form
+      className="card rule-form"
+      onSubmit={(e) => {
+        e.preventDefault()
+        submit()
+      }}
+    >
+      <label className="field">
+        <span>Scope</span>
+        <select value={scope} onChange={(e) => setScope(Number(e.target.value))}>
+          <option value={0}>Everything</option>
+          {targets.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.path === '/' ? '/ (everything)' : t.path}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>When</span>
+        <span className="inline">
+          <select value={mode} onChange={(e) => setMode(e.target.value as 'now' | 'window')}>
+            <option value="now">For a duration from now</option>
+            <option value="window">A window (maintenance)</option>
+          </select>
+        </span>
+      </label>
+      {mode === 'now' ? (
+        <label className="field">
+          <span>Duration</span>
+          <span className="inline">
+            <input value={durationH} size={4} onChange={(e) => setDurationH(e.target.value)} />
+            <span className="unit">hours</span>
+          </span>
+        </label>
+      ) : (
+        <>
+          <label className="field">
+            <span>From</span>
+            <input
+              type="datetime-local"
+              value={startsAt}
+              onChange={(e) => setStartsAt(e.target.value)}
+              required
+            />
+          </label>
+          <label className="field">
+            <span>Until</span>
+            <input
+              type="datetime-local"
+              value={endsAt}
+              onChange={(e) => setEndsAt(e.target.value)}
+              required
+            />
+          </label>
+        </>
+      )}
+      <label className="field">
+        <span>Reason</span>
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. planned upgrade of the DB cluster"
+        />
+      </label>
+      <div className="pill-row">
+        <button className="pill accent" type="submit">
+          Schedule
+        </button>
+        <button className="pill" type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
   )
 }
 

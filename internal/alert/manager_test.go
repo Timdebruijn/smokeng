@@ -199,6 +199,117 @@ func TestStateSurvivesRestart(t *testing.T) {
 	}
 }
 
+// A silence suppresses delivery and attention, but not the fact: the alert still
+// fires, the transition is still logged, and lifting the silence lets it deliver.
+func TestSilenceSuppressesDeliveryNotTheFact(t *testing.T) {
+	ctx := context.Background()
+	st, groupID, leafID := setup(t)
+
+	cap := &capture{}
+	srv := httptest.NewServer(cap.handler())
+	defer srv.Close()
+
+	rule := alert.Rule{TargetID: groupID, Name: "packet loss", Metric: alert.MetricLoss,
+		Op: alert.OpGreater, Threshold: 20, For: 2, ClearFor: 2, Enabled: true}
+	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	m := alert.NewManager(st, &alert.Webhook{URL: srv.URL})
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Silence the group; the leaf is under it, and the window is always open.
+	// StartsAt/EndsAt are wall-clock, independent of the backdated inputs.
+	if _, err := m.AddSilence(ctx, alert.Silence{
+		TargetID: ptr(groupID), StartsAt: 1, EndsAt: 4_000_000_000, Reason: "maintenance",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	m.Observe(ctx, []alert.Input{input(leafID, 0, 10, 5)})
+	m.Observe(ctx, []alert.Input{input(leafID, 1, 10, 5)})
+
+	if got := cap.all(); len(got) != 0 {
+		t.Fatalf("silence did not suppress delivery: %v", got)
+	}
+	firing := m.Firing()
+	if len(firing) != 1 || !firing[0].Silenced {
+		t.Fatalf("Firing() = %+v, want one silenced alert", firing)
+	}
+	events, err := st.ListAlertEvents(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || !events[0].Firing {
+		t.Fatalf("transition log = %+v, want the fire recorded despite the silence", events)
+	}
+
+	// Lift it: what is still firing now delivers.
+	sils, _ := m.ListSilences(ctx)
+	if len(sils) != 1 {
+		t.Fatalf("ListSilences = %+v", sils)
+	}
+	if ok, err := m.RemoveSilence(ctx, sils[0].ID); err != nil || !ok {
+		t.Fatalf("RemoveSilence = %v, %v", ok, err)
+	}
+	m.Repeat(ctx)
+	if got := cap.all(); len(got) != 1 {
+		t.Fatalf("after lifting the silence, got %d deliveries, want 1", len(got))
+	}
+}
+
+// A silence must not overreach: one scoped to an unrelated target, and one whose
+// window has passed, both leave the leaf's alert to deliver normally.
+func TestSilenceScopeAndWindowDoNotOverreach(t *testing.T) {
+	ctx := context.Background()
+	st, groupID, leafID := setup(t)
+
+	cap := &capture{}
+	srv := httptest.NewServer(cap.handler())
+	defer srv.Close()
+
+	rule := alert.Rule{TargetID: groupID, Name: "packet loss", Metric: alert.MetricLoss,
+		Op: alert.OpGreater, Threshold: 20, For: 2, ClearFor: 2, Enabled: true}
+	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	m := alert.NewManager(st, &alert.Webhook{URL: srv.URL})
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// A real but unrelated target (a sibling of the group under the root), so a
+	// silence on it does not cover this leaf.
+	other := tree.Target{ParentID: ptr(int64(1)), Name: "other", Enabled: true,
+		Host: ptr("10.0.0.9"), AddressFamily: ptr("v4")}
+	if err := st.UpsertTarget(ctx, &other); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// One silence for the unrelated target, one for the right target but a window
+	// that closed in 1970. Neither should cover this leaf now.
+	if _, err := m.AddSilence(ctx, alert.Silence{TargetID: ptr(other.ID), StartsAt: 1, EndsAt: 4_000_000_000}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.AddSilence(ctx, alert.Silence{TargetID: ptr(groupID), StartsAt: 1, EndsAt: 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	m.Observe(ctx, []alert.Input{input(leafID, 0, 10, 5)})
+	m.Observe(ctx, []alert.Input{input(leafID, 1, 10, 5)})
+
+	if got := cap.all(); len(got) != 1 {
+		t.Fatalf("an out-of-scope or expired silence suppressed delivery: got %d, want 1", len(got))
+	}
+	if f := m.Firing(); len(f) != 1 || f[0].Silenced {
+		t.Fatalf("Firing() = %+v, want one alert that is not silenced", f)
+	}
+}
+
 // Rules replace rather than accumulate down the tree, consistently with every
 // other inheritable setting: a node that defines rules defines the whole set.
 func TestChildRulesReplaceInherited(t *testing.T) {

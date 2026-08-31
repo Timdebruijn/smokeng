@@ -55,6 +55,53 @@ export interface FiringAlert {
   acked: boolean
   acked_by?: string
   acked_at?: number
+  /** Silenced: still firing, but delivery is suppressed and the UI shows it muted. */
+  silenced: boolean
+  silenced_until?: number
+}
+
+/** A silence: matching alerts are suppressed over [starts_at, ends_at). */
+export interface Silence {
+  id: number
+  /** Scope. Absent means every target/agent/rule; target_id covers a subtree. */
+  target_id?: number
+  target?: string
+  agent_id?: number
+  rule_id?: number
+  starts_at: number
+  ends_at: number
+  reason: string
+  created_by: string
+  created_at: number
+  /** Derived: the window covers now, or is still in the future. */
+  active: boolean
+  upcoming: boolean
+}
+
+export async function fetchSilences(): Promise<Silence[]> {
+  const r = await fetch('/api/v1/silences', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`silences: HTTP ${r.status}`)
+  return ((await r.json()) as { silences: Silence[] }).silences ?? []
+}
+
+/**
+ * Book a silence. Give a `duration_s` for the quick "silence for N hours" from
+ * now, or an explicit `starts_at`/`ends_at` window for a maintenance window.
+ */
+export function createSilence(body: {
+  target_id?: number
+  agent_id?: number
+  rule_id?: number
+  starts_at?: number
+  ends_at?: number
+  duration_s?: number
+  reason?: string
+}): Promise<unknown> {
+  return mutate('/api/v1/silences', 'POST', body)
+}
+
+export function deleteSilence(id: number): Promise<unknown> {
+  return mutate(`/api/v1/silences/${id}`, 'DELETE')
 }
 
 /**

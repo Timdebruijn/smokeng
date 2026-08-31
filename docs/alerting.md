@@ -105,3 +105,41 @@ Prometheus, scrape [`/metrics`](operations.md) and skip the webhook entirely.
 Webhook delivery is the only notifier implemented. Email and chat integrations are
 deliberately not built: every organisation already has a router for those, and it is not
 smokeng's job to become a second one.
+
+## Acknowledging and silencing
+
+Two different things quiet a firing alert without touching the rule, and the difference is
+the point.
+
+An **acknowledge** mutes one firing episode's demand for attention in the UI — "seen,
+handling it" — while the alert keeps firing *and keeps being delivered*: downstream still
+needs to know. It is tied to the episode, so if the alert resolves and later fires again,
+the new episode is unacknowledged and shouts afresh.
+
+A **silence** suppresses both delivery and attention for matching alerts over a time
+window. This is the one that stops the webhook — because a maintenance window's whole
+purpose is not to page during planned work. A silence never rewrites history: the alert
+still fires, still advances its hysteresis, and the transition is still recorded to the
+log. Only the notification and the UI's alarm are held back; when the window closes,
+whatever is still firing is re-announced.
+
+A silence is scoped like everything else on the tree. Leave it global, or narrow it to a
+node — which covers that node and its whole subtree — and optionally to one agent or one
+rule. It comes in two shapes: a duration from now (the quick "silence this for two hours"
+on a firing alert), or an explicit `[from, until)` window booked ahead of time, which is a
+maintenance window. Both are managed under **Alerts → Silences & maintenance windows**, or
+over the API:
+
+```bash
+# Silence everything under /Production for two hours, from now.
+curl -X POST http://localhost:8080/api/v1/silences \
+  -d '{"target_id": 4, "duration_s": 7200, "reason": "DB cluster upgrade"}'
+
+# Book a maintenance window ahead of time.
+curl -X POST http://localhost:8080/api/v1/silences \
+  -d '{"target_id": 4, "starts_at": 1793000000, "ends_at": 1793007200, "reason": "planned"}'
+```
+
+If you deliver to Alertmanager, its own silences work too and may fit a cross-tool workflow
+better; smokeng's are for native use and for expressing a maintenance window declaratively
+against the target tree.

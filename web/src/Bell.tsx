@@ -59,9 +59,10 @@ export default function Bell({
     await poll() // reflect the new state at once rather than waiting 30s
   }
 
-  // The badge counts what still needs attention: unacknowledged alerts. An
-  // acknowledged one is still firing and still listed, just not shouting.
-  const unacked = alerts.filter((a) => !a.acked).length
+  // The badge counts what still needs attention: alerts that are neither
+  // acknowledged nor silenced. Both are still firing and still listed, just not
+  // shouting.
+  const unacked = alerts.filter((a) => !a.acked && !a.silenced).length
 
   return (
     <div className="bell">
@@ -86,28 +87,35 @@ export default function Bell({
           {alerts.length === 0 ? (
             <p className="hint small">All quiet — nothing is firing.</p>
           ) : (
-            alerts.map((a, i) => (
-              <div key={`${a.rule}-${a.target}-${i}`} className={a.acked ? 'bell-item acked' : 'bell-item'}>
-                <button className="bell-row" onClick={onOpenAlerts}>
-                  <span className="bell-rule">
-                    <span className={a.acked ? 'dot' : 'dot firing'} />
-                    {a.rule} — {a.describes}
-                  </span>
-                  <span className="hint small mono">
-                    {a.target}
-                    {a.since ? ` · since ${new Date(a.since * 1000).toLocaleTimeString()}` : ''}
-                    {a.acked && a.acked_by ? ` · ack ${a.acked_by}` : ''}
-                  </span>
-                </button>
-                <button
-                  className="pill small"
-                  title={a.acked ? 'Un-acknowledge' : 'Acknowledge — still fires, just stops nagging'}
-                  onClick={() => void ack(a)}
-                >
-                  {a.acked ? 'unack' : 'ack'}
-                </button>
-              </div>
-            ))
+            alerts.map((a, i) => {
+              const muted = a.acked || a.silenced
+              return (
+                <div key={`${a.rule}-${a.target}-${i}`} className={muted ? 'bell-item acked' : 'bell-item'}>
+                  <button className="bell-row" onClick={onOpenAlerts}>
+                    <span className="bell-rule">
+                      <span className={muted ? 'dot' : 'dot firing'} />
+                      {a.rule} — {a.describes}
+                    </span>
+                    <span className="hint small mono">
+                      {a.target}
+                      {a.since ? ` · since ${new Date(a.since * 1000).toLocaleTimeString()}` : ''}
+                      {a.silenced ? ' · silenced' : a.acked && a.acked_by ? ` · ack ${a.acked_by}` : ''}
+                    </span>
+                  </button>
+                  {/* A silence is managed on the Alerts page, so the bell only
+                      offers the per-episode acknowledge. */}
+                  {!a.silenced && (
+                    <button
+                      className="pill small"
+                      title={a.acked ? 'Un-acknowledge' : 'Acknowledge — still fires, just stops nagging'}
+                      onClick={() => void ack(a)}
+                    >
+                      {a.acked ? 'unack' : 'ack'}
+                    </button>
+                  )}
+                </div>
+              )
+            })
           )}
         </div>
       )}
