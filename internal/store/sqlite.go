@@ -247,6 +247,16 @@ ALTER TABLE alert_state ADD COLUMN acked_since INTEGER;
 ALTER TABLE alert_state ADD COLUMN acked_at INTEGER;
 ALTER TABLE alert_state ADD COLUMN acked_by TEXT;
 `,
+	// v15: how long to keep a target's raw measurements, in seconds. Inheritable
+	// like every other setting, and 0 at the root — meaning keep forever, the
+	// default that honours the promise of full resolution kept for good. A
+	// positive value is the operator's own bound: measurements older than it are
+	// deleted whole, never consolidated, so history before the horizon reads as
+	// absent rather than as the coarsened average this project refuses to invent.
+	`
+ALTER TABLE targets ADD COLUMN retention_s INTEGER;
+UPDATE targets SET retention_s = 0 WHERE parent_id IS NULL AND retention_s IS NULL;
+`,
 }
 
 func (s *SQLite) migrate() error {
@@ -340,7 +350,7 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 
 const targetCols = `id, parent_id, name, host, address_family, title, notes,
 	hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
-	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify`
+	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s`
 
 func (s *SQLite) ListTargets(ctx context.Context) ([]tree.Target, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+targetCols+" FROM targets ORDER BY id")
@@ -365,11 +375,11 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 	var host, af, title, notes, probeMode, agents sql.NullString
 	var probeType, dnsQuery, dnsRRType, httpPath sql.NullString
 	var intervalS, pings, burstGap, timeout, packetSize, dscp, traceInterval sql.NullInt64
-	var probePort, tlsSkipVerify sql.NullInt64
+	var probePort, tlsSkipVerify, retention sql.NullInt64
 	err := rows.Scan(&t.ID, &parentID, &t.Name, &host, &af, &title, &notes,
 		&t.Hidden, &t.Enabled, &t.SortOrder, &intervalS, &pings, &probeMode,
 		&burstGap, &timeout, &packetSize, &dscp, &agents, &traceInterval,
-		&probeType, &probePort, &dnsQuery, &dnsRRType, &httpPath, &tlsSkipVerify)
+		&probeType, &probePort, &dnsQuery, &dnsRRType, &httpPath, &tlsSkipVerify, &retention)
 	if err != nil {
 		return t, err
 	}
@@ -396,6 +406,7 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 		DNSRRType:        nullStr(dnsRRType),
 		HTTPPath:         nullStr(httpPath),
 		TLSSkipVerify:    nullBool(tlsSkipVerify),
+		RetentionS:       nullInt(retention),
 	}
 	return t, nil
 }
@@ -409,8 +420,8 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 		INSERT INTO targets (id, parent_id, name, host, address_family, title, notes,
 			hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
 			burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s,
-			probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			parent_id = excluded.parent_id, name = excluded.name,
 			host = excluded.host, address_family = excluded.address_family,
@@ -431,7 +442,8 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 			dns_query = excluded.dns_query,
 			dns_rr_type = excluded.dns_rr_type,
 			http_path = excluded.http_path,
-			tls_skip_verify = excluded.tls_skip_verify`,
+			tls_skip_verify = excluded.tls_skip_verify,
+			retention_s = excluded.retention_s`,
 		id, ptrOrNil(t.ParentID), t.Name, ptrOrNil(t.Host), ptrOrNil(t.AddressFamily),
 		ptrOrNil(t.Title), ptrOrNil(t.Notes), t.Hidden, t.Enabled, t.SortOrder,
 		ptrOrNil(t.Settings.IntervalS), ptrOrNil(t.Settings.PingsPerInterval),
@@ -441,7 +453,8 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 		ptrOrNil(t.Settings.TraceIntervalS),
 		ptrOrNil(t.Settings.ProbeType), ptrOrNil(t.Settings.ProbePort),
 		ptrOrNil(t.Settings.DNSQuery), ptrOrNil(t.Settings.DNSRRType),
-		ptrOrNil(t.Settings.HTTPPath), ptrOrNil(t.Settings.TLSSkipVerify))
+		ptrOrNil(t.Settings.HTTPPath), ptrOrNil(t.Settings.TLSSkipVerify),
+		ptrOrNil(t.Settings.RetentionS))
 	if err != nil {
 		return err
 	}
@@ -458,6 +471,57 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 func (s *SQLite) DeleteTarget(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM targets WHERE id = ?", id)
 	return err
+}
+
+// PruneMeasurements deletes one target's measurements older than cutoff (a Unix
+// second), across every agent that measured it, and returns how many rows went.
+//
+// It deletes in time slices of sliceS seconds, oldest first, rather than in one
+// statement: a target that has accumulated months of data before retention is
+// first switched on would otherwise hold a single write lock for the length of
+// a delete of hundreds of thousands of rows, and this project will not let
+// housekeeping stall the prober. Each slice is a short lock; the loop yields the
+// database between them and stops as soon as the oldest surviving row is within
+// the horizon. Deletion is by whole interval — a pruned measurement is gone, not
+// summarised, so history before the horizon reads as absent, never as an average.
+func (s *SQLite) PruneMeasurements(ctx context.Context, targetID, cutoff, sliceS int64) (int64, error) {
+	if sliceS <= 0 {
+		sliceS = 6 * 3600
+	}
+	var total int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		var oldest sql.NullInt64
+		if err := s.db.QueryRowContext(ctx,
+			"SELECT MIN(ts) FROM measurements WHERE target_id = ?", targetID).Scan(&oldest); err != nil {
+			return total, err
+		}
+		if !oldest.Valid || oldest.Int64 >= cutoff {
+			return total, nil
+		}
+		end := oldest.Int64 + sliceS
+		if end > cutoff {
+			end = cutoff
+		}
+		res, err := s.db.ExecContext(ctx,
+			"DELETE FROM measurements WHERE target_id = ? AND ts < ?", targetID, end)
+		if err != nil {
+			return total, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return total, err
+		}
+		total += n
+		// end is strictly greater than the oldest row, so a slice always removes
+		// at least that row; a zero here would mean the count is untrustworthy,
+		// and looping on it would spin. Stop rather than risk that.
+		if n == 0 {
+			return total, nil
+		}
+	}
 }
 
 func (s *SQLite) RecordResolution(ctx context.Context, targetID, ts int64, address string) error {

@@ -61,6 +61,11 @@ type Settings struct {
 	// Separate from IntervalS because a traceroute costs a round trip per
 	// hop, and a path changes on a scale of days rather than seconds.
 	TraceIntervalS *int
+	// RetentionS is how long to keep this target's raw measurements, in
+	// seconds; 0 keeps them forever, the default. A positive value deletes
+	// whole intervals older than it — never consolidating them, so the graph
+	// shows no data before the horizon rather than a coarsened average.
+	RetentionS *int
 }
 
 // Source identifies the node an effective value came from.
@@ -89,6 +94,7 @@ type Resolved struct {
 	DSCP             Value[int]
 	Agents           Value[string]
 	TraceIntervalS   Value[int]
+	RetentionS       Value[int]
 	ProbeType        Value[string]
 	ProbePort        Value[int]
 	DNSQuery         Value[string]
@@ -177,6 +183,10 @@ func (t *Target) Validate() error {
 	if s.TraceIntervalS != nil && *s.TraceIntervalS < 0 {
 		return fmt.Errorf("tree: trace_interval_s must not be negative (0 disables it)")
 	}
+	// 0 means keep forever, so only a negative value is wrong.
+	if s.RetentionS != nil && *s.RetentionS < 0 {
+		return fmt.Errorf("tree: retention_s must not be negative (0 keeps measurements forever)")
+	}
 	return nil
 }
 
@@ -225,7 +235,7 @@ func New(targets []Target) (*Tree, error) {
 	if s.IntervalS == nil || s.PingsPerInterval == nil || s.ProbeMode == nil ||
 		s.BurstGapMS == nil || s.TimeoutMS == nil || s.PacketSize == nil ||
 		s.DSCP == nil || s.Agents == nil || s.TraceIntervalS == nil ||
-		s.ProbeType == nil || s.TLSSkipVerify == nil {
+		s.RetentionS == nil || s.ProbeType == nil || s.TLSSkipVerify == nil {
 		return nil, fmt.Errorf("tree: root %d must set every inheritable default", t.root.ID)
 	}
 	for _, n := range t.nodes {
@@ -333,6 +343,7 @@ func (t *Tree) Resolve(id int64) (Resolved, error) {
 		HTTPPath:         resolve(t, chain, func(s *Settings) *string { return s.HTTPPath }),
 		TLSSkipVerify:    resolve(t, chain, func(s *Settings) *bool { return s.TLSSkipVerify }),
 		TraceIntervalS:   resolve(t, chain, func(s *Settings) *int { return s.TraceIntervalS }),
+		RetentionS:       resolve(t, chain, func(s *Settings) *int { return s.RetentionS }),
 	}, nil
 }
 

@@ -78,6 +78,7 @@ func targetJSON(sc *Scope, n *tree.Target) (map[string]any, error) {
 			"dscp":               settingJSON(sc, n.ID, res.DSCP),
 			"agents":             settingJSON(sc, n.ID, res.Agents),
 			"trace_interval_s":   settingJSON(sc, n.ID, res.TraceIntervalS),
+			"retention_s":        settingJSON(sc, n.ID, res.RetentionS),
 			"probe_type":         settingJSON(sc, n.ID, res.ProbeType),
 			"probe_port":         settingJSON(sc, n.ID, res.ProbePort),
 			"dns_query":          settingJSON(sc, n.ID, res.DNSQuery),
@@ -424,6 +425,7 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 			"packet_size":        &n.Settings.PacketSize,
 			"dscp":               &n.Settings.DSCP,
 			"trace_interval_s":   &n.Settings.TraceIntervalS,
+			"retention_s":        &n.Settings.RetentionS,
 			"probe_port":         &n.Settings.ProbePort,
 		}
 		bools := map[string]**bool{

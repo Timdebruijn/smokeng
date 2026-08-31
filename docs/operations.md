@@ -136,8 +136,17 @@ GB/year). Past that a single SQLite file is the wrong shape, and the `Store` int
 the seam where a columnar backend would go. That work is designed but not built; if you
 are planning fifteen thousand series, say so before you start.
 
-There is no retention or downsampling, and none is planned — deleting a target's history
-is `DELETE`ing its rows, and coarsening it is exactly what smokeng exists not to do.
+Retention is opt-in and per target. `retention_s` is `0` — keep forever — by default, so
+nothing is deleted unless you ask for it. Set it on a node (it inherits like every other
+setting, so a group sets the policy for its subtree) and measurements older than that many
+seconds are pruned on a timer, `--retention-interval` (default one hour). The prune runs in
+time slices so clearing a long backlog is a series of short write locks rather than one
+that stalls the prober.
+
+What retention never does is coarsen. An old interval is deleted whole, not averaged into a
+summary, so history before the horizon reads as absent — never as a downsampled figure,
+which is the one thing smokeng exists not to fake. Downsampling stays unimplemented and
+unplanned for that reason.
 
 ## Backups
 

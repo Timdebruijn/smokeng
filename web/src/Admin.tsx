@@ -118,6 +118,14 @@ const SETTINGS: SettingDef[] = [
   { key: 'dscp', label: 'DSCP', kind: 'number', min: 0, max: 63 },
   { key: 'agents', label: 'Agents', kind: 'agents' },
   { key: 'trace_interval_s', label: 'Path discovery', unit: 's (0 = off)', kind: 'number', min: 0 },
+  {
+    key: 'retention_s',
+    label: 'Retention',
+    unit: 's (0 = forever)',
+    kind: 'number',
+    min: 0,
+    hint: 'How long to keep this target’s raw measurements. 0 keeps them forever, at full resolution. A positive value deletes whole intervals older than it — never averaging them away, so history before the horizon reads as absent.',
+  },
 ]
 
 /**

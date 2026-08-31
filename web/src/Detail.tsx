@@ -27,6 +27,9 @@ const SETTING_LABELS: {
   label: string
   unit?: string
   types?: string[]
+  // When present, renders the effective value itself (unit included); used where
+  // a bare number would mislead, e.g. retention 0 meaning "forever", not "0s".
+  render?: (v: number) => string
 }[] = [
   { key: 'probe_type', label: 'Probe type' },
   { key: 'interval_s', label: 'Interval', unit: 's' },
@@ -43,6 +46,11 @@ const SETTING_LABELS: {
   { key: 'dscp', label: 'DSCP' },
   { key: 'agents', label: 'Agents' },
   { key: 'trace_interval_s', label: 'Path discovery', unit: 's' },
+  {
+    key: 'retention_s',
+    label: 'Retention',
+    render: (v) => (v === 0 ? 'forever' : `${v} s`),
+  },
 ]
 
 /**
@@ -205,8 +213,12 @@ export default function Detail({
                 <span className="mono">
                   {/* An unset optional setting has no value to print; an empty
                       cell would read as a blank the page failed to fill. */}
-                  {isUnset(v) ? '—' : String(v.effective)}
-                  {!isUnset(v) && s.unit && <span className="unit">{s.unit}</span>}
+                  {isUnset(v)
+                    ? '—'
+                    : s.render
+                      ? s.render(v.effective as number)
+                      : String(v.effective)}
+                  {!isUnset(v) && s.unit && !s.render && <span className="unit">{s.unit}</span>}
                 </span>
                 <span className="spacer" />
                 <span className={v.source === 'local' ? 'chip local' : 'chip'}>

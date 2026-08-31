@@ -163,6 +163,8 @@ export interface SettingValue<T> {
 export interface TargetSettings {
   interval_s: SettingValue<number>
   trace_interval_s: SettingValue<number>
+  /** How long raw measurements are kept, in seconds; 0 keeps them forever. */
+  retention_s: SettingValue<number>
   pings_per_interval: SettingValue<number>
   probe_mode: SettingValue<string>
   burst_gap_ms: SettingValue<number>

@@ -204,6 +204,8 @@ func serve(args []string) error {
 		"POST firing and resolved alerts to this URL in Alertmanager's v2 format")
 	alertRepeat := fs.Duration("alert-repeat", time.Minute,
 		"re-post still-firing alerts this often so Alertmanager does not expire them; only used with --alert-webhook")
+	retentionInterval := fs.Duration("retention-interval", time.Hour,
+		"how often to prune measurements past each target's retention_s (retention itself is per target; 0 there keeps forever)")
 	oidcIssuer := fs.String("oidc-issuer", "", "OIDC issuer URL; enables authentication")
 	oidcClientID := fs.String("oidc-client-id", "", "OIDC client id")
 	oidcSecret := fs.String("oidc-client-secret", "", "OIDC client secret")
@@ -349,6 +351,15 @@ func serve(args []string) error {
 			log.Printf("probe engine: %v", err)
 		}
 	}()
+
+	// Prune measurements past each target's retention on a timer. Retention is
+	// per target and 0 (forever) by default, so this is a no-op on an install
+	// that has set none — but it always runs, so switching retention on for a
+	// target needs no restart.
+	if *retentionInterval <= 0 {
+		return fmt.Errorf("--retention-interval must be positive, got %s", *retentionInterval)
+	}
+	go runRetention(ctx, st, *retentionInterval)
 
 	dist, err := web.Dist()
 	if err != nil {

@@ -142,3 +142,84 @@ func TestSQLiteRoundTrip(t *testing.T) {
 		t.Fatal("expected error for received != len(samples)")
 	}
 }
+
+func TestPruneMeasurements(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "prune.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	mk := func(name string) int64 {
+		tg := tree.Target{
+			ParentID: ptr(int64(1)), Name: name, Host: ptr("1.1.1.1"),
+			AddressFamily: ptr("v4"), Enabled: true,
+		}
+		if err := s.UpsertTarget(ctx, &tg); err != nil {
+			t.Fatal(err)
+		}
+		return tg.ID
+	}
+	kept := mk("kept")   // has retention applied
+	other := mk("other") // must be untouched: pruning is scoped to one target
+
+	const base = 1_000_000
+	const step = 100
+	const n = 10
+	write := func(target int64, ts int64) {
+		if err := s.WriteMeasurements(ctx, []Measurement{{
+			TargetID: target, AgentID: LocalAgentID, TS: ts,
+			Sent: 1, Received: 1, Samples: []uint32{1000},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < n; i++ {
+		write(kept, base+int64(i)*step)
+		write(other, base+int64(i)*step)
+	}
+
+	// Cutoff halfway: rows at base..base+400 (5) are older, base+500..base+900 (5)
+	// stay. A slice smaller than the span forces several passes, exercising the
+	// chunking loop rather than a single delete.
+	cutoff := int64(base + 500)
+	deleted, err := s.PruneMeasurements(ctx, kept, cutoff, 150)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 5 {
+		t.Fatalf("pruned %d rows, want 5", deleted)
+	}
+
+	remaining, err := s.QueryRange(ctx, kept, LocalAgentID, 0, base+n*step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 5 {
+		t.Fatalf("kept target has %d rows after prune, want 5", len(remaining))
+	}
+	for _, r := range remaining {
+		if r.TS < cutoff {
+			t.Fatalf("row at %d survived a cutoff of %d", r.TS, cutoff)
+		}
+	}
+
+	// The other target is whole: nobody set retention on it.
+	untouched, err := s.QueryRange(ctx, other, LocalAgentID, 0, base+n*step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(untouched) != n {
+		t.Fatalf("other target has %d rows, want %d — prune leaked across targets", len(untouched), n)
+	}
+
+	// A cutoff older than everything keeps the target forever: nothing to do.
+	deleted, err = s.PruneMeasurements(ctx, kept, base-1, 150)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 {
+		t.Fatalf("prune below all data deleted %d rows, want 0", deleted)
+	}
+}

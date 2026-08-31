@@ -16,6 +16,7 @@ func testTargets() []Target {
 			DSCP:             ptr(0),
 			Agents:           ptr("local"),
 			TraceIntervalS:   ptr(300),
+			RetentionS:       ptr(0),
 			ProbeType:        ptr("icmp"),
 			TLSSkipVerify:    ptr(false),
 		}},

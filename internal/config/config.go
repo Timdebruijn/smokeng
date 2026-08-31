@@ -44,6 +44,10 @@ type Values struct {
 	DSCP             *int    `toml:"dscp,omitempty"`
 	Agents           any     `toml:"agents,omitempty"`
 	TraceIntervalS   *int    `toml:"trace_interval_s,omitempty"`
+	// RetentionS is how long to keep this target's raw measurements, in
+	// seconds; 0 keeps them forever (the default). A positive value prunes
+	// whole older intervals, never consolidating them.
+	RetentionS *int `toml:"retention_s,omitempty"`
 	// What the probes of an interval are, and the settings the chosen type
 	// reads (DESIGN.md §3.2b). A setting belonging to another type is stored
 	// and inherited as usual, and simply not read.
@@ -297,6 +301,12 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 			DNSRRType:        e.DNSRRType,
 			HTTPPath:         e.HTTPPath,
 			TLSSkipVerify:    e.TLSSkipVerify,
+			// A per-target trace_interval_s used to be dropped here — parsed,
+			// validated and exported everywhere else, but never written on a
+			// non-root node, so an export/import round-trip lost it. Carried
+			// through now, alongside retention_s.
+			TraceIntervalS: e.TraceIntervalS,
+			RetentionS:     e.RetentionS,
 		}
 		if existed && !reflect.DeepEqual(before, *n) {
 			sum.Updated++
@@ -627,6 +637,7 @@ func valuesFrom(s tree.Settings) Values {
 		HTTPPath:         s.HTTPPath,
 		TLSSkipVerify:    s.TLSSkipVerify,
 		TraceIntervalS:   s.TraceIntervalS,
+		RetentionS:       s.RetentionS,
 	}
 }
 
@@ -676,6 +687,9 @@ func overlayValues(dst *tree.Settings, v Values) {
 	if v.TraceIntervalS != nil {
 		dst.TraceIntervalS = v.TraceIntervalS
 	}
+	if v.RetentionS != nil {
+		dst.RetentionS = v.RetentionS
+	}
 }
 
 func validatePath(p string) error {
@@ -711,6 +725,7 @@ func validateEntry(p string, e Entry) error {
 			HTTPPath:         e.HTTPPath,
 			TLSSkipVerify:    e.TLSSkipVerify,
 			TraceIntervalS:   e.TraceIntervalS,
+			RetentionS:       e.RetentionS,
 		},
 	}
 	if err := t.Validate(); err != nil {

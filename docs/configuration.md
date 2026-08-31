@@ -88,6 +88,7 @@ table.
 | `tls_skip_verify` | bool | `false` | | Turn off certificate verification for an `https` probe — read the caveat below |
 | `agents` | array | `["local"]` | every name must be enrolled | Which vantage points measure this target |
 | `trace_interval_s` | int | `300` | ≥ 0 | Seconds between traceroutes; `0` disables path discovery |
+| `retention_s` | int | `0` | ≥ 0 | Seconds to keep raw measurements; `0` keeps them forever. Older intervals are deleted whole, never downsampled — see [Operations](operations.md#storage-growth) |
 
 `agents` is checked against the agents you have actually enrolled. A name that
 matches none of them is refused, with the offending name and the list of what
