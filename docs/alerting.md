@@ -89,8 +89,8 @@ smokeng serve --alert-webhook https://alertmanager.example.org/api/v2/alerts
 The payload is a JSON array of alert objects, so anything that speaks Alertmanager —
 Alertmanager itself, Grafana OnCall, ntfy shims, a small script — takes it unmodified.
 Resolved alerts are sent as well, so receivers that track state stay in sync, and firing
-alerts are repeated once a minute because Alertmanager expires an alert it stops hearing
-about.
+alerts are repeated — once a minute by default, `--alert-repeat` sets the interval —
+because Alertmanager expires an alert it stops hearing about.
 
 **Rules are evaluated whether or not `--alert-webhook` is set.** Firing state and the
 transition history are live either way; a missing webhook only means a transition is

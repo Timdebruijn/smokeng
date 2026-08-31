@@ -202,6 +202,8 @@ func serve(args []string) error {
 		"serve /metrics without a session so Prometheus can scrape it")
 	webhook := fs.String("alert-webhook", "",
 		"POST firing and resolved alerts to this URL in Alertmanager's v2 format")
+	alertRepeat := fs.Duration("alert-repeat", time.Minute,
+		"re-post still-firing alerts this often so Alertmanager does not expire them; only used with --alert-webhook")
 	oidcIssuer := fs.String("oidc-issuer", "", "OIDC issuer URL; enables authentication")
 	oidcClientID := fs.String("oidc-client-id", "", "OIDC client id")
 	oidcSecret := fs.String("oidc-client-secret", "", "OIDC client secret")
@@ -306,12 +308,35 @@ func serve(args []string) error {
 	// is posted anywhere.
 	var notifier alert.Notifier
 	if *webhook != "" {
+		if *alertRepeat <= 0 {
+			return fmt.Errorf("--alert-repeat must be positive, got %s", *alertRepeat)
+		}
 		notifier = &alert.Webhook{URL: *webhook}
-		log.Printf("alerting enabled, posting to %s", *webhook)
+		log.Printf("alerting enabled, posting to %s (repeating every %s)", *webhook, *alertRepeat)
 	} else {
 		log.Printf("alerting evaluated but not delivered: no --alert-webhook is set")
 	}
 	alerts := alert.NewManager(st, notifier)
+
+	// Re-post what is still firing on a timer. Observe delivers transitions as
+	// they happen, but Alertmanager expires an alert it stops hearing about, so
+	// a still-firing condition would read as recovered within its resolve
+	// timeout unless we keep repeating it. Nothing to do when no webhook is set:
+	// Repeat is a no-op without a notifier, and the log alone never expires.
+	if notifier != nil {
+		go func() {
+			t := time.NewTicker(*alertRepeat)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					alerts.Repeat(ctx)
+				}
+			}
+		}()
+	}
 
 	eng, err := probe.NewEngine(st, alerterOrNil(alerts))
 	if err != nil {

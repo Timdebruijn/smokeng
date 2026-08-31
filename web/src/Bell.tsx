@@ -23,13 +23,16 @@ export default function Bell({
   onOpenAlerts: () => void
 }) {
   const [alerts, setAlerts] = useState<FiringAlert[]>([])
-  const [enabled, setEnabled] = useState(true)
+  // Whether transitions are posted anywhere, not whether they are evaluated:
+  // rules are always evaluated, and the firing list below is proof of it. The
+  // only thing a missing webhook changes is that nothing is posted onward.
+  const [delivering, setDelivering] = useState(true)
 
   const poll = () =>
     fetchFiringAlerts()
       .then((r) => {
         setAlerts(r.alerts ?? [])
-        setEnabled(r.enabled)
+        setDelivering(r.delivering)
       })
       // A failed poll leaves the last known state rather than clearing it.
       // Showing "all quiet" because the request failed would be the one
@@ -75,11 +78,12 @@ export default function Bell({
       {open && (
         <div className="popover bell-popover">
           <p className="popover-title">Firing now</p>
-          {!enabled ? (
+          {!delivering && (
             <p className="hint small">
-              Rules are stored but not evaluated — no <code>--alert-webhook</code> is set.
+              Evaluated and recorded, but not posted anywhere: no <code>--alert-webhook</code>.
             </p>
-          ) : alerts.length === 0 ? (
+          )}
+          {alerts.length === 0 ? (
             <p className="hint small">All quiet — nothing is firing.</p>
           ) : (
             alerts.map((a, i) => (
