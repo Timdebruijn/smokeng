@@ -230,6 +230,17 @@ Scraping needs `--metrics-public`, since a scraper cannot present a session cook
 
 ## Upgrades
 
+
+**Upgrade the master before the agents.** The submission format gains optional
+columns over time. A master reads a batch from an older agent by looking columns
+up by name, so an agent that predates a column is accepted and simply carries
+less — the fleet can be upgraded at whatever pace suits it. The reverse does not
+hold as gracefully: a master too old to know a column an agent sends refuses the
+batch outright. The agent discards a batch the master calls undecodable, rather
+than re-sending the same bytes forever and never delivering anything again, and
+says so in its log — so the cost of getting the order wrong is the measurements
+taken during the gap, not the agent.
+
 Stop the service, replace the binary, start it. The database schema migrates forward on
 open. Downgrades are not supported — take a backup first if you are trying a new version
 on real data.

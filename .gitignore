@@ -28,3 +28,13 @@ deploy/ansible/group_vars/*.yml
 deploy/ansible/group_vars_*.yml
 deploy/ansible/targets*.toml
 !deploy/ansible/targets.example.toml
+# The rules above are anchored to deploy/ansible/, so a vault or secrets file
+# placed inside a role would slip past all of them. And the OIDC client secret
+# is now read from a file, which invites one being left in the working tree.
+# Neither of these exists today; both are ignored before they can.
+**/vars/secrets*.yml
+**/vault*.yml
+*secret*.txt
+*.pem
+*.key
+
