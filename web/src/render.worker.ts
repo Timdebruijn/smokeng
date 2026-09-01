@@ -155,12 +155,22 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   // Samples outside the drawn range are left out of the density rather than
   // pinned to the edge, for the reason spelt out at the clip below. On a
   // signed scale that applies at both ends.
-  const clipped = (v: number): boolean => (signed ? v < ymin || v > ymax : !log && v > ymax)
+  // A sample outside the drawn range is left out of the density rather than
+  // pinned to the edge, where after the blur it reads as a solid plateau at
+  // that value. That has to hold at both ends: the linear branch tested only
+  // the top, so a negative server-processing reading — reachable through irtt's
+  // wall-clock fallback — landed on the bottom pixel row, pinned to the zero
+  // axis, which is the exact failure this rule exists to prevent.
+  const clipped = (v: number): boolean =>
+    signed ? v < ymin || v > ymax : log ? false : v > ymax || v < 0
 
   const text = dark ? 'rgba(255,255,255,0.62)' : 'rgba(0,0,0,0.58)'
   const grid = dark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.08)'
   const smoke: [number, number, number] = dark ? [125, 185, 255] : [23, 80, 190]
   const medianColor = dark ? '#7dd3fc' : '#0369a1'
+  // Warm, so it reads as an edge condition rather than as more of the same
+  // measurement — and legible against both grounds.
+  const clipMark = dark ? 'rgba(251,146,60,0.9)' : 'rgba(194,65,12,0.85)'
 
   // A row's ts is its interval START: it covers [ts, ts+span) and belongs in
   // every column that span overlaps.
@@ -177,6 +187,9 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   const dens = new Float32Array(plotH)
   const blurred = new Float32Array(plotH)
   const median = new Float64Array(plotW).fill(NaN)
+  // Per column, how many samples fell off each end of the drawn range.
+  const clipHigh = new Uint32Array(plotW)
+  const clipLow = new Uint32Array(plotW)
   const loss = new Float64Array(plotW).fill(NaN)
   const { radius, k: KERNEL } = gaussianKernel(SIGMA_CSS * dpr)
 
@@ -204,6 +217,12 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
         // scale never clips (ymax there is sized from the data itself), so
         // this only applies on linear.
         if (clipped(v)) {
+          // Counted per direction so the column can say something is out
+          // there. Without that, a column whose samples are *all* clipped
+          // draws no ink and breaks the median line, which is exactly what an
+          // interval with no data looks like — presence rendered as absence.
+          if (v > ymax) clipHigh[x]++
+          else clipLow[x]++
           pooled.push(v)
           continue
         }
@@ -276,6 +295,21 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
     ctx.fillText(label, Math.min(Math.max(x, axisW + 18 * dpr), w - 18 * dpr), h - axisH + 4 * dpr)
   }
 
+  // Where samples fell outside the drawn range, mark the edge they left by.
+  // The density deliberately excludes them — pinning them to the axis reads as
+  // a solid plateau at that value — but excluding them silently means an
+  // excursion large enough to leave the plot entirely renders as no data at
+  // all. A mark is not a value: it says "there is more this way", which is
+  // exactly as much as the plot can honestly claim about a clipped sample.
+  ctx.fillStyle = clipMark
+  for (let x = 0; x < plotW; x++) {
+    if (clipHigh[x] > 0) ctx.fillRect(axisW + x, 0, 1, Math.max(1, Math.round(2 * dpr)))
+    if (clipLow[x] > 0) {
+      const h = Math.max(1, Math.round(2 * dpr))
+      ctx.fillRect(axisW + x, plotH - h, 1, h)
+    }
+  }
+
   // median line, breaking at gaps — and, on the linear scale, wherever the
   // median itself sits above the clip: `Math.min(yFrac(v), 1)` used to pin
   // that segment to the axis edge too, drawing a real excursion as a flat
@@ -297,19 +331,25 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   }
   ctx.stroke()
 
-  // loss rail: 0% stays background, so the rail is silent when all is well
+  // loss rail: 0% stays background, so the rail is silent when all is well.
+  // Skipped entirely when the caller asked for no rail — with railH and railGap
+  // both zero the coloured bars were a no-op, but the axis label was not, so
+  // the word "loss" landed on the bottom gridline of a graph that never counted
+  // one, where it reads as a rail showing 0%.
   const railY = plotH + railGap
-  for (let x = 0; x < plotW; x++) {
+  for (let x = 0; showRail && x < plotW; x++) {
     const l = loss[x]
     if (Number.isNaN(l) || l <= 0) continue
     const [r, g, b] = viridis(l)
     ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`
     ctx.fillRect(axisW + x, railY, 1, railH)
   }
-  ctx.fillStyle = text
-  ctx.textAlign = 'right'
-  ctx.textBaseline = 'middle'
-  ctx.fillText('loss', axisW - 6 * dpr, railY + railH / 2)
+  if (showRail) {
+    ctx.fillStyle = text
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('loss', axisW - 6 * dpr, railY + railH / 2)
+  }
 
   postMessage({ type: 'rendered' })
 }
