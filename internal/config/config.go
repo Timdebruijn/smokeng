@@ -74,6 +74,15 @@ type AlertRule struct {
 	For      int  `toml:"for_intervals,omitempty"`
 	ClearFor int  `toml:"clear_intervals,omitempty"`
 	Disabled bool `toml:"disabled,omitempty"`
+	// Mode and Baseline belong to the distribution-shape metrics: mode is auto
+	// or tunable, baseline is rolling or golden. Empty for the scalar metrics,
+	// which is why they are omitempty — a loss rule should not carry them.
+	//
+	// A shape rule that could not be written here could not be managed
+	// declaratively at all: an import would refuse it, and a rule created in the
+	// UI would be disabled by the next import for being absent from the file.
+	Mode     string `toml:"mode,omitempty"`
+	Baseline string `toml:"baseline,omitempty"`
 }
 
 // Entry is one target table, keyed by its path. A table without host is a
@@ -545,6 +554,8 @@ func toAlertRule(name string, r AlertRule, targetID int64) (alert.Rule, error) {
 		For:       r.For,
 		ClearFor:  r.ClearFor,
 		Enabled:   !r.Disabled,
+		Mode:      alert.Mode(r.Mode),
+		Baseline:  alert.Baseline(r.Baseline),
 	}
 	if out.For == 0 {
 		out.For = 3
@@ -585,6 +596,7 @@ func Export(ctx context.Context, st Store) ([]byte, error) {
 		byNode[r.TargetID][r.Name] = AlertRule{
 			Metric: string(r.Metric), Op: string(r.Op), Threshold: r.Threshold,
 			For: r.For, ClearFor: r.ClearFor, Disabled: !r.Enabled,
+			Mode: string(r.Mode), Baseline: string(r.Baseline),
 		}
 	}
 

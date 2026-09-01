@@ -328,9 +328,25 @@ clear_intervals = 3
 metric = "median"
 op = ">"
 threshold = 5
+
+# A distribution-shape rule. mode is auto or tunable; baseline (shape only) is
+# rolling or golden. A golden rule's reference is captured from the UI or the
+# API — it is measured data, not something a config file can state.
+[targets."Datacenter/Core/sw-core-01".alerts."shape shift"]
+metric = "shape"
+op = ">"
+threshold = 4
+mode = "auto"
+baseline = "rolling"
 ```
 
 See [Alerting](alerting.md) for the semantics of each field.
+
+Alert rules follow the same declarative rule as targets: one that is in the database
+but absent from the file is **disabled**, not deleted. That applies to rules created in
+the UI too, so a rule you want to keep belongs in the file — which is why `mode` and
+`baseline` are writable here, and a shape rule can live in version control like any
+other.
 
 ## A complete example
 

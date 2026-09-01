@@ -286,6 +286,91 @@ func TestAlertRulesImportAndRoundTrip(t *testing.T) {
 	}
 }
 
+// A shape rule must be expressible in the file, or it cannot be managed
+// declaratively at all: an import would refuse it, and one created in the UI
+// would be disabled by the next import for being absent — which is exactly what
+// happened on a real deployment before mode and baseline were carried here.
+func TestShapeRulesRoundTripThroughTOML(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	const withShape = `
+[defaults]
+interval_s = 60
+pings_per_interval = 20
+
+[targets."gw"]
+host = "10.0.0.1"
+address_family = "v4"
+
+[targets."gw".alerts."shape shift"]
+metric = "shape"
+op = ">"
+threshold = 4
+mode = "auto"
+baseline = "rolling"
+
+[targets."gw".alerts."path split"]
+metric = "bimodality"
+op = ">"
+threshold = 0.6
+mode = "auto"
+`
+	if _, err := Import(ctx, s, []byte(withShape), false); err != nil {
+		t.Fatalf("importing a shape rule: %v", err)
+	}
+	rules, err := s.ListAlertRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]alert.Rule{}
+	for _, r := range rules {
+		byName[r.Name] = r
+	}
+	if r := byName["shape shift"]; r.Metric != alert.MetricShape ||
+		r.Mode != alert.ModeAuto || r.Baseline != alert.BaselineRolling || !r.Enabled {
+		t.Fatalf("shape rule = %+v", r)
+	}
+	if r := byName["path split"]; r.Metric != alert.MetricBimodality || r.Mode != alert.ModeAuto {
+		t.Fatalf("bimodality rule = %+v", r)
+	}
+
+	// And back out again: an export that dropped mode or baseline would produce
+	// a file the next import refuses.
+	exported, err := Export(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2 := open(t)
+	if _, err := Import(ctx, s2, exported, false); err != nil {
+		t.Fatalf("re-importing the export: %v\n%s", err, exported)
+	}
+	again, err := s2.ListAlertRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range again {
+		orig := byName[r.Name]
+		if r.Mode != orig.Mode || r.Baseline != orig.Baseline || r.Metric != orig.Metric {
+			t.Errorf("rule %q changed across the round trip: %+v vs %+v", r.Name, r, orig)
+		}
+	}
+
+	// A rule still in the file survives a re-import rather than being disabled,
+	// which is the failure this whole test exists to prevent.
+	if _, err := Import(ctx, s, []byte(withShape), false); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.ListAlertRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range after {
+		if !r.Enabled {
+			t.Errorf("rule %q was disabled by a re-import of the file that defines it", r.Name)
+		}
+	}
+}
+
 // Absence disables rather than deletes, exactly as it does for targets, so an
 // import of a file that omits alerts is recoverable instead of destructive.
 func TestAlertRuleAbsenceDisablesAndPruneDeletes(t *testing.T) {
