@@ -3,6 +3,8 @@ package ingest
 import (
 	"bytes"
 	"fmt"
+	"log"
+	"slices"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -97,14 +99,31 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 // DecodeBatch reads a submission, stamping every measurement with the
 // authenticated agent's id. The id is never taken from the payload: an agent
 // must not be able to write to another agent's series by saying so.
-func DecodeBatch(body []byte, agentID int64) ([]store.Measurement, error) {
-	reader, err := ipc.NewReader(bytes.NewReader(body))
+func DecodeBatch(body []byte, agentID int64) (ms []store.Measurement, err error) {
+	// The allocator bounds what this call may allocate, and reports crossing
+	// the bound by panicking (see limit.go). Turn that back into an error here
+	// so a hostile or broken batch costs one rejected request rather than the
+	// process.
+	mem := newLimitAllocator(maxDecodeBytes)
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if lim, ok := r.(*errAllocationLimit); ok {
+			ms, err = nil, lim
+			return
+		}
+		panic(r)
+	}()
+	reader, err := ipc.NewReader(bytes.NewReader(body), ipc.WithAllocator(mem))
 	if err != nil {
 		return nil, err
 	}
 	defer reader.Release()
 
 	var out []store.Measurement
+	var resorted int
 	for reader.Next() {
 		rec := reader.Record()
 		// Columns are resolved by name, not by position. The series columns
@@ -174,8 +193,23 @@ func DecodeBatch(body []byte, agentID int64) ([]store.Measurement, error) {
 				Received: int(recv.Value(i)),
 				Flags:    flags.Value(i),
 			}
-			for j := offsets[i]; j < offsets[i+1]; j++ {
+			lo, hi, err := listBounds(offsets, i, values.Len(), "samples")
+			if err != nil {
+				return nil, err
+			}
+			for j := lo; j < hi; j++ {
 				m.Samples = append(m.Samples, values.Value(int(j)))
+			}
+			// The store's blob codec requires ascending order, and an agent
+			// that sends otherwise would fail the whole write — taking every
+			// other measurement in the batch with it, and, because a rejected
+			// batch stays buffered and is retried unchanged, every measurement
+			// that agent ever takes afterwards. These are distributions, so
+			// order carries no meaning and sorting is lossless: normalise here
+			// rather than turn a remote bug into a permanent outage.
+			if !slices.IsSorted(m.Samples) {
+				slices.Sort(m.Samples)
+				resorted++
 			}
 			// The store's invariant, checked here so a malformed batch is
 			// refused at the door rather than at the write.
@@ -193,10 +227,30 @@ func DecodeBatch(body []byte, agentID int64) ([]store.Measurement, error) {
 					continue // not measured; absence is the record of that
 				}
 				vals := l.ListValues().(*array.Int32)
-				off := l.Offsets()
-				got := make([]int32, 0, off[i+1]-off[i])
-				for j := off[i]; j < off[i+1]; j++ {
+				// Offsets come straight off the wire and the IPC reader never
+				// validates them. They were used as a make() capacity, so a
+				// 408-byte body with the offset set to MaxInt32 reserved 8 GiB
+				// before the read that would have failed ever ran.
+				lo, hi, err := listBounds(l.Offsets(), i, vals.Len(), name)
+				if err != nil {
+					return nil, err
+				}
+				// A series holds at most one value per probe sent: inter-packet
+				// delay variation needs a pair, and server processing time one
+				// reply. Anything longer did not come from a measurement, and
+				// leaving it unbounded let one row carry millions of values
+				// into a blob the store keeps forever.
+				if n := int(hi - lo); n > m.Sent {
+					return nil, fmt.Errorf("ingest: target %d at %d: series %q has %d values "+
+						"but only %d probes were sent", m.TargetID, m.TS, name, n, m.Sent)
+				}
+				got := make([]int32, 0, hi-lo)
+				for j := lo; j < hi; j++ {
 					got = append(got, vals.Value(int(j)))
+				}
+				if !slices.IsSorted(got) {
+					slices.Sort(got)
+					resorted++
 				}
 				if m.Series == nil {
 					m.Series = make(map[string][]int32, len(seriesColumns))
@@ -206,5 +260,29 @@ func DecodeBatch(body []byte, agentID int64) ([]store.Measurement, error) {
 			out = append(out, m)
 		}
 	}
+	if resorted > 0 {
+		// Once per batch, not once per row: a broken agent produces this for
+		// every measurement it sends, and the useful signal is that it happens
+		// at all.
+		log.Printf("ingest: agent %d sent %d unsorted distribution(s); they were sorted on the way in, "+
+			"which changes nothing about the measurement, but the agent is not producing what it should",
+			agentID, resorted)
+	}
 	return out, reader.Err()
+}
+
+// listBounds returns the half-open value range of row i of a list column,
+// refusing anything the child array cannot back. Arrow's IPC reader performs no
+// validation of its own, so these are the only checks between a hostile header
+// and a slice index.
+func listBounds(offsets []int32, i, childLen int, name string) (lo, hi int32, err error) {
+	if i+1 >= len(offsets) {
+		return 0, 0, fmt.Errorf("ingest: column %q has no offset for row %d", name, i)
+	}
+	lo, hi = offsets[i], offsets[i+1]
+	if lo < 0 || hi < lo || int(hi) > childLen {
+		return 0, 0, fmt.Errorf("ingest: column %q row %d has offsets [%d,%d) outside its %d values",
+			name, i, lo, hi, childLen)
+	}
+	return lo, hi, nil
 }
