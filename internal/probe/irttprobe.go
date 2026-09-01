@@ -84,6 +84,25 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 	step := irttStep(spec)
 
 	cfg := irtt.NewClientConfig()
+	// Its own timer. NewClientConfig points every client at the package-level
+	// irtt.DefaultTimer, a single CompTimer holding one time.Timer and an
+	// exponential averager whose fields are written without synchronisation.
+	// Every target is probed on its own goroutine, so two irtt targets — an
+	// ordinary configuration, and the shape a SmokePing import produces — share
+	// it and corrupt each other's pacing state.
+	//
+	// The failure is not a slow probe. Reproduced with two concurrent sessions
+	// against local servers: one completes and the other never returns, wedged
+	// in the shared timer's sleep, and probeIRTT's own deadline does not free
+	// it because what is stuck is not waiting on that context. A target simply
+	// stops delivering measurements, indefinitely, with nothing in the log.
+	//
+	// NewDefaultCompTimer is not enough on its own: it builds a fresh timer
+	// around the *shared* DefaultCompTimerAverage, so the averager — which is
+	// the part with the unsynchronised fields — stays common to every client.
+	// The averager has to be new too, which the race detector says plainly and
+	// reading the constructor's name does not.
+	cfg.Timer = irtt.NewCompTimer(irtt.NewDefaultExponentialAverager())
 	cfg.RemoteAddress = net.JoinHostPort(addr.String(), strconv.Itoa(port))
 	// Keyed on the target's configured host, not the resolved address, so the
 	// keyfile stays stable across DNS changes and matches what the operator
