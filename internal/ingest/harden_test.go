@@ -199,3 +199,61 @@ func encodeCheck(m store.Measurement) ([]byte, error) {
 	}
 	return b, nil
 }
+
+// The real path, end to end: a compressed batch whose uncompressed buffers
+// exceed the budget is refused by the reader before it can allocate them.
+//
+// The earlier test only called the allocator directly, which proved the
+// accounting but not the wiring — and the wiring is the part that was
+// described wrongly: arrow-go recovers the allocator's panic itself, one frame
+// in, so the error arrives through reader.Err() rather than through this
+// package's own recover. Either way it must be an error and not an
+// out-of-memory, and it must name the limit.
+func TestDecodeBatchRefusesOversizedDecompression(t *testing.T) {
+	// Large enough to be worth compressing, small enough to build quickly.
+	const rows = 4000
+	var buf bytes.Buffer
+	w := ipc.NewWriter(&buf, ipc.WithSchema(BatchSchema), ipc.WithZstd())
+	rb := array.NewRecordBuilder(memory.DefaultAllocator, BatchSchema)
+	defer rb.Release()
+	for range rows {
+		rb.Field(0).(*array.Int64Builder).Append(1)
+		rb.Field(1).(*array.TimestampBuilder).Append(arrow.Timestamp(100))
+		rb.Field(2).(*array.Uint16Builder).Append(2)
+		rb.Field(3).(*array.Uint16Builder).Append(2)
+		rb.Field(4).(*array.Uint8Builder).Append(0)
+		l := rb.Field(5).(*array.ListBuilder)
+		l.Append(true)
+		l.ValueBuilder().(*array.Uint32Builder).AppendValues([]uint32{0, 0}, nil)
+		rb.Field(6).(*array.Uint16Builder).AppendNull()
+		for i := range 3 {
+			rb.Field(7 + i).(*array.ListBuilder).AppendNull()
+		}
+	}
+	rec := rb.NewRecord()
+	defer rec.Release()
+	if err := w.Write(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body := buf.Bytes()
+
+	// With a budget below what those buffers decompress to, it is refused.
+	if _, err := decodeBatch(body, 3, 1024); err == nil {
+		t.Fatal("a batch whose buffers exceed the allocation budget was decoded")
+	} else if !strings.Contains(err.Error(), "refusing it rather than allocating") {
+		t.Errorf("the error does not explain the refusal: %v", err)
+	}
+
+	// And with the production budget the same batch is perfectly ordinary, so
+	// the limit is a ceiling rather than a ban on compression.
+	out, err := decodeBatch(body, 3, maxDecodeBytes)
+	if err != nil {
+		t.Fatalf("an honest compressed batch was refused: %v", err)
+	}
+	if len(out) != rows {
+		t.Errorf("got %d measurements, want %d", len(out), rows)
+	}
+}
