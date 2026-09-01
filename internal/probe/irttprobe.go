@@ -139,7 +139,7 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 		// fine. markSendFailed flags the interval so the loss rail still shows
 		// it, but labelled as ours rather than the network's.
 		for i := range spec.Pings {
-			col.markSendFailed(i)
+			col.markSendFailed(i, store.SendReasonSessionRefused)
 		}
 		log.Printf("probe: target %d (%s): irtt session to %s never opened: %v; recorded as a send failure",
 			spec.TargetID, spec.Host, cfg.RemoteAddress, err)
@@ -170,7 +170,11 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 			// A send error truncates RoundTrips, so an unanswered slot below the
 			// break is a genuine send failure; above it, an ordinary lost reply.
 			if r.SendErr != nil {
-				col.markSendFailed(i)
+				// The session opened and broke. Classified from the error, so
+				// a far end that refused the traffic (ECONNREFUSED, which on a
+				// connected UDP socket means an ICMP unreachable came back) is
+				// distinguishable from a local failure to transmit.
+				col.markSendFailed(i, sendReasonFor(r.SendErr))
 			} else {
 				col.markSent(i, 0, now) // sent, unanswered: loss
 			}
@@ -192,7 +196,12 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 	// it is a send failure, not silent absence — otherwise Sent would under-count
 	// and the interval would look narrower than it was asked to be.
 	for i := seen; i < spec.Pings; i++ {
-		col.markSendFailed(i)
+		// Nothing was reported wrong: the session simply ended without sending
+		// everything it was asked to. That is this prober's own pacing or
+		// deadline arithmetic falling short, and recording it as the same thing
+		// as a refused send is what made a real investigation impossible —
+		// every failure looked identical in the stored data.
+		col.markSendFailed(i, store.SendReasonSessionShort)
 	}
 }
 

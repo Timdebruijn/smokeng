@@ -26,6 +26,9 @@ var BatchSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "flags", Type: arrow.PrimitiveTypes.Uint8},
 	{Name: "samples", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint32)},
 	{Name: "icmp_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
+	// Why the local side could not send, when it could not. Optional on the
+	// wire like the series columns: an agent built before it simply omits it.
+	{Name: "send_error", Type: arrow.PrimitiveTypes.Uint8, Nullable: true},
 	// The extra per-packet series, one nullable column each. Null means the
 	// probe did not measure it — an irtt peer that returns no timestamps, or
 	// any other probe type, for which these are simply not a thing. An empty
@@ -55,10 +58,11 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 	listB := rb.Field(5).(*array.ListBuilder)
 	valB := listB.ValueBuilder().(*array.Uint32Builder)
 	icmpB := rb.Field(6).(*array.Uint16Builder)
+	sendErrB := rb.Field(7).(*array.Uint8Builder)
 	seriesB := make([]*array.ListBuilder, len(seriesColumns))
 	seriesV := make([]*array.Int32Builder, len(seriesColumns))
 	for i := range seriesColumns {
-		seriesB[i] = rb.Field(7 + i).(*array.ListBuilder)
+		seriesB[i] = rb.Field(8 + i).(*array.ListBuilder)
 		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
 	}
 
@@ -74,6 +78,11 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 			icmpB.Append(*m.ICMPErr)
 		} else {
 			icmpB.AppendNull()
+		}
+		if m.SendErr != nil {
+			sendErrB.Append(*m.SendErr)
+		} else {
+			sendErrB.AppendNull()
 		}
 		for i, name := range seriesColumns {
 			vals, ok := m.Series[name]
@@ -179,6 +188,14 @@ func decodeBatch(body []byte, agentID int64, limit int) (ms []store.Measurement,
 		if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 || !ok7 {
 			return nil, fmt.Errorf("ingest: batch column types do not match the schema")
 		}
+		// Optional, like the series columns: absent from an older agent's batch.
+		var sendErrs *array.Uint8
+		if c := col("send_error"); c != nil {
+			var ok bool
+			if sendErrs, ok = c.(*array.Uint8); !ok {
+				return nil, fmt.Errorf("ingest: column \"send_error\" is not uint8")
+			}
+		}
 		series := make(map[string]*array.List, len(seriesColumns))
 		for _, name := range seriesColumns {
 			c := col(name)
@@ -236,6 +253,10 @@ func decodeBatch(body []byte, agentID int64, limit int) (ms []store.Measurement,
 			if !icmp.IsNull(i) {
 				v := icmp.Value(i)
 				m.ICMPErr = &v
+			}
+			if sendErrs != nil && !sendErrs.IsNull(i) {
+				v := sendErrs.Value(i)
+				m.SendErr = &v
 			}
 			for _, name := range seriesColumns {
 				l := series[name]

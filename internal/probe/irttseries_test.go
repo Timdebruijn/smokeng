@@ -1,6 +1,9 @@
 package probe
 
 import (
+	"context"
+	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -329,5 +332,56 @@ func TestSeriesCappedAtPings(t *testing.T) {
 	recordIRTTSeries(col, r, 4)
 	if v := col.series[store.SeriesServerProcessing]; len(v) != 4 {
 		t.Errorf("server_processing has %d values for a 4-probe interval: %v", len(v), v)
+	}
+}
+
+// The three ways an irtt session can fail to send were stored identically:
+// FlagSendFailed and nothing else. That made a real investigation impossible —
+// a far end refusing the traffic and this prober's own deadline arithmetic
+// falling short produced the same row.
+func TestIRTTSendFailuresAreDistinguishable(t *testing.T) {
+	quietLog(t)
+	spec := TargetSpec{
+		TargetID: 1, Host: "127.0.0.1", Family: "v4",
+		IntervalS: 10, Pings: 4, Mode: "burst", BurstGapMS: 20,
+		TimeoutMS: 1000, PacketSize: 64, ProbeType: "irtt", ProbePort: 1,
+	}
+	// Nothing listens on port 1, so the session never opens.
+	var late atomic.Int64
+	col := newCollector(spec.Pings, &late)
+	probeIRTT(context.Background(), col, netip.MustParseAddr("127.0.0.1"), spec,
+		time.Now().Add(2*time.Second))
+	m := col.finalize(spec, 0, conditions{})
+	if m.Flags&store.FlagSendFailed == 0 {
+		t.Fatalf("flags 0x%x: a session that never opened must read as a send failure", m.Flags)
+	}
+	if m.SendErr == nil {
+		t.Fatal("the interval says a send failed but not why; that is the state this field exists to end")
+	}
+	if *m.SendErr != store.SendReasonSessionRefused {
+		t.Errorf("SendErr = %d (%s), want SendReasonSessionRefused",
+			*m.SendErr, store.SendReasonName(*m.SendErr))
+	}
+
+	// A session that completes cleanly records no reason at all.
+	ok := irttOnce(t, irttServer(t))
+	if ok.SendErr != nil {
+		t.Errorf("a clean interval recorded send reason %d", *ok.SendErr)
+	}
+}
+
+// The reason has to survive to the master, or the field is useless for exactly
+// the deployments that have remote agents.
+func TestSendReasonSurvivesTheStore(t *testing.T) {
+	for _, reason := range []uint8{
+		store.SendReasonRefused, store.SendReasonSessionShort, store.SendReasonSessionRefused,
+	} {
+		if store.SendReasonName(reason) == "" {
+			t.Errorf("reason %d has no name", reason)
+		}
+	}
+	// An unknown code stays legible rather than being guessed at.
+	if got := store.SendReasonName(200); got != "reason 200" {
+		t.Errorf("SendReasonName(200) = %q", got)
 	}
 }

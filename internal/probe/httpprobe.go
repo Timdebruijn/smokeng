@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 const (
@@ -81,7 +83,7 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 	if err != nil {
 		// A malformed URL never reached the network, so this is a send
 		// failure, not loss: nothing was asked of the target.
-		col.markSendFailed(idx)
+		col.markSendFailed(idx, store.SendReasonSocket)
 		if idx == 0 {
 			log.Printf("probe: target %d: build request %q: %v", spec.TargetID, url, err)
 		}
@@ -97,7 +99,7 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 		// other error (refused, timed out, TLS rejected) is a real measurement
 		// of the endpoint and stays loss.
 		if isLocalResourceError(err) {
-			col.markSendFailed(idx)
+			col.markSendFailed(idx, sendReasonFor(err))
 			if idx == 0 {
 				log.Printf("probe: target %d (%s): request to %s failed locally: %v; "+
 					"recorded as a send failure, not loss", spec.TargetID, spec.Host, url, err)

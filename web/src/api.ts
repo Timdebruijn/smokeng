@@ -470,6 +470,11 @@ export interface Series {
   /** ICMP type<<8|code per row, or null where nothing was refused. */
   icmpErrors: (number | null)[]
   /**
+   * Why the local side could not send, per row, or null where it sent
+   * everything. The quality flags say a send failed; this says what failed.
+   */
+  sendErrors: (number | null)[]
+  /**
    * The extra per-packet distributions measured beside the round trip, keyed
    * by series name. Absent from the map when no interval in the window carried
    * one, which is how "this target does not measure it" reads.
@@ -519,6 +524,25 @@ export const SERIES_LABELS: Record<string, { title: string; help: string }> = {
       'How long the target held each packet between receiving it and replying. ' +
       'Separates a slow peer from a slow path.',
   },
+}
+
+/**
+ * Why a probe could not be put on the wire (store.SendReason* in Go). An
+ * unknown code is shown as itself rather than guessed at, so data from a newer
+ * prober stays legible.
+ */
+const SEND_REASONS: Record<number, string> = {
+  1: 'the socket refused the write',
+  2: 'connection refused — the far end, or a router speaking for it, rejected the traffic',
+  3: 'no route to the target',
+  4: 'no address to send to',
+  5: 'the session was refused',
+  6: 'the session broke part-way',
+  7: 'the session sent fewer probes than asked — this prober fell short, not the network',
+}
+
+export function sendReasonName(code: number): string {
+  return SEND_REASONS[code] ?? `reason ${code}`
 }
 
 /**
@@ -726,6 +750,7 @@ async function fetchSeriesUncached(
   const flagsCol = table.getChild('flags')!
   const samplesCol = table.getChild('samples')!
   const icmpCol = table.getChild('icmp_error')
+  const sendErrCol = table.getChild('send_error')
 
   const ts = new Float64Array(n)
   const sent = new Float64Array(n)
@@ -734,6 +759,7 @@ async function fetchSeriesUncached(
   const offsets = new Uint32Array(n + 1)
   const rows: Uint32Array[] = new Array(n)
   const icmpErrors: (number | null)[] = new Array(n)
+  const sendErrors: (number | null)[] = new Array(n)
   let total = 0
   for (let i = 0; i < n; i++) {
     // Flechette decodes timestamps as epoch milliseconds; normalize to seconds.
@@ -744,6 +770,8 @@ async function fetchSeriesUncached(
     flags[i] = Number(flagsCol.at(i))
     const icmp = icmpCol?.at(i)
     icmpErrors[i] = icmp === null || icmp === undefined ? null : Number(icmp)
+    const se = sendErrCol?.at(i)
+    sendErrors[i] = se === null || se === undefined ? null : Number(se)
     const row = samplesCol.at(i) as ArrayLike<number> | null
     const arr = row instanceof Uint32Array ? row : Uint32Array.from(row ?? [])
     rows[i] = arr
@@ -787,7 +815,7 @@ async function fetchSeriesUncached(
     }
     extra[name] = { offsets: eOffsets, values: eValues, measured }
   }
-  return { ts, sent, received, flags, offsets, values, icmpErrors, extra }
+  return { ts, sent, received, flags, offsets, values, icmpErrors, sendErrors, extra }
 }
 
 /** The whole target tree as TOML — the same text `config export` writes. */
