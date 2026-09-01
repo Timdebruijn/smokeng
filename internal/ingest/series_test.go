@@ -208,7 +208,14 @@ func TestDecodeBatchIgnoresUnknownColumn(t *testing.T) {
 				b.AppendNull()
 			}
 		case *array.Uint8Builder:
-			b.AppendNull()
+			// flags is not nullable. Nulling it built a payload the schema does
+			// not allow, and quietly made this a test of a null flags column as
+			// well as of the unknown one.
+			if f.Name == "flags" {
+				b.Append(0)
+			} else {
+				b.AppendNull()
+			}
 		case *array.ListBuilder:
 			if f.Name == "samples" {
 				b.Append(true)
@@ -220,6 +227,14 @@ func TestDecodeBatchIgnoresUnknownColumn(t *testing.T) {
 	}
 	rec := rb.NewRecord()
 	defer rec.Release()
+	// The payload has to be valid for the test to be about what it says: a null
+	// in a column the schema declares non-nullable would make this a test of
+	// that as well, on a batch no honest agent could produce.
+	for i, f := range future.Fields() {
+		if !f.Nullable && rec.Column(i).NullN() > 0 {
+			t.Fatalf("the test built a null in the non-nullable column %q", f.Name)
+		}
+	}
 	if err := w.Write(rec); err != nil {
 		t.Fatal(err)
 	}
