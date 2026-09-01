@@ -97,6 +97,12 @@ export default function SeriesPlot({
           // only what is known. An empty window and a peer that stamps nothing
           // both land here, and they are not the same fact.
           rowsRef.current = null
+          // And drop the readout with the rows it came from. It is only
+          // recomputed when the cursor next moves, so leaving it would show a
+          // median beside the words "not measured" until the reader happened
+          // to twitch the mouse — a stale number presented as current, which
+          // is the one thing this project must not do.
+          setReadout(null)
           setState(s.ts.length === 0 ? 'empty' : 'unmeasured')
           workerRef.current.postMessage({ type: 'clear' })
           return
@@ -151,6 +157,7 @@ export default function SeriesPlot({
         if (cancelled) return
         console.error(`series ${targetPath}/${name}:`, e)
         rowsRef.current = null
+        setReadout(null)
         setState('error')
         workerRef.current?.postMessage({ type: 'clear' })
       })
