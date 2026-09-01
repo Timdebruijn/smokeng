@@ -255,10 +255,11 @@ export default function Detail({
                     style={{ background: r.enabled ? 'var(--good)' : 'var(--dim)' }}
                   />
                   <span className="rule-name">{r.name}</span>
-                  <span className="hint small">
-                    {r.metric} {r.op} {r.threshold}
-                    {r.metric === 'loss' ? '%' : 'ms'}
-                  </span>
+                  {/* The server's own phrasing, not a unit guessed here: a
+                      bimodality coefficient has no unit and a shape rule in auto
+                      mode is a z-score, both of which read as nonsense with "ms"
+                      stuck on the end. */}
+                  <span className="hint small">{r.describes}</span>
                 </div>
               ))
             )}

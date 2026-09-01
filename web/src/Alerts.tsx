@@ -33,6 +33,28 @@ const METRICS: { value: AlertRule['metric']; label: string; unit: string }[] = [
 ]
 
 const isShapeMetric = (m: AlertRule['metric']) => m === 'shape' || m === 'bimodality'
+
+/**
+ * The unit a metric's value is measured in. Not every metric has one: a
+ * bimodality coefficient is a bare number between 0 and 1, and a shape rule in
+ * auto mode reports a z-score — both read as nonsense with "ms" appended, which
+ * is what a blanket "loss is %, everything else is ms" produced.
+ */
+function metricUnit(metric: string): string {
+  switch (metric) {
+    case 'loss':
+      return '%'
+    case 'bimodality':
+      return ''
+    case 'shape':
+      // A tunable shape rule is a distance in ms; an auto one is a z-score. The
+      // firing list does not carry the mode, so say neither rather than one that
+      // is wrong half the time.
+      return ''
+    default:
+      return 'ms'
+  }
+}
 const REFRESH_MS = 15_000
 
 export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
@@ -135,7 +157,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                     </td>
                     <td>
                       {a.metric} is {a.value.toFixed(a.metric === 'loss' ? 0 : 2)}
-                      {a.metric === 'loss' ? '%' : 'ms'}
+                      {metricUnit(a.metric)}
                     </td>
                     <td className="dim">
                       {a.since ? (
