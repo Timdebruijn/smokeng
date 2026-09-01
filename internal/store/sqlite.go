@@ -8,6 +8,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/timdebruijn/smokeng/internal/report"
 	"github.com/timdebruijn/smokeng/internal/store/enc"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
@@ -363,6 +364,30 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 			return nil, fmt.Errorf("store: measurement (%d,%d,%d): %w", targetID, agentID, m.TS, err)
 		}
 		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// AvailabilitySeries returns just the reachability of each interval in the
+// window — sent and received, no samples — for an availability report. It skips
+// the per-sample decode QueryRange does, so a month-long window costs a scan of
+// small integer columns rather than a decode of every distribution.
+func (s *SQLite) AvailabilitySeries(ctx context.Context, targetID, agentID, from, to int64) ([]report.Point, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ts, sent, received FROM measurements
+		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?
+		ORDER BY ts`, targetID, agentID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []report.Point
+	for rows.Next() {
+		var p report.Point
+		if err := rows.Scan(&p.TS, &p.Sent, &p.Received); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }

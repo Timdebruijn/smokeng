@@ -181,6 +181,7 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	rt.handle(classScopedWrite, "PATCH /api/v1/targets/{id}", s.handleUpdateTarget)
 	rt.handle(classScopedWrite, "DELETE /api/v1/targets/{id}", s.handleDeleteTarget)
 	rt.handle(classScopedRead, "GET /api/v1/measurements", s.handleMeasurements)
+	rt.handle(classScopedRead, "GET /api/v1/availability", s.handleAvailability)
 	rt.handle(classScopedRead, "GET /api/v1/alert-rules", s.handleAlertRules)
 	rt.handle(classScopedWrite, "POST /api/v1/alert-rules", s.handleCreateAlertRule)
 	rt.handle(classScopedWrite, "PATCH /api/v1/alert-rules/{id}", s.handleUpdateAlertRule)

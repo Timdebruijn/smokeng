@@ -104,6 +104,62 @@ export function deleteSilence(id: number): Promise<unknown> {
   return mutate(`/api/v1/silences/${id}`, 'DELETE')
 }
 
+/** One outage in an availability report: a contiguous run of down intervals. */
+export interface DowntimeEpisode {
+  start_ts: number
+  end_ts: number
+  duration_s: number
+  intervals: number
+}
+
+/** Availability over a window, with coverage kept separate from availability. */
+export interface AvailabilityReport {
+  from: number
+  to: number
+  interval_s: number
+  down_threshold_pct: number
+  window_s: number
+  up_s: number
+  down_s: number
+  unknown_s: number
+  covered_s: number
+  up_intervals: number
+  down_intervals: number
+  has_data: boolean
+  /** up_s / covered_s — over measured time only. 0 when there is no data. */
+  availability: number
+  /** covered_s / window_s — how much of the window was actually measured. */
+  coverage: number
+  downtime: DowntimeEpisode[]
+}
+
+export interface AvailabilityResponse {
+  target: string
+  target_id: number
+  from: number
+  to: number
+  interval_s: number
+  down_threshold_pct: number
+  agents: { agent_id: number; agent: string; report: AvailabilityReport }[]
+}
+
+export async function fetchAvailability(
+  targetId: number,
+  from: number,
+  to: number,
+  downThreshold?: number,
+): Promise<AvailabilityResponse> {
+  const p = new URLSearchParams({
+    target_id: String(targetId),
+    from: String(from),
+    to: String(to),
+  })
+  if (downThreshold !== undefined) p.set('down_threshold', String(downThreshold))
+  const r = await fetch(`/api/v1/availability?${p.toString()}`, { cache: 'no-store' })
+  if (!r.ok) throw new Error(`availability: HTTP ${r.status}`)
+  return (await r.json()) as AvailabilityResponse
+}
+
 /**
  * Acknowledge a firing alert, or clear the acknowledgement with `ack: false`.
  * The alert keeps firing; this only quiets the UI's attention.

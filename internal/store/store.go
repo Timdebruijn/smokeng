@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
+	"github.com/timdebruijn/smokeng/internal/report"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
@@ -98,6 +99,9 @@ type Store interface {
 	WriteMeasurements(ctx context.Context, ms []Measurement) error
 	// QueryRange returns one series over [from, to), ordered by ts.
 	QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error)
+	// AvailabilitySeries returns just sent/received per interval over [from, to),
+	// for an availability report — no samples decoded.
+	AvailabilitySeries(ctx context.Context, targetID, agentID, from, to int64) ([]report.Point, error)
 	ListTargets(ctx context.Context) ([]tree.Target, error)
 	// UpsertTarget inserts (ID == 0, assigning t.ID) or updates a target.
 	UpsertTarget(ctx context.Context, t *tree.Target) error

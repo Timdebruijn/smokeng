@@ -29,6 +29,7 @@ func TestEveryRouteIsClassified(t *testing.T) {
 		"PATCH /api/v1/targets/{id}":       classScopedWrite,
 		"DELETE /api/v1/targets/{id}":      classScopedWrite,
 		"GET /api/v1/measurements":         classScopedRead,
+		"GET /api/v1/availability":         classScopedRead,
 		"GET /api/v1/alert-rules":          classScopedRead,
 		"POST /api/v1/alert-rules":         classScopedWrite,
 		"PATCH /api/v1/alert-rules/{id}":   classScopedWrite,

@@ -90,6 +90,28 @@ with the target's settings and the agents measuring it alongside](images/detail.
 *The detail view. p95 and the spread are the two numbers a median cannot give you, and the
 reason the whole distribution is kept.*
 
+## Availability
+
+The detail page also reports **availability** over a period — 24 hours, 7 days or 30 days —
+per vantage point, which is what an SLA review or an incident write-up asks for. It reports
+two numbers, and keeps them apart on purpose:
+
+- **Availability** is uptime over the intervals there *is* data for. An interval is up when
+  at least one probe came back, and down when every probe was lost. A **down threshold**
+  chooses how strict that is: `100% loss` counts only a total blackout as down; `>50% loss`
+  counts heavy loss as down too, for an SLA defined that way.
+- **Coverage** is how much of the period was actually measured. A gap — smokeng not
+  running, an agent offline — is **unknown** time: never counted as up, and never as down.
+  Availability of 100% over 60% coverage is a different claim from 100% over 99%, and the
+  two numbers side by side refuse to let the first pass for the second.
+
+Beneath them is the list of **outages**: each contiguous run of down intervals, with its
+start, end and duration — the evidence, not just the headline. **Download CSV** exports the
+per-vantage-point summary for a report.
+
+Availability is also available over the API at `GET /api/v1/availability?target_id=…`, with
+`from`, `to` and `down_threshold` query parameters.
+
 ## Compare
 
 The **compare** button overlays the pooled medians of the shown targets on one axis, which

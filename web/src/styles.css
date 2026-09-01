@@ -1104,6 +1104,22 @@ a.button {
   margin-bottom: 12px;
 }
 
+.avail-agent {
+  margin-top: 12px;
+}
+
+.avail-agent + .avail-agent {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.avail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
 .stat {
   padding: 12px 16px;
 }

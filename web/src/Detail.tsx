@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import Plot from './Plot'
 import {
   fetchAlertRules,
+  fetchAvailability,
   fetchSeries,
   isUnset,
   type AgentInfo,
   type AlertRule,
+  type AvailabilityResponse,
   type SettingValue,
   type Target,
 } from './api'
@@ -200,6 +202,8 @@ export default function Detail({
         )}
       </div>
 
+      <AvailabilityPanel target={target} />
+
       <div className="detail-columns">
         <div className="card panel">
           <h2>Effective settings</h2>
@@ -276,6 +280,184 @@ export default function Detail({
           </div>
         </div>
       </div>
+    </section>
+  )
+}
+
+const AVAIL_PERIODS: { label: string; seconds: number }[] = [
+  { label: '24h', seconds: 86400 },
+  { label: '7d', seconds: 7 * 86400 },
+  { label: '30d', seconds: 30 * 86400 },
+]
+
+// A duration in seconds as the coarse "2d 3h 12m" an operator reads at a glance.
+function fmtDur(s: number): string {
+  if (s <= 0) return '0'
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const parts: string[] = []
+  if (d) parts.push(`${d}d`)
+  if (h) parts.push(`${h}h`)
+  if (m && !d) parts.push(`${m}m`)
+  if (parts.length === 0) parts.push(`${s}s`)
+  return parts.join(' ')
+}
+
+function pct(x: number): string {
+  return `${(x * 100).toFixed(x >= 0.9995 ? 3 : 2)}%`
+}
+
+function downloadCSV(filename: string, rows: string[][]) {
+  const text = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n')
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * Availability over a period, per vantage point. It reports availability and
+ * coverage as two numbers on purpose: uptime is computed only over intervals
+ * there is data for, and coverage says how much of the period that was, so a
+ * figure taken over a half-measured window cannot pass for one taken over a full
+ * one. A gap is unknown time — never counted as up, and never as down.
+ */
+function AvailabilityPanel({ target }: { target: Target }) {
+  const [periodS, setPeriodS] = useState(7 * 86400)
+  const [strict, setStrict] = useState(true) // strict = down only at 100% loss
+  const [data, setData] = useState<AvailabilityResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    const to = Math.floor(Date.now() / 1000)
+    const from = to - periodS
+    fetchAvailability(target.id, from, to, strict ? 100 : 50)
+      .then((d) => {
+        if (cancelled) return
+        setData(d)
+        setError(null)
+      })
+      .catch((e: Error) => !cancelled && setError(e.message))
+      .finally(() => !cancelled && setLoading(false))
+    return () => {
+      cancelled = true
+    }
+  }, [target.id, periodS, strict])
+
+  const exportCSV = () => {
+    if (!data) return
+    const rows: string[][] = [
+      ['target', 'agent', 'availability', 'coverage', 'up_s', 'down_s', 'unknown_s', 'outages'],
+    ]
+    for (const a of data.agents) {
+      const r = a.report
+      rows.push([
+        data.target,
+        a.agent,
+        String(r.availability),
+        String(r.coverage),
+        String(r.up_s),
+        String(r.down_s),
+        String(r.unknown_s),
+        String(r.downtime.length),
+      ])
+    }
+    const name = `availability-${data.target.replace(/[^\w-]+/g, '_')}.csv`
+    downloadCSV(name, rows)
+  }
+
+  return (
+    <section className="card section-card">
+      <div className="section-card-head">
+        <span className="section-card-title">Availability</span>
+        <span className="spacer" />
+        <span className="pill-row">
+          {AVAIL_PERIODS.map((p) => (
+            <button
+              key={p.label}
+              className={p.seconds === periodS ? 'pill active' : 'pill'}
+              onClick={() => setPeriodS(p.seconds)}
+            >
+              {p.label}
+            </button>
+          ))}
+          <button
+            className="pill"
+            title="What counts as down: a total blackout, or heavy loss too"
+            onClick={() => setStrict((v) => !v)}
+          >
+            down: {strict ? '100% loss' : '>50% loss'}
+          </button>
+          <button className="pill" onClick={exportCSV} disabled={!data}>
+            Download CSV
+          </button>
+        </span>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      {loading && !data ? (
+        <p className="hint">Loading…</p>
+      ) : !data || data.agents.length === 0 ? (
+        <p className="hint">No vantage point is measuring this target.</p>
+      ) : (
+        data.agents.map((a) => {
+          const r = a.report
+          return (
+            <div key={a.agent_id} className="avail-agent">
+              <div className="avail-head">
+                <span className="agent">{a.agent}</span>
+                {!r.has_data && <span className="hint small">no data in this period</span>}
+              </div>
+              {r.has_data && (
+                <>
+                  <div className="stat-grid">
+                    <Stat
+                      label="Availability"
+                      value={pct(r.availability)}
+                      title="Uptime over the intervals there is data for"
+                      tone={r.availability < 0.999 ? 'bad' : undefined}
+                    />
+                    <Stat
+                      label="Coverage"
+                      value={pct(r.coverage)}
+                      title="How much of the period was actually measured — the rest is unknown, not up"
+                      tone={r.coverage < 0.9 ? 'bad' : undefined}
+                    />
+                    <Stat label="Downtime" value={fmtDur(r.down_s)} />
+                    <Stat label="Unknown" value={fmtDur(r.unknown_s)} />
+                  </div>
+                  {r.downtime.length === 0 ? (
+                    <p className="hint small">No outages in this period.</p>
+                  ) : (
+                    <details className="hint">
+                      <summary>
+                        {r.downtime.length} outage(s), {fmtDur(r.down_s)} total
+                      </summary>
+                      <table className="alerts">
+                        <tbody>
+                          {r.downtime.map((e, i) => (
+                            <tr key={i}>
+                              <td className="mono">{new Date(e.start_ts * 1000).toLocaleString()}</td>
+                              <td className="dim mono">→ {new Date(e.end_ts * 1000).toLocaleString()}</td>
+                              <td>{fmtDur(e.duration_s)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </details>
+                  )}
+                </>
+              )}
+            </div>
+          )
+        })
+      )}
     </section>
   )
 }
