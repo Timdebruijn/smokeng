@@ -26,6 +26,16 @@ func irttServerWithKey(t *testing.T, key []byte) int {
 
 	cfg := irtt.NewServerConfig()
 	cfg.Addrs = []string{net.JoinHostPort("127.0.0.1", strconv.Itoa(port))}
+	// Its own filler, not the package-level DefaultServerFiller every
+	// ServerConfig points at by default. That filler keeps an unsynchronised
+	// position across Read calls, so two test servers alive at once — and
+	// Shutdown does not wait for in-flight connection goroutines, so they
+	// overlap — race on it. The race is in the library and only its server
+	// side, which smokeng never runs in production; but it made `go test
+	// -race` unusable for this package, and it aborted the one end-to-end test
+	// written to catch a regression in the series recorder before that test
+	// checked anything.
+	cfg.Filler = irtt.NewDefaultPatternFiller()
 	cfg.HMACKey = key
 	ready := make(chan struct{})
 	cfg.Handler = handlerFunc(func(e *irtt.Event) {
