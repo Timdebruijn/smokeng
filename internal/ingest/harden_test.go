@@ -22,17 +22,18 @@ func oneRow(t *testing.T, seriesLen int, opts ...ipc.Option) []byte {
 	w := ipc.NewWriter(&buf, append([]ipc.Option{ipc.WithSchema(BatchSchema)}, opts...)...)
 	rb := array.NewRecordBuilder(memory.DefaultAllocator, BatchSchema)
 	defer rb.Release()
-	rb.Field(0).(*array.Int64Builder).Append(1)
-	rb.Field(1).(*array.TimestampBuilder).Append(arrow.Timestamp(100))
-	rb.Field(2).(*array.Uint16Builder).Append(2)
-	rb.Field(3).(*array.Uint16Builder).Append(2)
-	rb.Field(4).(*array.Uint8Builder).Append(0)
-	l := rb.Field(5).(*array.ListBuilder)
+	field[*array.Int64Builder](t, rb, "target_id").Append(1)
+	field[*array.TimestampBuilder](t, rb, "ts").Append(arrow.Timestamp(100))
+	field[*array.Uint16Builder](t, rb, "sent").Append(2)
+	field[*array.Uint16Builder](t, rb, "received").Append(2)
+	field[*array.Uint8Builder](t, rb, "flags").Append(0)
+	l := field[*array.ListBuilder](t, rb, "samples")
 	l.Append(true)
 	l.ValueBuilder().(*array.Uint32Builder).AppendValues([]uint32{10, 20}, nil)
-	rb.Field(6).(*array.Uint16Builder).AppendNull()
-	for i := range 3 {
-		sl := rb.Field(7 + i).(*array.ListBuilder)
+	field[*array.Uint16Builder](t, rb, "icmp_error").AppendNull()
+	field[*array.Uint8Builder](t, rb, "send_error").AppendNull()
+	for i, name := range store.KnownSeries {
+		sl := field[*array.ListBuilder](t, rb, name)
 		if i > 0 || seriesLen < 0 {
 			sl.AppendNull()
 			continue
@@ -166,20 +167,21 @@ func TestDecodeBatchNormalisesUnsortedValues(t *testing.T) {
 	w := ipc.NewWriter(&buf, ipc.WithSchema(BatchSchema))
 	rb := array.NewRecordBuilder(memory.DefaultAllocator, BatchSchema)
 	defer rb.Release()
-	rb.Field(0).(*array.Int64Builder).Append(1)
-	rb.Field(1).(*array.TimestampBuilder).Append(arrow.Timestamp(100))
-	rb.Field(2).(*array.Uint16Builder).Append(3)
-	rb.Field(3).(*array.Uint16Builder).Append(3)
-	rb.Field(4).(*array.Uint8Builder).Append(0)
-	l := rb.Field(5).(*array.ListBuilder)
+	field[*array.Int64Builder](t, rb, "target_id").Append(1)
+	field[*array.TimestampBuilder](t, rb, "ts").Append(arrow.Timestamp(100))
+	field[*array.Uint16Builder](t, rb, "sent").Append(3)
+	field[*array.Uint16Builder](t, rb, "received").Append(3)
+	field[*array.Uint8Builder](t, rb, "flags").Append(0)
+	l := field[*array.ListBuilder](t, rb, "samples")
 	l.Append(true)
 	l.ValueBuilder().(*array.Uint32Builder).AppendValues([]uint32{30, 10, 20}, nil)
-	rb.Field(6).(*array.Uint16Builder).AppendNull()
-	sl := rb.Field(7).(*array.ListBuilder)
+	field[*array.Uint16Builder](t, rb, "icmp_error").AppendNull()
+	field[*array.Uint8Builder](t, rb, "send_error").AppendNull()
+	sl := field[*array.ListBuilder](t, rb, store.SeriesIPDVSend)
 	sl.Append(true)
 	sl.ValueBuilder().(*array.Int32Builder).AppendValues([]int32{5, -3, 1}, nil)
-	rb.Field(8).(*array.ListBuilder).AppendNull()
-	rb.Field(9).(*array.ListBuilder).AppendNull()
+	field[*array.ListBuilder](t, rb, store.SeriesIPDVReceive).AppendNull()
+	field[*array.ListBuilder](t, rb, store.SeriesServerProcessing).AppendNull()
 	rec := rb.NewRecord()
 	defer rec.Release()
 	if err := w.Write(rec); err != nil {
@@ -238,17 +240,18 @@ func TestDecodeBatchRefusesOversizedDecompression(t *testing.T) {
 	rb := array.NewRecordBuilder(memory.DefaultAllocator, BatchSchema)
 	defer rb.Release()
 	for range rows {
-		rb.Field(0).(*array.Int64Builder).Append(1)
-		rb.Field(1).(*array.TimestampBuilder).Append(arrow.Timestamp(100))
-		rb.Field(2).(*array.Uint16Builder).Append(2)
-		rb.Field(3).(*array.Uint16Builder).Append(2)
-		rb.Field(4).(*array.Uint8Builder).Append(0)
-		l := rb.Field(5).(*array.ListBuilder)
+		field[*array.Int64Builder](t, rb, "target_id").Append(1)
+		field[*array.TimestampBuilder](t, rb, "ts").Append(arrow.Timestamp(100))
+		field[*array.Uint16Builder](t, rb, "sent").Append(2)
+		field[*array.Uint16Builder](t, rb, "received").Append(2)
+		field[*array.Uint8Builder](t, rb, "flags").Append(0)
+		l := field[*array.ListBuilder](t, rb, "samples")
 		l.Append(true)
 		l.ValueBuilder().(*array.Uint32Builder).AppendValues([]uint32{0, 0}, nil)
-		rb.Field(6).(*array.Uint16Builder).AppendNull()
-		for i := range 3 {
-			rb.Field(7 + i).(*array.ListBuilder).AppendNull()
+		field[*array.Uint16Builder](t, rb, "icmp_error").AppendNull()
+		field[*array.Uint8Builder](t, rb, "send_error").AppendNull()
+		for _, name := range store.KnownSeries {
+			field[*array.ListBuilder](t, rb, name).AppendNull()
 		}
 	}
 	rec := rb.NewRecord()
@@ -277,4 +280,27 @@ func TestDecodeBatchRefusesOversizedDecompression(t *testing.T) {
 	if len(out) != rows {
 		t.Errorf("got %d measurements, want %d", len(out), rows)
 	}
+}
+
+// field looks a builder up by column name.
+//
+// The production decoder resolves columns by name precisely so a new column
+// cannot silently shift the others; these helpers indexed by position, so
+// inserting send_error moved every series column by one and the failure came
+// out as an interface-conversion panic several layers away. Same rule on both
+// sides now.
+func field[T any](t *testing.T, rb *array.RecordBuilder, name string) T {
+	t.Helper()
+	for i, f := range BatchSchema.Fields() {
+		if f.Name == name {
+			b, ok := rb.Field(i).(T)
+			if !ok {
+				t.Fatalf("column %q is a %T", name, rb.Field(i))
+			}
+			return b
+		}
+	}
+	var zero T
+	t.Fatalf("no column %q in the batch schema", name)
+	return zero
 }

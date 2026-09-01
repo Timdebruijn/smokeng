@@ -700,6 +700,7 @@ function copySeries(s: Series): Series {
     offsets: s.offsets.slice(),
     values: s.values.slice(),
     icmpErrors: s.icmpErrors.slice(),
+    sendErrors: s.sendErrors.slice(),
     extra,
   }
 }
