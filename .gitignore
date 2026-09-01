@@ -33,8 +33,13 @@ deploy/ansible/targets*.toml
 # is now read from a file, which invites one being left in the working tree.
 # Neither of these exists today; both are ignored before they can.
 **/vars/secrets*.yml
+!**/vars/secrets*.example.yml
 **/vault*.yml
+!**/vault*.example.yml
 *secret*.txt
+!*secret*.example.txt
 *.pem
+!*.example.pem
 *.key
+!*.example.key
 

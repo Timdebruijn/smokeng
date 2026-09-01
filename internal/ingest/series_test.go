@@ -181,3 +181,56 @@ func TestBatchCarriesSendReason(t *testing.T) {
 		t.Errorf("a clean measurement arrived with reason %d", *out[1].SendErr)
 	}
 }
+
+// A master must read a batch from an agent newer than itself, ignoring any
+// column it has never heard of. docs/operations.md tells operators they may
+// upgrade in either order on the strength of this; an earlier version of that
+// paragraph claimed the opposite, and nothing contradicted it.
+func TestDecodeBatchIgnoresUnknownColumn(t *testing.T) {
+	fields := append(BatchSchema.Fields(),
+		arrow.Field{Name: "from_a_later_release", Type: arrow.PrimitiveTypes.Uint8, Nullable: true})
+	future := arrow.NewSchema(fields, nil)
+
+	var buf bytes.Buffer
+	w := ipc.NewWriter(&buf, ipc.WithSchema(future))
+	rb := array.NewRecordBuilder(memory.DefaultAllocator, future)
+	defer rb.Release()
+	for i, f := range future.Fields() {
+		switch b := rb.Field(i).(type) {
+		case *array.Int64Builder:
+			b.Append(1)
+		case *array.TimestampBuilder:
+			b.Append(arrow.Timestamp(100))
+		case *array.Uint16Builder:
+			if f.Name == "sent" || f.Name == "received" {
+				b.Append(1)
+			} else {
+				b.AppendNull()
+			}
+		case *array.Uint8Builder:
+			b.AppendNull()
+		case *array.ListBuilder:
+			if f.Name == "samples" {
+				b.Append(true)
+				b.ValueBuilder().(*array.Uint32Builder).AppendValues([]uint32{10}, nil)
+			} else {
+				b.AppendNull()
+			}
+		}
+	}
+	rec := rb.NewRecord()
+	defer rec.Release()
+	if err := w.Write(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := DecodeBatch(buf.Bytes(), 1)
+	if err != nil {
+		t.Fatalf("a batch from a newer agent was refused: %v", err)
+	}
+	if len(out) != 1 || len(out[0].Samples) != 1 {
+		t.Fatalf("the measurement did not survive: %+v", out)
+	}
+}
