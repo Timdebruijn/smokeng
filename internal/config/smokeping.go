@@ -469,6 +469,16 @@ func applyProbeType(entry *Entry, ptype, module, path string, keys map[string]st
 		if p := probePort(keys); p != 0 {
 			entry.ProbePort = &p
 		}
+		// A shared HMAC secret is deliberately not carried across: a key in the
+		// target tree would travel into the API, the export and version control.
+		// Say that it exists and where it goes instead, because without it the
+		// server refuses the session and the target reads as a send failure —
+		// a silent, puzzling outage rather than a missing setting.
+		if strings.TrimSpace(keys["hmac"]) != "" {
+			warnAt(path, "this irtt target authenticates with an HMAC key; the key is not "+
+				"imported (a secret does not belong in the target tree) — configure it with "+
+				"--irtt-hmac-keys, or the server will refuse the session")
+		}
 		// SmokePing's IRTT probe graphs one of several derived figures — the
 		// round trip, or the send or receive jitter — chosen by the probe
 		// variant. smokeng keeps the whole round-trip distribution and derives

@@ -14,8 +14,17 @@ web/node_modules/
 # OS noise
 .DS_Store
 
-# real Ansible inventories and their vars name your hosts; keep the examples
-deploy/ansible/inventory.ini
+# Real Ansible inventories, their vars and their target trees name your hosts,
+# your addresses and your network's shape. This repository is public, so these
+# patterns ignore by default and allow the examples back in by name — the
+# opposite of listing known filenames, which silently fails to cover the next
+# file somebody adds. (It already did: an inventory and a target tree for a
+# second instance landed in a commit because they did not happen to be called
+# inventory.ini or targets.local.toml.)
+deploy/ansible/inventory*.ini
+!deploy/ansible/inventory.example.ini
 deploy/ansible/group_vars/*.yml
 !deploy/ansible/group_vars/*.example.yml
-deploy/ansible/targets.local.toml
+deploy/ansible/group_vars_*.yml
+deploy/ansible/targets*.toml
+!deploy/ansible/targets.example.toml

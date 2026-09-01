@@ -262,3 +262,47 @@ func keys[V any](m map[string]V) []string {
 	}
 	return out
 }
+
+// A secret in the SmokePing config is not imported — it would travel into the
+// API, the export and version control — but its absence must be stated. Without
+// the key the irtt server refuses the session, and the target reads as a send
+// failure: a silent outage that looks like a network fault rather than a missing
+// setting. Found on a real migration, where three targets went quiet for exactly
+// this reason.
+func TestSmokePingWarnsAboutIRTTSecret(t *testing.T) {
+	const cfg = `*** Probes ***
+
++ IRTT
+binary = /usr/bin/irtt
+
+*** Targets ***
+
+probe = IRTT
+
++ wag
+host = irtt.example.org
+hmac = deadbeefcafe
+`
+	f, warnings, err := ParseSmokePing([]byte(cfg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range f.Targets {
+		// Whatever else it carries, it must not carry the key.
+		if e.Notes != nil && strings.Contains(*e.Notes, "deadbeefcafe") {
+			t.Error("the HMAC key was imported into the target tree")
+		}
+	}
+	var warned bool
+	for _, w := range warnings {
+		if strings.Contains(w, "HMAC") {
+			warned = true
+			if strings.Contains(w, "deadbeefcafe") {
+				t.Errorf("the warning leaks the key: %s", w)
+			}
+		}
+	}
+	if !warned {
+		t.Errorf("no warning that a key is needed; got %v", warnings)
+	}
+}
