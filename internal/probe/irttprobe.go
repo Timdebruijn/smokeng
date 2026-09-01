@@ -232,22 +232,29 @@ func trustFrom(cfg *irtt.ClientConfig) seriesTrust {
 	if cfg.Clock&irtt.Monotonic == 0 {
 		return seriesTrust{}
 	}
+	// Everything here needs the server's two stamps to be two.
+	//
+	// At AtMidpoint they are one value recorded twice, taken half way through
+	// the server's handling of the packet. Server processing time is then not
+	// unavailable but exactly zero — a distribution of fabricated zeros under a
+	// heading that says how long the far end held each packet.
+	//
+	// The two IPDV figures survive that in form but not in meaning, which is
+	// worse because it is harder to see. Both are differences against the
+	// midpoint, so both carry half the server's hold time; when that hold time
+	// varies between packets, half the variation lands in each direction.
+	// Measured against the library with zero network jitter and a hold that
+	// steps from 10ms to 20ms: AtBoth reports 0 in both directions, AtMidpoint
+	// reports +5ms in both. A loaded server graphs its own scheduling as
+	// network jitter, on the graph whose whole claim is that it separates the
+	// two directions of the path.
+	//
+	// An earlier version of this kept the IPDV pair at the midpoint, reasoning
+	// that each was still a difference against a real server stamp. That is
+	// true and beside the point: what matters is what the difference contains.
 	at := cfg.StampAt
-	return seriesTrust{
-		// Send IPDV is built from the server's *receive* stamp. Without one,
-		// BestReceive falls back to the send stamp and the figure silently
-		// absorbs however long the server held the packet.
-		sendIPDV: at == irtt.AtBoth || at == irtt.AtReceive || at == irtt.AtMidpoint,
-		// And receive IPDV from the server's send stamp, symmetrically.
-		receiveIPDV: at == irtt.AtBoth || at == irtt.AtSend || at == irtt.AtMidpoint,
-		// Server processing time is the gap between the two server stamps, so
-		// it needs them to be two. At the midpoint they are one value recorded
-		// twice, and the difference is not unavailable — it is exactly zero.
-		// Recorded, that is a distribution of fabricated zeros, kept forever at
-		// full resolution, under a heading that says how long the far end held
-		// each packet. One documented server flag reaches this state.
-		serverProcessing: at == irtt.AtBoth,
-	}
+	both := at == irtt.AtBoth
+	return seriesTrust{sendIPDV: both, receiveIPDV: both, serverProcessing: both}
 }
 
 // recordIRTTSeries keeps the per-packet measurements irtt makes beside the
