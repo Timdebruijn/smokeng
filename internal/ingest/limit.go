@@ -32,6 +32,12 @@ const maxDecodeBytes = 64 << 20
 type errAllocationLimit struct{ want, used, limit int }
 
 func (e *errAllocationLimit) Error() string {
+	if e.want < 0 {
+		// Its own message: "wanted -1 more bytes" reads as a rounding mistake,
+		// when it is a header that cannot be true.
+		return fmt.Sprintf("ingest: batch asked for a negative allocation of %d bytes, "+
+			"which no honest payload does; refusing it", e.want)
+	}
 	return fmt.Sprintf("ingest: batch wanted %d more bytes to decode (%d already used, limit %d); "+
 		"refusing it rather than allocating what a compressed payload claims",
 		e.want, e.used, e.limit)
@@ -67,6 +73,14 @@ func (a *limitAllocator) Allocate(size int) []byte {
 }
 
 func (a *limitAllocator) Reallocate(size int, b []byte) []byte {
+	// A negative size is refused here as well as in Allocate. It reached the
+	// allocator beneath before, because only growth was charged and a negative
+	// size is not growth — so the one path that can carry a corrupt header's
+	// arithmetic was the one path that did not check it, and the failure came
+	// out of somewhere less legible than this.
+	if size < 0 {
+		a.take(size)
+	}
 	// Only growth is charged; shrinking is not credited back. Over one batch
 	// that overstates usage slightly, which errs towards refusing early — the
 	// safe direction for a limit whose whole job is to stop an allocation that
