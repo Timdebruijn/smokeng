@@ -160,3 +160,55 @@ func TestSignedRejectsCorruptBlob(t *testing.T) {
 		t.Error("DecodeSigned accepted a truncated varint")
 	}
 }
+
+// A golden blob for version 2, for the reason the version-1 one exists: the
+// round-trip tests only prove the codec agrees with itself. An encoder that
+// wrote every value one microsecond high and a decoder that read it back one
+// low would pass all of them, while every blob already on disk decoded wrong
+// from that release onward — and this store keeps distributions forever, so
+// "already on disk" means all of it.
+func TestSignedGolden(t *testing.T) {
+	// -300µs, then +300 to 0, then +1200 to 1200.
+	want := []byte{
+		Version2,
+		0xd7, 0x04, // zig-zag varint: -300
+		0xac, 0x02, // +300
+		0xb0, 0x09, // +1200
+	}
+	got, err := EncodeSigned([]int32{-300, 0, 1200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("EncodeSigned wrote % x, want % x", got, want)
+	}
+	back, err := DecodeSigned(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(back, []int32{-300, 0, 1200}) {
+		t.Fatalf("DecodeSigned read %v", back)
+	}
+	// The version byte is part of the format, not an implementation detail: a
+	// blob written by any release must stay readable by every later one.
+	if Version2 != 0x02 {
+		t.Fatalf("Version2 = 0x%02x; changing it orphans every stored blob", Version2)
+	}
+}
+
+// The delta guard runs before the accumulate, and the range check after. The
+// first test written for this used a delta whose int64 conversion was positive,
+// so the post-check caught it and the pre-check could be deleted with the suite
+// still green. This one needs the pre-check: the delta is negative once
+// converted, so without the guard it walks the accumulator backwards and
+// produces a plausible, unsorted, wrong series with no error at all.
+func TestSignedRejectsWrappingDelta(t *testing.T) {
+	var tmp [binary.MaxVarintLen64]byte
+	blob := []byte{Version2}
+	blob = append(blob, tmp[:binary.PutVarint(tmp[:], 0)]...)
+	blob = append(blob, tmp[:binary.PutUvarint(tmp[:], math.MaxUint64-10)]...)
+	got, err := DecodeSigned(blob)
+	if err == nil {
+		t.Fatalf("a delta that wraps the accumulator was accepted, decoding to %v", got)
+	}
+}

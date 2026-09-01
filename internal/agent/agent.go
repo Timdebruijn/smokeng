@@ -310,7 +310,29 @@ func (a *Agent) push(ctx context.Context) {
 			return
 		}
 		resp.Body.Close()
+		if resp.StatusCode == http.StatusBadRequest {
+			// The master could not decode it, and will not decode it any
+			// better in fifteen seconds. Keeping it meant re-sending the same
+			// rejected bytes forever and never delivering anything again — the
+			// whole outbox wedged behind one batch. That is how a master newer
+			// than its agents used to behave, before column lookup became
+			// name-based, and it is what any future format skew would do.
+			//
+			// Dropping measurements is a real loss and is logged as one. It is
+			// the smaller loss: the alternative is every measurement this agent
+			// will ever take.
+			log.Printf("agent: master could not decode a batch of %d measurement(s) (%s); "+
+				"discarding it, because re-sending the same bytes would stop this agent "+
+				"delivering anything else. If this repeats, the master is older than this "+
+				"agent and should be upgraded first.", len(batch), resp.Status)
+			if err := a.st.DropSubmitted(ctx, batch); err != nil {
+				log.Printf("agent: clearing the buffer: %v", err)
+			}
+			return
+		}
 		if resp.StatusCode != http.StatusOK {
+			// Everything else may be temporary — a restart, an expired clock
+			// skew, a master under load — so the batch stays buffered.
 			log.Printf("agent: master rejected the batch with %s (keeping %d buffered)",
 				resp.Status, len(batch))
 			return

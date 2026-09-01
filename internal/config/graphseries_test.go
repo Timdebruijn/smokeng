@@ -57,6 +57,41 @@ graph_series = "ipdv_send ipdv_receive"
 	if !strings.Contains(string(out), "ipdv_send ipdv_receive") {
 		t.Errorf("export dropped graph_series:\n%s", out)
 	}
+
+	// Actually round-trip it. The earlier version of this test exported and
+	// grepped, which proves the value appears somewhere — not that it comes
+	// back on the same node, nor that the root's own default survives. A bug
+	// that wrote it under the wrong key, or dropped it from [defaults] while
+	// keeping it on target entries, passed.
+	st2 := open(t)
+	if _, err := Import(ctx, st2, out, false, AllowUnknownAgents()); err != nil {
+		t.Fatalf("re-importing our own export: %v", err)
+	}
+	tr2, byPath2 := mustTree(t, st2)
+	for path, want := range map[string]string{
+		"/wag/Irtt": "ipdv_send ipdv_receive",
+		"/wag":      "all",
+		"/":         "all",
+	} {
+		n, ok := byPath2[path]
+		if !ok {
+			t.Errorf("%s missing after the round trip", path)
+			continue
+		}
+		res, err := tr2.Resolve(n.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.GraphSeries.Effective != want {
+			t.Errorf("%s: graph_series = %q after the round trip, want %q",
+				path, res.GraphSeries.Effective, want)
+		}
+	}
+	// And the root carries it as its own value, not by inheriting from nowhere.
+	root := byPath2["/"]
+	if root.Settings.GraphSeries == nil || *root.Settings.GraphSeries != "all" {
+		t.Errorf("the root's own graph_series did not survive: %v", root.Settings.GraphSeries)
+	}
 }
 
 // A typo must be refused at import rather than stored, where it would draw
