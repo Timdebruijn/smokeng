@@ -94,6 +94,14 @@ happens as a side effect of unrelated configuration is a change nobody
 reviewed — so you write your grants first, check them, and then flip
 `--default-role` to `none` when you mean to.
 
+The corollary is worth stating plainly, because it is the step people miss:
+**while `--default-role` is `viewer`, a grant restricts nothing.** Every
+authenticated user already reads the whole tree, and a grant can only add to
+that. Someone granted `viewer` on one subtree still sees every other subtree,
+because they see it as a default-role viewer, not as a grantee. The Access page
+says so in place while that is the case. In the Ansible role this is
+`smokeng_default_role`.
+
 Restrict *who can authenticate at all* at your identity provider. smokeng
 decides what a signed-in user may reach; it does not decide who may sign in.
 

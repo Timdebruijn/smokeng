@@ -93,6 +93,24 @@
     - Restart smokeng
     - Restart smokeng prober
 
+# The OIDC client secret, service-owned and 0600. It is a file rather than a
+# flag because a command line is world-readable in /proc and the unit file is
+# 0644: passing it inline hands the secret to every local user, and to anyone
+# who reads a copy of the unit. Rendered before the units, so the flag that
+# points at it never names a file that is not there yet.
+- name: Install the OIDC client secret
+  ansible.builtin.copy:
+    content: "{{ smokeng_oidc_client_secret }}"
+    dest: "{{ smokeng_oidc_client_secret_file }}"
+    owner: "{{ smokeng_user }}"
+    group: "{{ smokeng_group }}"
+    mode: "0600"
+  when:
+    - smokeng_oidc_issuer | length > 0
+    - smokeng_oidc_client_secret | length > 0
+  no_log: true
+  notify: Restart smokeng
+
 - name: Install the systemd unit
   ansible.builtin.template:
     src: smokeng.service.j2

@@ -18,10 +18,11 @@ ExecStart={{ smokeng_bin }} serve \
     --irtt-hmac-keys {{ smokeng_irtt_hmac_keyfile }}{% endif %}{% if smokeng_allow_unauthenticated | bool %} \
     --i-know-this-is-unauthenticated{% endif %}{% if smokeng_metrics_public | bool %} \
     --metrics-public{% endif %}{% if smokeng_alert_webhook | length > 0 %} \
-    --alert-webhook {{ smokeng_alert_webhook }}{% endif %}{% if smokeng_oidc_issuer | length > 0 %} \
+    --alert-webhook {{ smokeng_alert_webhook }}{% endif %} \
+    --default-role {{ smokeng_default_role }}{% if smokeng_oidc_issuer | length > 0 %} \
     --oidc-issuer {{ smokeng_oidc_issuer }} \
     --oidc-client-id {{ smokeng_oidc_client_id }} \
-    --oidc-client-secret {{ smokeng_oidc_client_secret }} \
+    --oidc-client-secret-file {{ smokeng_oidc_client_secret_file }} \
     --oidc-admin-claim {{ smokeng_oidc_admin_claim }}{% if smokeng_oidc_redirect_url | length > 0 %} \
     --oidc-redirect-url {{ smokeng_oidc_redirect_url }}{% endif %}{% if smokeng_oidc_admin_value | length > 0 %} \
     --oidc-admin-value {{ smokeng_oidc_admin_value }}{% endif %}{% endif %}

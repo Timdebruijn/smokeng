@@ -35,10 +35,23 @@ smokeng_alert_webhook: ""
 # OIDC. Setting the issuer enables authentication; the rest is only read then.
 smokeng_oidc_issuer: ""
 smokeng_oidc_client_id: ""
+# Put this in a vault. It is written to a service-owned 0600 file and passed as
+# --oidc-client-secret-file, never on the command line: a command line is
+# world-readable in /proc, so every local user could otherwise read it.
 smokeng_oidc_client_secret: ""
+smokeng_oidc_client_secret_file: "{{ smokeng_state_dir }}/oidc-client-secret"
 smokeng_oidc_redirect_url: ""
 smokeng_oidc_admin_claim: groups
+# Empty means every authenticated user is an admin, and smokeng's API can edit
+# and delete the target tree. Name the group that should hold admin.
 smokeng_oidc_admin_value: ""
+
+# What an authenticated user holding no grant may do: "viewer" reads
+# everything, "none" means access comes from grants alone. It is deliberately a
+# setting rather than a consequence of adding the first grant, so leaving this
+# at viewer while you write grants is the supported order — but grants do not
+# restrict anything until it is "none".
+smokeng_default_role: viewer
 
 # Comma-separated PEM files on the target host whose certificates https probes
 # trust, on top of the system roots — an internal PKI, most often. This keeps

@@ -49,6 +49,9 @@ The ones that matter:
 | `smokeng_trusted_proxies` | `""` | CIDRs whose `X-Forwarded-For` may be believed. Log accuracy only. |
 | `smokeng_allow_unauthenticated` | `false` | Required to bind off loopback without OIDC. The role refuses otherwise. |
 | `smokeng_oidc_issuer` | `""` | Setting it enables authentication; see [../../docs/authentication.md](../../docs/authentication.md) |
+| `smokeng_oidc_client_secret` | `""` | Vault this. Written to a service-owned 0600 file and passed as `--oidc-client-secret-file`, never on the command line |
+| `smokeng_oidc_admin_value` | `""` | Group granting admin. **Empty means every authenticated user is an admin** |
+| `smokeng_default_role` | `viewer` | What an authenticated user with no grant may do. Grants restrict nothing until this is `none` — see [../../docs/access-control.md](../../docs/access-control.md) |
 | `smokeng_metrics_public` | `false` | Prometheus cannot present a session cookie |
 | `smokeng_alert_webhook` | `""` | Empty means rules are stored but never evaluated |
 | `smokeng_targets_file` | `""` | Path on the controller to a `targets.toml` |
