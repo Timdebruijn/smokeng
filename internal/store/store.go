@@ -28,10 +28,13 @@ type Measurement struct {
 	// the round trip, keyed by series name (see SeriesIPDVSend and friends), in
 	// µs and sorted ascending. Signed, because inter-packet delay variation is.
 	//
-	// A series that was not measured is absent, never present-and-empty: the
-	// far end that returns no timestamps and the interval where every packet
-	// arrived on the same schedule are different facts, and a zero-length
-	// distribution would read as the second.
+	// Absence and emptiness are different facts and both are recorded. A series
+	// this probe could not measure — the far end returns no usable timestamps,
+	// or the probe type has no such figure — is absent from the map. A series
+	// it measured that produced no values, because the interval got one reply
+	// and there was no consecutive pair to difference, is present and empty.
+	// Collapsing the two made a lossy target report an instrumentation problem
+	// it did not have.
 	Series map[string][]int32
 }
 

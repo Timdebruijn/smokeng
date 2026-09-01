@@ -167,16 +167,18 @@ func TestSeriesTrustFollowsNegotiatedStamps(t *testing.T) {
 	}{
 		{"both ends, both clocks", dualStamped(), true, true, true},
 		// One documented server flag (--tstamp=single) restricts AtBoth to
-		// AtMidpoint, where the two server stamps hold the same value. The
-		// difference between them is then not unavailable but exactly zero, so
-		// server processing time would be a distribution of fabricated zeros.
-		// The two IPDV figures survive: each is still a difference against a
-		// real server stamp.
-		{"midpoint", &irtt.ClientConfig{StampAt: irtt.AtMidpoint, Clock: irtt.BothClocks}, true, true, false},
-		// With only a send stamp, BestReceive falls back to it, so send IPDV
-		// silently absorbs the server's hold time. Receive IPDV is unaffected.
-		{"send only", &irtt.ClientConfig{StampAt: irtt.AtSend, Clock: irtt.BothClocks}, false, true, false},
-		{"receive only", &irtt.ClientConfig{StampAt: irtt.AtReceive, Clock: irtt.BothClocks}, true, false, false},
+		// AtMidpoint, where the two server stamps hold the same value. Nothing
+		// survives that: server processing time becomes a computable zero, and
+		// both IPDV figures become differences against the midpoint, so each
+		// carries half the server's hold time. See
+		// TestMidpointLeaksServerProcessingIntoJitter.
+		{"midpoint", &irtt.ClientConfig{StampAt: irtt.AtMidpoint, Clock: irtt.BothClocks}, false, false, false},
+		// A one-sided stamp is not reachable from an AtBoth request — a server
+		// may only downgrade to AtNone, AtMidpoint, or leave it alone — but the
+		// gate is written in terms of what each figure needs rather than in
+		// terms of what this client happens to ask for.
+		{"send only", &irtt.ClientConfig{StampAt: irtt.AtSend, Clock: irtt.BothClocks}, false, false, false},
+		{"receive only", &irtt.ClientConfig{StampAt: irtt.AtReceive, Clock: irtt.BothClocks}, false, false, false},
 		{"no stamps", &irtt.ClientConfig{StampAt: irtt.AtNone, Clock: irtt.BothClocks}, false, false, false},
 		// Without the monotonic clock, IPDV is a difference of wall-clock
 		// readings: a constant offset still cancels, an NTP step does not.
@@ -222,12 +224,41 @@ func TestMidpointServerRecordsNoProcessingTime(t *testing.T) {
 
 	col := &collector{}
 	recordIRTTSeries(col, r, 20)
-	if v, ok := col.series[store.SeriesServerProcessing]; ok {
-		t.Errorf("a midpoint server produced a server_processing series of %v", v)
+	if len(col.series) != 0 {
+		t.Errorf("a midpoint server produced %v; none of it means what its heading says", col.series)
 	}
-	if len(col.series[store.SeriesIPDVSend]) == 0 {
-		t.Error("send IPDV should survive a midpoint stamp")
+}
+
+// Why the midpoint case silences the jitter figures too, measured rather than
+// argued. Zero network jitter, and a server whose hold time steps from 10ms to
+// 20ms between two packets: at a midpoint stamp half that step lands in each
+// direction, so a loaded server graphs its own scheduling as network jitter.
+// With both stamps the same two packets correctly report no variation at all.
+func TestMidpointLeaksServerProcessingIntoJitter(t *testing.T) {
+	ms := time.Millisecond
+	// Midpoint = the server's receive time plus half its hold.
+	mid1 := 5*ms + 5*ms
+	mid2 := 100*ms + 5*ms + 10*ms
+	a := rt(0, mid1, mid1, 20*ms)
+	b := rt(100*ms, mid2, mid2, 130*ms)
+	sendMid := b.SendIPDVSince(a.RoundTripData)
+	recvMid := b.ReceiveIPDVSince(a.RoundTripData)
+
+	// The same two packets, stamped at both ends.
+	a2 := rt(0, 5*ms, 15*ms, 20*ms)
+	b2 := rt(100*ms, 105*ms, 125*ms, 130*ms)
+	sendBoth := b2.SendIPDVSince(a2.RoundTripData)
+	recvBoth := b2.ReceiveIPDVSince(a2.RoundTripData)
+
+	if sendBoth != 0 || recvBoth != 0 {
+		t.Fatalf("premise wrong: with both stamps and no network jitter, IPDV = %v/%v, want 0",
+			sendBoth, recvBoth)
 	}
+	if sendMid == 0 && recvMid == 0 {
+		t.Fatal("premise wrong: the midpoint stamp reported no contamination, " +
+			"so this test no longer demonstrates why the midpoint case is silenced")
+	}
+	t.Logf("midpoint reports send=%v receive=%v where the truth is 0/0", sendMid, recvMid)
 }
 
 // An interval that could measure the series but had nothing to compare — one
