@@ -85,10 +85,12 @@ window on screen, computed from the same samples the plot draws, above a full-he
 plot and the target's effective settings, alert rules and vantage points.
 
 ![A target's detail page: median, p95 and spread figures above a large density-smoke plot,
-with the target's settings and the agents measuring it alongside](images/detail.png)
+then availability and coverage over a period, with the target's effective settings, its
+alert rules and the agents measuring it alongside](images/detail.png)
 
 *The detail view. p95 and the spread are the two numbers a median cannot give you, and the
-reason the whole distribution is kept.*
+reason the whole distribution is kept. Availability and coverage sit below, as two figures
+rather than one.*
 
 ## Availability
 
