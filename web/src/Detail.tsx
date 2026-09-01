@@ -34,7 +34,13 @@ const SETTING_LABELS: {
   types?: string[]
   // When present, renders the effective value itself (unit included); used where
   // a bare number would mislead, e.g. retention 0 meaning "forever", not "0s".
-  render?: (v: number) => string
+  //
+  // Typed to the union a setting's effective value can actually hold. It was
+  // (v: number) => string with an `as number` at the call site, which made the
+  // compiler agree with a claim that was false the moment a string-valued
+  // setting got a renderer — the assertion silenced exactly the check that
+  // would have caught it.
+  render?: (v: number | string | boolean) => string
 }[] = [
   { key: 'probe_type', label: 'Probe type' },
   { key: 'interval_s', label: 'Interval', unit: 's' },
@@ -246,7 +252,7 @@ export default function Detail({
                   {isUnset(v)
                     ? '—'
                     : s.render
-                      ? s.render(v.effective as number)
+                      ? s.render(v.effective)
                       : String(v.effective)}
                   {!isUnset(v) && s.unit && !s.render && <span className="unit">{s.unit}</span>}
                 </span>

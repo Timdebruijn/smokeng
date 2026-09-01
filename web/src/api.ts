@@ -687,7 +687,10 @@ export function fetchSeries(
   if (hit && now - hit.at < SHARE_MS) return hit.p.then(copySeries)
   const p = fetchSeriesUncached(targetId, agentId, from, to).catch((e: unknown) => {
     // A failure is never shared: the next caller must be able to try again.
-    inFlight.delete(key)
+    // Guarded like the timeout below, and for the same reason — a slow request
+    // that has already been evicted must not delete the entry that replaced
+    // it, which would cost the next caller its coalescing.
+    if (inFlight.get(key)?.p === p) inFlight.delete(key)
     throw e
   })
   inFlight.set(key, { at: now, p })
