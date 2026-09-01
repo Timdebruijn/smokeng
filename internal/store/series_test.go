@@ -292,3 +292,30 @@ func TestPendingSeriesScopedToTheirAgent(t *testing.T) {
 		}
 	}
 }
+
+// A series that was measured but produced no values must stay distinguishable
+// from one that was never measured. Both hold zero values; only the second is
+// an instrumentation problem, and collapsing them lets a lossy target report a
+// fault it does not have.
+func TestSeriesMeasuredButEmptySurvives(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	writeOne(t, s, Measurement{
+		TargetID: 1, TS: 1000, Sent: 1, Received: 1, Samples: []uint32{50},
+		Series: map[string][]int32{SeriesIPDVSend: {}},
+	})
+	got, err := s.QueryRange(ctx, 1, 0, 0, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := got[0].Series[SeriesIPDVSend]
+	if !ok {
+		t.Fatal("an empty-but-measured series came back absent")
+	}
+	if len(v) != 0 {
+		t.Errorf("ipdv_send = %v, want empty", v)
+	}
+	if _, ok := got[0].Series[SeriesIPDVReceive]; ok {
+		t.Error("a series that was never written came back present")
+	}
+}

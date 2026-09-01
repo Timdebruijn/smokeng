@@ -124,3 +124,35 @@ func TestDecodeBatchRefusesMissingRequiredColumn(t *testing.T) {
 		t.Errorf("error does not name the missing column: %v", err)
 	}
 }
+
+// The same distinction has to survive the wire: an empty list and a null
+// column mean different things, and only one of them is "not measured".
+func TestBatchKeepsEmptySeriesDistinctFromAbsent(t *testing.T) {
+	in := []store.Measurement{{
+		TargetID: 1, TS: 100, Sent: 1, Received: 1, Samples: []uint32{10},
+		Series: map[string][]int32{store.SeriesIPDVSend: {}},
+	}}
+	out, err := DecodeBatch(mustEncode(t, in), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := out[0].Series[store.SeriesIPDVSend]
+	if !ok {
+		t.Fatal("an empty-but-measured series arrived absent")
+	}
+	if len(v) != 0 {
+		t.Errorf("ipdv_send = %v, want empty", v)
+	}
+	if _, ok := out[0].Series[store.SeriesIPDVReceive]; ok {
+		t.Error("an absent series arrived present")
+	}
+}
+
+func mustEncode(t *testing.T, ms []store.Measurement) []byte {
+	t.Helper()
+	b, err := EncodeBatch(ms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
