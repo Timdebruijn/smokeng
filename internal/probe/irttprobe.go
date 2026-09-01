@@ -139,7 +139,7 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 		// fine. markSendFailed flags the interval so the loss rail still shows
 		// it, but labelled as ours rather than the network's.
 		for i := range spec.Pings {
-			col.markSendFailed(i, store.SendReasonSessionRefused)
+			col.markSendFailed(i, sendReasonForOpen(err))
 		}
 		log.Printf("probe: target %d (%s): irtt session to %s never opened: %v; recorded as a send failure",
 			spec.TargetID, spec.Host, cfg.RemoteAddress, err)
@@ -174,7 +174,7 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 				// a far end that refused the traffic (ECONNREFUSED, which on a
 				// connected UDP socket means an ICMP unreachable came back) is
 				// distinguishable from a local failure to transmit.
-				col.markSendFailed(i, sendReasonFor(r.SendErr))
+				col.markSendFailed(i, sendReasonOr(r.SendErr, store.SendReasonSessionEnded))
 			} else {
 				col.markSent(i, 0, now) // sent, unanswered: loss
 			}

@@ -95,6 +95,16 @@ const (
 	// this is the prober's own pacing or deadline arithmetic falling short, and
 	// it is here so that case stops being indistinguishable from the network's.
 	SendReasonSessionShort uint8 = 7
+	// SendReasonSessionNoReply is a session handshake that drew no answer at
+	// all. Silence is not refusal: a black-holed address, a filtered port and a
+	// server that is simply down all land here, and none of them is the far end
+	// rejecting the traffic.
+	SendReasonSessionNoReply uint8 = 8
+	// SendReasonDeadline is the prober's own bucket deadline expiring before
+	// the probe could go out. Nothing was asked of the target, so the target is
+	// not what failed — this is smokeng's timing, and saying otherwise sends an
+	// operator hunting a firewall that is not there.
+	SendReasonDeadline uint8 = 9
 )
 
 // SendReasonName renders a reason for a person. An unknown code is shown as
@@ -115,6 +125,10 @@ func SendReasonName(r uint8) string {
 		return "the session broke part-way"
 	case SendReasonSessionShort:
 		return "the session sent fewer probes than asked"
+	case SendReasonSessionNoReply:
+		return "the session got no reply"
+	case SendReasonDeadline:
+		return "this prober's own deadline expired before sending"
 	default:
 		return fmt.Sprintf("reason %d", r)
 	}
