@@ -219,8 +219,8 @@ func (s *SQLite) attachPendingSeries(ctx context.Context, ms []Measurement) erro
 	if len(ms) == 0 {
 		return nil
 	}
-	type key struct{ target, agent, ts int64 }
-	type span struct{ lo, hi int64 }
+	type key = struct{ target, agent, ts int64 }
+	type span = struct{ lo, hi int64 }
 	byKey := make(map[key]*Measurement, len(ms))
 	// One time span per (target, agent), not one for the whole page. The
 	// primary key leads with target_id and agent_id, so a bare ts range
@@ -245,13 +245,41 @@ func (s *SQLite) attachPendingSeries(ctx context.Context, ms []Measurement) erro
 		}
 		spans[pair] = sp
 	}
+	// In chunks, because SQLite caps expression-tree depth at 1000 and each
+	// OR'd group costs several nodes. A page of 2000 measurements can span far
+	// more than a thousand targets on a large fleet, or on an agent catching up
+	// after downtime, and one over-deep statement does not degrade — it errors,
+	// which fails the whole drain and leaves the outbox to retry the identical
+	// query every fifteen seconds forever. That is a harder failure than the
+	// table scan this replaced, so the query is split rather than risked.
+	pairs := make([][2]int64, 0, len(spans))
+	for pair := range spans {
+		pairs = append(pairs, pair)
+	}
+	for start := 0; start < len(pairs); start += pendingSeriesChunk {
+		end := min(start+pendingSeriesChunk, len(pairs))
+		if err := s.readPendingSeriesChunk(ctx, pairs[start:end], spans, byKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pendingSeriesChunk is how many (target, agent) pairs go into one statement.
+// Well under the depth ceiling: a thousand pairs is where SQLite refuses, and
+// there is nothing to gain from crowding it.
+const pendingSeriesChunk = 100
+
+func (s *SQLite) readPendingSeriesChunk(ctx context.Context, pairs [][2]int64,
+	spans map[[2]int64]struct{ lo, hi int64 }, byKey map[struct{ target, agent, ts int64 }]*Measurement) error {
 	var where strings.Builder
-	args := make([]any, 0, len(spans)*4)
-	for pair, sp := range spans {
+	args := make([]any, 0, len(pairs)*4)
+	for _, pair := range pairs {
 		if where.Len() > 0 {
 			where.WriteString(" OR ")
 		}
 		where.WriteString("(target_id = ? AND agent_id = ? AND ts >= ? AND ts <= ?)")
+		sp := spans[pair]
 		args = append(args, pair[0], pair[1], sp.lo, sp.hi)
 	}
 	rows, err := s.db.QueryContext(ctx,
@@ -262,7 +290,7 @@ func (s *SQLite) attachPendingSeries(ctx context.Context, ms []Measurement) erro
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var k key
+		var k struct{ target, agent, ts int64 }
 		var name string
 		var blob []byte
 		if err := rows.Scan(&k.target, &k.agent, &k.ts, &name, &blob); err != nil {

@@ -222,3 +222,73 @@ func TestCorruptSeriesLeavesTheIntervalReadable(t *testing.T) {
 		t.Error("an undecodable series was served as if it had decoded")
 	}
 }
+
+// A page of the outbox can span far more targets than one SQL statement may
+// hold: SQLite caps expression-tree depth at 1000, and the per-pair query is
+// built from OR'd groups. Over that ceiling the statement does not degrade, it
+// errors — failing the whole drain and leaving the agent to retry the identical
+// query every fifteen seconds forever, which is worse than the table scan the
+// per-pair query was written to avoid.
+//
+// 1200 pairs is past the ceiling; a single-pair test cannot see this, which is
+// why the fix shipped once with the suite green.
+func TestPendingSeriesSpansManyTargets(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	const pairs = 1200
+	for i := range pairs {
+		writeOne(t, s, Measurement{
+			TargetID: int64(i + 1), AgentID: 0, TS: 1000, Sent: 1, Received: 1,
+			Samples: []uint32{10},
+			Series:  map[string][]int32{SeriesIPDVSend: {int32(-i - 1)}},
+		})
+	}
+	got, err := s.PendingMeasurements(ctx, 2000)
+	if err != nil {
+		t.Fatalf("draining %d pairs: %v", pairs, err)
+	}
+	if len(got) != pairs {
+		t.Fatalf("got %d measurements, want %d", len(got), pairs)
+	}
+	// Every one carries its own series, not its neighbour's: the chunking must
+	// not scramble the key matching.
+	for _, m := range got {
+		v := m.Series[SeriesIPDVSend]
+		if len(v) != 1 || v[0] != int32(-m.TargetID) {
+			t.Fatalf("target %d carries %v, want [%d]", m.TargetID, v, -m.TargetID)
+		}
+	}
+}
+
+// Two agents measuring the same target at the same second must each carry
+// their own series out of the outbox.
+//
+// Note what actually enforces that here, because it is not the SQL: the agent
+// clause in the WHERE exists so the primary key can serve the query, and
+// removing it leaves this test green — the exact (target, agent, ts) match
+// against byKey is what keeps the rows apart. That is the opposite of the
+// master's attachSeries, where target and agent come from the caller and the
+// WHERE clause is the only thing separating two agents' series; there, removing
+// it does fail a test, and deliberately so.
+func TestPendingSeriesScopedToTheirAgent(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	writeOne(t, s, Measurement{TargetID: 1, AgentID: 1, TS: 1000, Sent: 1, Received: 1,
+		Samples: []uint32{10}, Series: map[string][]int32{SeriesIPDVSend: {-11}}})
+	writeOne(t, s, Measurement{TargetID: 1, AgentID: 2, TS: 1000, Sent: 1, Received: 1,
+		Samples: []uint32{20}, Series: map[string][]int32{SeriesIPDVSend: {-22}}})
+	got, err := s.PendingMeasurements(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d pending, want 2", len(got))
+	}
+	for _, m := range got {
+		want := map[int64]int32{1: -11, 2: -22}[m.AgentID]
+		v := m.Series[SeriesIPDVSend]
+		if len(v) != 1 || v[0] != want {
+			t.Errorf("agent %d carries %v, want [%d]", m.AgentID, v, want)
+		}
+	}
+}
