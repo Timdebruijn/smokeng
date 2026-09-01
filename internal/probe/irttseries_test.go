@@ -31,7 +31,7 @@ func rt(clientSend, serverRecv, serverSend, clientRecv time.Duration) irtt.Round
 // the sign would hide whether a link jitters symmetrically or only bursts late.
 func TestIRTTSeriesRecorded(t *testing.T) {
 	ms := time.Millisecond
-	r := &irtt.Result{RoundTrips: []irtt.RoundTrip{
+	r := &irtt.Result{Config: dualStamped(), RoundTrips: []irtt.RoundTrip{
 		rt(0, 10*ms, 11*ms, 20*ms),
 		rt(100*ms, 108*ms, 109*ms, 121*ms), // arrived 2ms sooner: send IPDV -2ms
 		rt(200*ms, 214*ms, 215*ms, 223*ms), // and 6ms later than that
@@ -46,7 +46,7 @@ func TestIRTTSeriesRecorded(t *testing.T) {
 	r.RoundTrips[0].ReceiveIPDV = irtt.InvalidDuration
 
 	col := &collector{}
-	recordIRTTSeries(col, r)
+	recordIRTTSeries(col, r, 20)
 
 	send := col.series[store.SeriesIPDVSend]
 	if len(send) != 2 {
@@ -83,7 +83,12 @@ func TestIRTTSeriesAbsentWithoutServerTimestamps(t *testing.T) {
 			// Server left zero: no timestamps came back.
 		}})
 	}
-	r := &irtt.Result{RoundTrips: trips}
+	// A server that stamps nothing negotiates AtNone; that, not an
+	// inconsistent round trip, is how this reaches the prober.
+	r := &irtt.Result{
+		Config:     &irtt.ClientConfig{StampAt: irtt.AtNone, Clock: irtt.BothClocks},
+		RoundTrips: trips,
+	}
 	for i := 1; i < len(r.RoundTrips); i++ {
 		r.RoundTrips[i].SendIPDV = r.RoundTrips[i].SendIPDVSince(r.RoundTrips[i-1].RoundTripData)
 		r.RoundTrips[i].ReceiveIPDV = r.RoundTrips[i].ReceiveIPDVSince(r.RoundTrips[i-1].RoundTripData)
@@ -92,7 +97,7 @@ func TestIRTTSeriesAbsentWithoutServerTimestamps(t *testing.T) {
 	r.RoundTrips[0].ReceiveIPDV = irtt.InvalidDuration
 
 	col := &collector{}
-	recordIRTTSeries(col, r)
+	recordIRTTSeries(col, r, 20)
 	if len(col.series) != 0 {
 		t.Errorf("series recorded from a peer that sent no timestamps: %v", col.series)
 	}
@@ -141,5 +146,157 @@ func TestIRTTSeriesEndToEnd(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// dualStamped is what a default irtt server negotiates: both clocks, a stamp
+// at both ends. Every series is supportable.
+func dualStamped() *irtt.ClientConfig {
+	return &irtt.ClientConfig{StampAt: irtt.AtBoth, Clock: irtt.BothClocks}
+}
+
+// The server may restrict what it stamps, and irtt reports that with an event
+// rather than an error — the session succeeds and the numbers keep arriving,
+// meaning something else. Each restriction must silence exactly the series it
+// invalidates and no more.
+func TestSeriesTrustFollowsNegotiatedStamps(t *testing.T) {
+	cases := []struct {
+		name                  string
+		cfg                   *irtt.ClientConfig
+		send, receive, server bool
+	}{
+		{"both ends, both clocks", dualStamped(), true, true, true},
+		// One documented server flag (--tstamp=single) restricts AtBoth to
+		// AtMidpoint, where the two server stamps hold the same value. The
+		// difference between them is then not unavailable but exactly zero, so
+		// server processing time would be a distribution of fabricated zeros.
+		// The two IPDV figures survive: each is still a difference against a
+		// real server stamp.
+		{"midpoint", &irtt.ClientConfig{StampAt: irtt.AtMidpoint, Clock: irtt.BothClocks}, true, true, false},
+		// With only a send stamp, BestReceive falls back to it, so send IPDV
+		// silently absorbs the server's hold time. Receive IPDV is unaffected.
+		{"send only", &irtt.ClientConfig{StampAt: irtt.AtSend, Clock: irtt.BothClocks}, false, true, false},
+		{"receive only", &irtt.ClientConfig{StampAt: irtt.AtReceive, Clock: irtt.BothClocks}, true, false, false},
+		{"no stamps", &irtt.ClientConfig{StampAt: irtt.AtNone, Clock: irtt.BothClocks}, false, false, false},
+		// Without the monotonic clock, IPDV is a difference of wall-clock
+		// readings: a constant offset still cancels, an NTP step does not.
+		{"wall clock only", &irtt.ClientConfig{StampAt: irtt.AtBoth, Clock: irtt.Wall}, false, false, false},
+		{"no config", nil, false, false, false},
+	}
+	for _, c := range cases {
+		got := trustFrom(c.cfg)
+		if got.sendIPDV != c.send || got.receiveIPDV != c.receive || got.serverProcessing != c.server {
+			t.Errorf("%s: trust = %+v, want send=%v receive=%v server=%v",
+				c.name, got, c.send, c.receive, c.server)
+		}
+	}
+}
+
+// The critical case, end to end through the recorder: a midpoint-stamping
+// server must produce no server_processing series at all, rather than a
+// distribution of zeros that claims the far end replied instantly.
+func TestMidpointServerRecordsNoProcessingTime(t *testing.T) {
+	ms := time.Millisecond
+	var trips []irtt.RoundTrip
+	for i := range 3 {
+		d := time.Duration(i) * 100 * ms
+		mid := d + 10*ms
+		trips = append(trips, rt(d, mid, mid, d+20*ms)) // send == receive: the midpoint
+	}
+	r := &irtt.Result{
+		Config:     &irtt.ClientConfig{StampAt: irtt.AtMidpoint, Clock: irtt.BothClocks},
+		RoundTrips: trips,
+	}
+	for i := 1; i < len(r.RoundTrips); i++ {
+		r.RoundTrips[i].SendIPDV = r.RoundTrips[i].SendIPDVSince(r.RoundTrips[i-1].RoundTripData)
+		r.RoundTrips[i].ReceiveIPDV = r.RoundTrips[i].ReceiveIPDVSince(r.RoundTrips[i-1].RoundTripData)
+	}
+	r.RoundTrips[0].SendIPDV = irtt.InvalidDuration
+	r.RoundTrips[0].ReceiveIPDV = irtt.InvalidDuration
+
+	// Confirm the library really does produce a computable zero here, so the
+	// test is guarding against the real hazard and not a hypothetical one.
+	if d := trips[0].ServerProcessingTime(); d != 0 {
+		t.Fatalf("premise wrong: midpoint ServerProcessingTime = %v, want 0", d)
+	}
+
+	col := &collector{}
+	recordIRTTSeries(col, r, 20)
+	if v, ok := col.series[store.SeriesServerProcessing]; ok {
+		t.Errorf("a midpoint server produced a server_processing series of %v", v)
+	}
+	if len(col.series[store.SeriesIPDVSend]) == 0 {
+		t.Error("send IPDV should survive a midpoint stamp")
+	}
+}
+
+// An interval that could measure the series but had nothing to compare — one
+// reply, so no consecutive pair — is a different fact from one the peer could
+// not stamp, and only one of the two is an instrumentation problem.
+func TestMeasuredButEmptyIsRecorded(t *testing.T) {
+	ms := time.Millisecond
+	r := &irtt.Result{
+		Config:     dualStamped(),
+		RoundTrips: []irtt.RoundTrip{rt(0, 10*ms, 11*ms, 20*ms)},
+	}
+	r.RoundTrips[0].SendIPDV = irtt.InvalidDuration
+	r.RoundTrips[0].ReceiveIPDV = irtt.InvalidDuration
+
+	col := &collector{}
+	recordIRTTSeries(col, r, 20)
+	v, ok := col.series[store.SeriesIPDVSend]
+	if !ok {
+		t.Fatal("a measured series with no computable values was dropped; it reads as 'not measured'")
+	}
+	if len(v) != 0 {
+		t.Errorf("ipdv_send = %v, want empty", v)
+	}
+}
+
+// A negative round trip is dropped from the latency distribution as an irtt
+// anomaly. Its derived figures are no more trustworthy, so they must not
+// reappear on the jitter graph instead.
+func TestNegativeRoundTripExcludedFromSeries(t *testing.T) {
+	ms := time.Millisecond
+	// client.rx before server.send: the round trip comes out negative.
+	// RTT is client.rx - client.tx minus the server's processing time, so a
+	// hold longer than the wire time is what drives it negative.
+	bad := rt(0, 10*ms, 35*ms, 20*ms)
+	good := rt(100*ms, 108*ms, 109*ms, 121*ms)
+	r := &irtt.Result{Config: dualStamped(), RoundTrips: []irtt.RoundTrip{good, bad}}
+	if r.RoundTrips[1].RTT() >= 0 {
+		t.Fatalf("premise wrong: RTT = %v, want negative", r.RoundTrips[1].RTT())
+	}
+	r.RoundTrips[1].SendIPDV = r.RoundTrips[1].SendIPDVSince(r.RoundTrips[0].RoundTripData)
+	r.RoundTrips[1].ReceiveIPDV = r.RoundTrips[1].ReceiveIPDVSince(r.RoundTrips[0].RoundTripData)
+	r.RoundTrips[0].SendIPDV = irtt.InvalidDuration
+	r.RoundTrips[0].ReceiveIPDV = irtt.InvalidDuration
+
+	col := &collector{}
+	recordIRTTSeries(col, r, 20)
+	if v := col.series[store.SeriesIPDVSend]; len(v) != 0 {
+		t.Errorf("ipdv_send = %v; the negative round trip's jitter was kept", v)
+	}
+	// Server processing time comes from the same untrusted round trip.
+	if v := col.series[store.SeriesServerProcessing]; len(v) != 1 {
+		t.Errorf("server_processing = %v, want only the good round trip's value", v)
+	}
+}
+
+// A server that paces differently than asked can return more results than the
+// interval has room for. The round-trip loop caps at spec.Pings; a longer
+// distribution would describe a packet set the stored sent/received do not.
+func TestSeriesCappedAtPings(t *testing.T) {
+	ms := time.Millisecond
+	var trips []irtt.RoundTrip
+	for i := range 10 {
+		d := time.Duration(i) * 10 * ms
+		trips = append(trips, rt(d, d+2*ms, d+3*ms, d+6*ms))
+	}
+	r := &irtt.Result{Config: dualStamped(), RoundTrips: trips}
+	col := &collector{}
+	recordIRTTSeries(col, r, 4)
+	if v := col.series[store.SeriesServerProcessing]; len(v) != 4 {
+		t.Errorf("server_processing has %d values for a 4-probe interval: %v", len(v), v)
 	}
 }

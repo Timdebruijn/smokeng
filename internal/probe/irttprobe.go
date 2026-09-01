@@ -187,7 +187,7 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 		}
 		col.recordRoundTrip(i, rt.RTT())
 	}
-	recordIRTTSeries(col, r)
+	recordIRTTSeries(col, r, spec.Pings)
 	// A send error leaves RoundTrips short of Pings; the tail never went out, so
 	// it is a send failure, not silent absence — otherwise Sent would under-count
 	// and the interval would look narrower than it was asked to be.
@@ -207,6 +207,49 @@ func irttStep(spec TargetSpec) time.Duration {
 	return time.Duration(spec.BurstGapMS) * time.Millisecond
 }
 
+// seriesTrust says which of the extra series this session's negotiated
+// timestamps actually support. The client asks for both clocks and a stamp at
+// both ends; the server may restrict either, and irtt reports that with an
+// event rather than an error — the session succeeds and the numbers keep
+// arriving, quietly meaning something else.
+type seriesTrust struct{ sendIPDV, receiveIPDV, serverProcessing bool }
+
+// trustFrom reads the negotiated configuration. Every false here is a series
+// that will not be recorded at all, because for each of them the alternative is
+// not a slightly worse number but a differently-defined one wearing the label
+// of the number the operator asked for.
+func trustFrom(cfg *irtt.ClientConfig) seriesTrust {
+	if cfg == nil {
+		return seriesTrust{}
+	}
+	// Inter-packet delay variation cancels the offset between two hosts' clocks
+	// only because it is a difference taken on the monotonic clock. irtt falls
+	// back to the wall clock when the server returns no monotonic value, and
+	// then a constant offset still cancels but a *step* does not: a 100 ms NTP
+	// correction on the far end draws a 100 000 µs spike indistinguishable from
+	// a real network event. That is a measurement of NTP, and this project does
+	// not put one on a graph labelled jitter.
+	if cfg.Clock&irtt.Monotonic == 0 {
+		return seriesTrust{}
+	}
+	at := cfg.StampAt
+	return seriesTrust{
+		// Send IPDV is built from the server's *receive* stamp. Without one,
+		// BestReceive falls back to the send stamp and the figure silently
+		// absorbs however long the server held the packet.
+		sendIPDV: at == irtt.AtBoth || at == irtt.AtReceive || at == irtt.AtMidpoint,
+		// And receive IPDV from the server's send stamp, symmetrically.
+		receiveIPDV: at == irtt.AtBoth || at == irtt.AtSend || at == irtt.AtMidpoint,
+		// Server processing time is the gap between the two server stamps, so
+		// it needs them to be two. At the midpoint they are one value recorded
+		// twice, and the difference is not unavailable — it is exactly zero.
+		// Recorded, that is a distribution of fabricated zeros, kept forever at
+		// full resolution, under a heading that says how long the far end held
+		// each packet. One documented server flag reaches this state.
+		serverProcessing: at == irtt.AtBoth,
+	}
+}
+
 // recordIRTTSeries keeps the per-packet measurements irtt makes beside the
 // round trip. They come out of the session smokeng already runs, so this costs
 // nothing but the storage — and without it the directional half of what irtt
@@ -221,32 +264,52 @@ func irttStep(spec TargetSpec) time.Duration {
 // makes one of them a measurement and the other a measurement of NTP, and only
 // the first belongs in a graph labelled latency.
 //
-// A series the peer gave no timestamps for is left out entirely rather than
-// stored empty: "this server does not report it" and "there was no variation"
-// are different facts, and only absence can carry the first.
-func recordIRTTSeries(col *collector, r *irtt.Result) {
+// A series this session cannot support is left out entirely rather than stored
+// wrong. A series it can support but that produced no values — one reply, so no
+// consecutive pair — is stored empty, which is a different fact and is recorded
+// as one.
+func recordIRTTSeries(col *collector, r *irtt.Result, pings int) {
+	trust := trustFrom(r.Config)
 	var send, receive, processing []int32
 	for i := range r.RoundTrips {
+		// The same cap the round-trip loop applies. A server that paced
+		// differently than asked can return more results than the interval has
+		// room for, and a distribution longer than the interval's own probe
+		// count describes a packet set the stored sent/received do not.
+		if i >= pings {
+			break
+		}
 		rt := &r.RoundTrips[i]
 		if rt.RoundTripData == nil || !rt.ReplyReceived() {
 			continue
 		}
-		// The first packet of a session has no predecessor to vary from, so
-		// its IPDV is invalid rather than zero; so is every packet's when the
-		// server returns no timestamps.
-		if d, ok := irttMicros(rt.SendIPDV); ok {
-			send = append(send, d)
+		// A negative round trip is an irtt anomaly, and the round-trip loop
+		// drops the sample for exactly that reason. Its derived figures are no
+		// more trustworthy than the round trip they came from, so they go too —
+		// otherwise a reading hidden from the latency graph reappears,
+		// unflagged, on the jitter one.
+		if rt.RTT() < 0 {
+			continue
 		}
-		if d, ok := irttMicros(rt.ReceiveIPDV); ok {
-			receive = append(receive, d)
+		if trust.sendIPDV {
+			if d, ok := irttMicros(rt.SendIPDV); ok {
+				send = append(send, d)
+			}
 		}
-		if d, ok := irttMicros(rt.ServerProcessingTime()); ok {
-			processing = append(processing, d)
+		if trust.receiveIPDV {
+			if d, ok := irttMicros(rt.ReceiveIPDV); ok {
+				receive = append(receive, d)
+			}
+		}
+		if trust.serverProcessing {
+			if d, ok := irttMicros(rt.ServerProcessingTime()); ok {
+				processing = append(processing, d)
+			}
 		}
 	}
-	col.recordSeries(store.SeriesIPDVSend, send)
-	col.recordSeries(store.SeriesIPDVReceive, receive)
-	col.recordSeries(store.SeriesServerProcessing, processing)
+	col.recordSeries(store.SeriesIPDVSend, send, trust.sendIPDV)
+	col.recordSeries(store.SeriesIPDVReceive, receive, trust.receiveIPDV)
+	col.recordSeries(store.SeriesServerProcessing, processing, trust.serverProcessing)
 }
 
 // irttMicros converts an irtt duration to microseconds, reporting whether it

@@ -83,8 +83,16 @@ type collector struct {
 // values are sorted here rather than at the call site: what is stored is a
 // distribution, so the order packets arrived in is not part of it, and the blob
 // codec requires ascending order anyway.
-func (c *collector) recordSeries(name string, vals []int32) {
-	if len(vals) == 0 {
+//
+// measured says whether this probe was in a position to measure the series at
+// all, and is the whole reason it is a separate argument from the values. An
+// interval that measured it and computed nothing — one reply, so no consecutive
+// pair to difference — is stored empty, and reads as "there was nothing to
+// compare". An interval that could not measure it is absent, and reads as "not
+// measured". Dropping on len(vals) == 0 collapsed the two into the second, which
+// let a lossy target report an instrumentation problem it did not have.
+func (c *collector) recordSeries(name string, vals []int32, measured bool) {
+	if !measured {
 		return
 	}
 	slices.Sort(vals)
@@ -92,6 +100,11 @@ func (c *collector) recordSeries(name string, vals []int32) {
 	defer c.mu.Unlock()
 	if c.series == nil {
 		c.series = make(map[string][]int32, 2)
+	}
+	if vals == nil {
+		// A nil slice and an empty one are the same fact, but only one of them
+		// survives the map lookup on the way out as "present".
+		vals = []int32{}
 	}
 	c.series[name] = vals
 }

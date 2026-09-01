@@ -40,9 +40,15 @@ export default function SeriesPlot({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const workerRef = useRef<Worker | null>(null)
-  const rowsRef = useRef<{ ts: Float64Array; median: Float64Array; span: number } | null>(null)
+  const rowsRef = useRef<{
+    ts: Float64Array
+    median: Float64Array
+    /** 1 where the interval measured this series at all; see ExtraSeries. */
+    measured: Uint8Array
+    span: number
+  } | null>(null)
   const cursorRef = useRef<number | null>(null)
-  const [state, setState] = useState<'loading' | 'ok' | 'unmeasured' | 'error'>('loading')
+  const [state, setState] = useState<'loading' | 'ok' | 'unmeasured' | 'empty' | 'error'>('loading')
   const [readout, setReadout] = useState<string | null>(null)
   // Re-fetch and re-render on a real width change. Without this the density
   // canvas kept the bitmap it was given — time axis baked in — while CSS
@@ -87,9 +93,11 @@ export default function SeriesPlot({
         const ex = s.extra[name]
         if (!ex) {
           // Nothing in this window measured it. Say so rather than drawing an
-          // empty plot, which would read as "measured, and flat".
+          // empty plot, which would read as "measured, and flat" — but say
+          // only what is known. An empty window and a peer that stamps nothing
+          // both land here, and they are not the same fact.
           rowsRef.current = null
-          setState('unmeasured')
+          setState(s.ts.length === 0 ? 'empty' : 'unmeasured')
           workerRef.current.postMessage({ type: 'clear' })
           return
         }
@@ -99,11 +107,15 @@ export default function SeriesPlot({
           const a = ex.offsets[i]
           const b = ex.offsets[i + 1]
           // Values are stored sorted ascending, so the median is a lookup.
-          // An interval with no values is a gap, not a zero: with only one
-          // reply there is no consecutive pair to compare.
+          // An interval with no values is a gap, not a zero.
           median[i] = ex.measured[i] === 1 && b > a ? ex.values[a + ((b - a) >> 1)] : NaN
         }
-        rowsRef.current = { ts: s.ts.slice(), median, span: inferSpan(s.ts, n) }
+        rowsRef.current = {
+          ts: s.ts.slice(),
+          median,
+          measured: ex.measured.slice(),
+          span: inferSpan(s.ts, n),
+        }
         // Measured now rather than when the effect started: at effect time the
         // element may not have been laid out, and a zero width would render an
         // empty plot that never recovers.
@@ -209,11 +221,19 @@ export default function SeriesPlot({
       }
       lo = idx
       const v = rows.median[lo]
-      setReadout(
-        `${fmtClock(rows.ts[lo])} · median ${
-          Number.isNaN(v) ? 'not measured' : name === 'server_processing' ? fmtUs(v) : fmtSigned(v)
-        }`,
-      )
+      // Three different things, and the graph used to call all of them "not
+      // measured": the peer could not report it, it could but this interval
+      // had nothing to difference (one reply, so no consecutive pair), and a
+      // real value.
+      let reading: string
+      if (!Number.isNaN(v)) {
+        reading = `median ${name === 'server_processing' ? fmtUs(v) : fmtSigned(v)}`
+      } else if (rows.measured[lo] === 1) {
+        reading = 'nothing to compare'
+      } else {
+        reading = 'not measured'
+      }
+      setReadout(`${fmtClock(rows.ts[lo])} · ${reading}`)
     }
     return subscribeCursor((t) => {
       cursorRef.current = t
@@ -247,11 +267,13 @@ export default function SeriesPlot({
       >
         <canvas ref={canvasRef} />
         <canvas ref={overlayRef} className="series-overlay" />
+        {state === 'empty' && <p className="series-note">No measurements in this window.</p>}
         {state === 'unmeasured' && (
           <p className="series-note">
-            Not measured in this window. The far end returned no timestamps to compute it from —
-            an <code>irtt server</code> started without them, or a probe type that has no such
-            measure.
+            Not measured. This session's timestamps do not support it — the far end stamps at the
+            midpoint or on one side only, or negotiated the monotonic clock away, and the figure
+            would mean something other than its heading. Check what the <code>irtt server</code>{' '}
+            was started with.
           </p>
         )}
         {state === 'error' && <p className="series-note">Could not load this series.</p>}
