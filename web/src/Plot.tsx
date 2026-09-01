@@ -69,8 +69,12 @@ const FLAGS: { bit: number; label: string; title: string }[] = [
   },
   {
     bit: 1 << 6,
-    label: 'send refused',
-    title: 'The local stack would not transmit these probes — no route, or a local firewall rule.',
+    label: 'not sent',
+    // Deliberately generic. The reason entries beside this one carry the
+    // detail, and they now cover cases this title used to exclude: a far end
+    // refusing the traffic, which arrives as a local error, and this prober's
+    // own deadline expiring, where nothing was asked of the target at all.
+    title: 'These probes never went out. The reason beside this says which — and whether the cause was here or at the far end.',
   },
 ]
 const FLAG_ICMP_ERROR = 1 << 4

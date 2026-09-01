@@ -539,6 +539,8 @@ const SEND_REASONS: Record<number, string> = {
   5: 'the session was refused',
   6: 'the session broke part-way',
   7: 'the session sent fewer probes than asked — this prober fell short, not the network',
+  8: 'the session got no reply — silence, which is not the same as refusal',
+  9: "this prober's own deadline expired before sending — nothing was asked of the target",
 }
 
 export function sendReasonName(code: number): string {
