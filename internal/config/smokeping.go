@@ -377,6 +377,23 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 		case strings.ContainsAny(host, " \t"):
 			warnAt(n.path, "host = %q looks like a multi-host overlay graph; not imported", host)
 			continue
+		case isDerivedIRTTMetric(probeTypeFor(moduleAt(probeAt[n.path], probeModule)), n.keys):
+			// SmokePing's IRTT probe graphs one figure per target — the round
+			// trip, or the send or receive jitter — chosen with `metric`. All of
+			// them come from the same session, so several such targets are
+			// several views of one measurement, not several measurements.
+			//
+			// Importing each as its own target opens a separate irtt session to
+			// the same server, and they collide: only one wins per interval and
+			// the rest record as send failures. That is what happened on the
+			// first real migration. smokeng keeps the whole round-trip
+			// distribution and shows the spread, so the derived views are
+			// already in the plot the plain target draws.
+			warnAt(n.path, "metric = %q is a derived view of the same irtt session as the "+
+				"plain target for this host; not imported — smokeng keeps the whole round-trip "+
+				"distribution, so its spread already shows the jitter",
+				strings.TrimSpace(n.keys["metric"]))
+			continue
 		default:
 			probe := probeAt[n.path]
 			module := probeModule[probe]
@@ -407,6 +424,30 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 // when it cannot tell. The match is by substring so a subclass named after its
 // module ("FPingLarge") still resolves. Order matters: https before http,
 // and dns/tcp/http before the icmp fallback.
+// moduleAt resolves a probe reference to the module it is built on, following
+// the subclass chain a Probes section defines; a name that is not defined there
+// is a built-in module referenced directly.
+func moduleAt(probe string, probeModule map[string]string) string {
+	if m := probeModule[probe]; m != "" {
+		return m
+	}
+	return probe
+}
+
+// isDerivedIRTTMetric reports whether this is an IRTT target that graphs a
+// figure derived from the same session as the plain one — SmokePing's `metric`
+// key, naming send_ipdv or recv_ipdv rather than the round trip. smokeng has no
+// use for these as separate targets: they would each open their own session to
+// the same server and collide, and the distribution it keeps already contains
+// what they show.
+func isDerivedIRTTMetric(ptype string, keys map[string]string) bool {
+	if ptype != "irtt" {
+		return false
+	}
+	m := strings.ToLower(strings.TrimSpace(keys["metric"]))
+	return m != "" && m != "rtt"
+}
+
 func probeTypeFor(module string) string {
 	m := strings.ToLower(module)
 	switch {

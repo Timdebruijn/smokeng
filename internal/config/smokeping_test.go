@@ -306,3 +306,50 @@ hmac = deadbeefcafe
 		t.Errorf("no warning that a key is needed; got %v", warnings)
 	}
 }
+
+// SmokePing's IRTT probe graphs one figure per target, chosen with `metric`,
+// all from the same session. Importing each as its own target opened a separate
+// irtt session to the same server; they collided, and only one won per interval
+// while the rest recorded as send failures. Found on a real migration.
+func TestSmokePingSkipsDerivedIRTTMetrics(t *testing.T) {
+	const cfg = `*** Probes ***
+
++ IRTT
+binary = /usr/bin/irtt
+
+*** Targets ***
+
+probe = IRTT
+
++ wag
+
+++ Rtt
+host = irtt.example.org
+
+++ SendJitter
+host = irtt.example.org
+metric = send_ipdv
+
+++ RecvJitter
+host = irtt.example.org
+metric = receive_ipdv
+`
+	f, warnings, err := ParseSmokePing([]byte(cfg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.Targets["wag/Rtt"]; !ok {
+		t.Errorf("the plain irtt target should be imported; got %v", keys(f.Targets))
+	}
+	for _, skipped := range []string{"wag/SendJitter", "wag/RecvJitter"} {
+		if _, ok := f.Targets[skipped]; ok {
+			t.Errorf("%s is a derived view of the same session and must not become its own target", skipped)
+		}
+	}
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{"send_ipdv", "receive_ipdv"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("no warning naming %q in:\n%s", want, joined)
+		}
+	}
+}
