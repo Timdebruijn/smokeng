@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/timdebruijn/smokeng/internal/store/enc"
 )
@@ -211,28 +212,51 @@ func (s *SQLite) PendingMeasurements(ctx context.Context, limit int) ([]Measurem
 // the round trip and nothing else, and only for remotely probed targets, which
 // is precisely the kind of difference nobody notices for months.
 //
-// The rows are read in one range query rather than one per measurement: the
-// caller's slice is ordered by ts, so its first and last bound the range, and
-// the exact key match below discards anything else that falls inside it.
+// The rows are read in one query rather than one per measurement, scoped to the
+// (target, agent) pairs the page actually holds so the primary key can serve
+// it. The exact key match below discards anything else inside those spans.
 func (s *SQLite) attachPendingSeries(ctx context.Context, ms []Measurement) error {
 	if len(ms) == 0 {
 		return nil
 	}
 	type key struct{ target, agent, ts int64 }
+	type span struct{ lo, hi int64 }
 	byKey := make(map[key]*Measurement, len(ms))
-	lo, hi := ms[0].TS, ms[0].TS
+	// One time span per (target, agent), not one for the whole page. The
+	// primary key leads with target_id and agent_id, so a bare ts range
+	// matches no index and scans the table — which is what migration v10 was
+	// written to stop happening on the outbox, for the same reason: an agent
+	// drains this every fifteen seconds, and a week offline leaves tens of
+	// thousands of rows to scan on each of them.
+	spans := make(map[[2]int64]span, 8)
 	for i := range ms {
 		byKey[key{ms[i].TargetID, ms[i].AgentID, ms[i].TS}] = &ms[i]
-		if ms[i].TS < lo {
-			lo = ms[i].TS
+		pair := [2]int64{ms[i].TargetID, ms[i].AgentID}
+		sp, seen := spans[pair]
+		if !seen {
+			spans[pair] = span{ms[i].TS, ms[i].TS}
+			continue
 		}
-		if ms[i].TS > hi {
-			hi = ms[i].TS
+		if ms[i].TS < sp.lo {
+			sp.lo = ms[i].TS
 		}
+		if ms[i].TS > sp.hi {
+			sp.hi = ms[i].TS
+		}
+		spans[pair] = sp
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT target_id, agent_id, ts, series, samples FROM measurement_series
-		WHERE ts >= ? AND ts <= ?`, lo, hi)
+	var where strings.Builder
+	args := make([]any, 0, len(spans)*4)
+	for pair, sp := range spans {
+		if where.Len() > 0 {
+			where.WriteString(" OR ")
+		}
+		where.WriteString("(target_id = ? AND agent_id = ? AND ts >= ? AND ts <= ?)")
+		args = append(args, pair[0], pair[1], sp.lo, sp.hi)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT target_id, agent_id, ts, series, samples FROM measurement_series WHERE "+
+			where.String(), args...)
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 
@@ -506,9 +507,10 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 // attachSeries fills in the extra per-packet distributions for an already-read
 // range, in one query rather than one per interval.
 func (s *SQLite) attachSeries(ctx context.Context, targetID, agentID, from, to int64, ms []Measurement) error {
-	if len(ms) == 0 {
-		return nil
-	}
+	// Deliberately not skipped when the range holds no measurements. An orphan
+	// arises from a measurement being deleted, so a window with nothing left in
+	// it is exactly where one would sit — returning early here pointed the
+	// detector away from its own most likely cause.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts, series, samples FROM measurement_series
 		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?`,
@@ -538,8 +540,17 @@ func (s *SQLite) attachSeries(ctx context.Context, targetID, agentID, from, to i
 		}
 		vals, err := enc.DecodeSigned(blob)
 		if err != nil {
-			return fmt.Errorf("store: measurement (%d,%d,%d) series %q: %w",
-				targetID, agentID, ts, name, err)
+			// Not fatal, unlike an orphan. These series are optional, and
+			// failing the read took the whole window with them — the latency
+			// graph, the loss rail, the quality flags and baseline capture all
+			// returned 500 because one byte of an optional jitter distribution
+			// was wrong, with no way to repair it short of sqlite3 against the
+			// production database. Absence is what an undecodable distribution
+			// honestly is, and it is already how the graph renders "not
+			// measured". Say so in the log and keep the interval readable.
+			log.Printf("store: measurement (%d,%d,%d) series %q will not decode (%v); "+
+				"serving the interval without it", targetID, agentID, ts, name, err)
+			continue
 		}
 		if m.Series == nil {
 			m.Series = make(map[string][]int32, 2)

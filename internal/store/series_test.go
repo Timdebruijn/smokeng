@@ -149,3 +149,76 @@ func TestPendingMeasurementsCarrySeries(t *testing.T) {
 		t.Errorf("%d series rows left in the outbox after submission", left)
 	}
 }
+
+// The orphan check is the one invariant this design rests on, and nothing
+// exercised it: replacing the error with a `continue` left the suite green.
+// A series row whose measurement is gone means retention deleted one and not
+// the other, and reading past it would serve a jitter distribution belonging
+// to an interval that no longer exists.
+func TestOrphanSeriesIsRefused(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	writeOne(t, s, Measurement{TargetID: 1, TS: 1000, Sent: 1, Received: 1,
+		Samples: []uint32{10}, Series: map[string][]int32{SeriesIPDVSend: {-1}}})
+	// Delete the measurement behind the store's back, as a torn prune would.
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM measurements WHERE ts = 1000"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.QueryRange(ctx, 1, 0, 0, 2000); err == nil {
+		t.Fatal("a series row with no measurement was read without complaint")
+	}
+	// And it is found even when nothing survives in the window, which is where
+	// an orphan actually sits.
+	if _, err := s.QueryRange(ctx, 1, 0, 900, 1100); err == nil {
+		t.Error("an orphan alone in its window went unnoticed")
+	}
+}
+
+// Series belong to the (target, agent) series that measured them. Dropping the
+// agent filter let one agent's jitter attach to another's measurement, and the
+// suite stayed green.
+func TestSeriesAreScopedToTheirAgent(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	writeOne(t, s, Measurement{TargetID: 1, AgentID: 1, TS: 1000, Sent: 1, Received: 1,
+		Samples: []uint32{10}, Series: map[string][]int32{SeriesIPDVSend: {-11}}})
+	writeOne(t, s, Measurement{TargetID: 1, AgentID: 2, TS: 1000, Sent: 1, Received: 1,
+		Samples: []uint32{20}, Series: map[string][]int32{SeriesIPDVSend: {-22}}})
+
+	for agent, want := range map[int64]int32{1: -11, 2: -22} {
+		got, err := s.QueryRange(ctx, 1, agent, 0, 2000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := got[0].Series[SeriesIPDVSend]
+		if len(v) != 1 || v[0] != want {
+			t.Errorf("agent %d read ipdv_send %v, want [%d]", agent, v, want)
+		}
+	}
+}
+
+// An undecodable optional series must not take the interval with it. Failing
+// the read returned 500 for the latency graph, the loss rail and baseline
+// capture because one byte of an optional distribution was wrong.
+func TestCorruptSeriesLeavesTheIntervalReadable(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	writeOne(t, s, Measurement{TargetID: 1, TS: 1000, Sent: 2, Received: 2,
+		Samples: []uint32{10, 20}, Series: map[string][]int32{SeriesIPDVSend: {-5, 5}}})
+	// A version byte no decoder knows.
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE measurement_series SET samples = ? WHERE series = ?",
+		[]byte{0x7f, 0x01}, SeriesIPDVSend); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.QueryRange(ctx, 1, 0, 0, 2000)
+	if err != nil {
+		t.Fatalf("one corrupt optional series made the whole window unreadable: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Samples) != 2 {
+		t.Fatalf("the round trip did not survive: %+v", got)
+	}
+	if _, ok := got[0].Series[SeriesIPDVSend]; ok {
+		t.Error("an undecodable series was served as if it had decoded")
+	}
+}
