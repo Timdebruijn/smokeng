@@ -310,6 +310,24 @@ ALTER TABLE alert_rules_new RENAME TO alert_rules;
 INSERT INTO alert_state SELECT * FROM alert_state_bak;
 DROP TABLE alert_state_bak;
 `,
+	// v18: captured reference distributions for golden-baseline shape rules. One
+	// per rule, replaced when recaptured, and gone with the rule. The samples are
+	// stored in the same encoding measurements use, and what they were taken from
+	// (the window, the series) is kept alongside so the UI can say what the
+	// reference actually is rather than presenting an anonymous curve.
+	`
+CREATE TABLE alert_baselines (
+  rule_id     INTEGER PRIMARY KEY REFERENCES alert_rules(id) ON DELETE CASCADE,
+  target_id   INTEGER NOT NULL,
+  agent_id    INTEGER NOT NULL,
+  from_ts     INTEGER NOT NULL,
+  to_ts       INTEGER NOT NULL,
+  intervals   INTEGER NOT NULL,
+  samples     BLOB NOT NULL,
+  captured_at INTEGER NOT NULL,
+  captured_by TEXT NOT NULL DEFAULT ''
+);
+`,
 }
 
 func (s *SQLite) migrate() error {

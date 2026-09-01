@@ -37,6 +37,12 @@ type AlertView interface {
 	ListSilences(ctx context.Context) ([]alert.Silence, error)
 	AddSilence(ctx context.Context, s alert.Silence) (alert.Silence, error)
 	RemoveSilence(ctx context.Context, id int64) (bool, error)
+	// Golden baselines: a captured reference distribution per shape rule, and
+	// the reference a shape rule is currently comparing against.
+	Baselines(ctx context.Context) ([]alert.Baselined, error)
+	CaptureBaseline(ctx context.Context, b alert.Baselined) error
+	ClearBaseline(ctx context.Context, ruleID int64) (bool, error)
+	ShapeReference(ruleID, targetID, agentID int64) (samples []uint32, kind string, ok bool)
 }
 
 // Store is everything the API persists through: the measurement store plus
@@ -188,6 +194,10 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	rt.handle(classScopedWrite, "DELETE /api/v1/alert-rules/{id}", s.handleDeleteAlertRule)
 	rt.handle(classScopedRead, "GET /api/v1/alerts", s.handleFiringAlerts)
 	rt.handle(classScopedWrite, "POST /api/v1/alerts/ack", s.handleAckAlert)
+	rt.handle(classScopedRead, "GET /api/v1/alert-baselines", s.handleListBaselines)
+	rt.handle(classScopedWrite, "POST /api/v1/alert-rules/{id}/baseline", s.handleCaptureBaseline)
+	rt.handle(classScopedWrite, "DELETE /api/v1/alert-rules/{id}/baseline", s.handleClearBaseline)
+	rt.handle(classScopedRead, "GET /api/v1/shape-reference", s.handleShapeReference)
 	rt.handle(classScopedRead, "GET /api/v1/silences", s.handleListSilences)
 	rt.handle(classScopedWrite, "POST /api/v1/silences", s.handleCreateSilence)
 	rt.handle(classScopedWrite, "DELETE /api/v1/silences/{id}", s.handleDeleteSilence)

@@ -1104,6 +1104,29 @@ a.button {
   margin-bottom: 12px;
 }
 
+.shape-overlay {
+  margin-top: 8px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: baseline;
+}
+
+.swatch.reference {
+  background: var(--dim);
+  opacity: 0.55;
+}
+
+.swatch.current {
+  background: var(--accent);
+  opacity: 0.55;
+}
+
 .avail-agent {
   margin-top: 12px;
 }

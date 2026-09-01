@@ -44,6 +44,8 @@ Or in the web UI under **Alerts**, as an admin.
 | `median` | milliseconds | The typical round-trip time got worse |
 | `p95` | milliseconds | The tail got worse, even if the median did not |
 | `spread` | milliseconds | p95 − p5: the distribution got *wider* |
+| `shape` | ms, or a z-score | The distribution *moved* — a shift or a growing tail |
+| `bimodality` | 0–1 | The distribution *split in two* — a load-balanced or flapping path |
 
 `spread` is the one SmokePing could never alert on, and it is the reason for keeping the
 whole distribution. A link whose median is unchanged but whose spread has tripled is
@@ -52,6 +54,60 @@ neither an average nor a p95 alone will tell you.
 
 A sensible starting set is loss above 20 %, median above whatever your baseline plus a
 margin is, and spread above roughly three times its usual value.
+
+## Alerting on the shape of the distribution
+
+Every metric above still reduces an interval to one number. `shape` and `bimodality` do
+not: they compare the *distribution*, which is the thing smokeng keeps and nothing else
+has. They are for the faults a threshold cannot express.
+
+**`shape`** measures how far the current distribution has moved from a baseline, as the
+Wasserstein (earth-mover) distance — the average distance the probability mass has to
+travel to turn one into the other. It is sensitive to the tail, so a bulk that stays at
+4 ms while a growing fraction reaches 40 ms registers as movement even though the median
+never budges.
+
+**`bimodality`** is Sarle's coefficient of the interval itself, from 0 to 1. Above about
+0.6 the samples have split into two clusters, which is the signature of load-balancing
+across two paths of unequal length, or of a failover that is flapping. The median sits
+uselessly between the two, so no threshold on it would ever fire.
+
+### Auto or tunable
+
+Each shape rule picks how strict it is:
+
+- **auto** self-calibrates. The distance is scored against the series' *own* recent
+  variability (a robust z-score: median and MAD, so one past spike does not inflate the
+  scale and mask the next). A jittery Wi-Fi link and a stable fibre have very different
+  normal wobbles, and the same absolute distance means different things on each — auto
+  handles that without a per-target threshold. It fires above z 4.
+- **tunable** compares the raw measure to a threshold you set: milliseconds of movement
+  for `shape`, or the coefficient itself for `bimodality`.
+
+### Rolling or golden baseline
+
+A `shape` rule compares against one of two things:
+
+- **rolling** — the target's own recent history. This catches change relative to whatever
+  the path has been doing lately, and needs no setup.
+- **golden** — a reference you capture once, from a window you choose: *this is what good
+  looks like*. A drift away from the commissioned state is what fires, however long ago
+  that was. Capture it from the rule list (**Capture reference**), which records the
+  distribution measured over that window, along with where it came from. **A golden rule
+  with no captured reference cannot fire, and says so** rather than quietly never
+  triggering.
+
+### Seeing what changed
+
+A z-score is a claim. When a `shape` rule fires, the Alerts page offers the evidence —
+the reference distribution and the current one drawn together — so you can see what moved
+rather than take the number on faith. It is the same commitment the graphs make.
+
+Shape rules are ordinary rules in every other respect: they inherit down the tree, take
+`for`/`clear_for` hysteresis, can be acknowledged and silenced, and deliver over the same
+webhook. They stay quiet while warming up after a restart, and when a flat history gives
+them no scale to judge by — a monitoring tool that cries wolf gets ignored, so these err
+towards saying nothing.
 
 ## Hysteresis, and why gaps reset it
 

@@ -108,6 +108,63 @@ export function deleteSilence(id: number): Promise<unknown> {
   return mutate(`/api/v1/silences/${id}`, 'DELETE')
 }
 
+/** A captured reference distribution for a golden-baseline shape rule. */
+export interface AlertBaseline {
+  rule_id: number
+  target_id: number
+  agent_id: number
+  from_ts: number
+  to_ts: number
+  intervals: number
+  samples: number
+  captured_at: number
+  captured_by: string
+}
+
+export async function fetchAlertBaselines(): Promise<AlertBaseline[]> {
+  const r = await fetch('/api/v1/alert-baselines', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`baselines: HTTP ${r.status}`)
+  return ((await r.json()) as { baselines: AlertBaseline[] }).baselines ?? []
+}
+
+/** Capture what a window measured as a shape rule's reference. */
+export function captureBaseline(
+  ruleId: number,
+  body: { target_id?: number; agent_id?: number; from?: number; to?: number },
+): Promise<unknown> {
+  return mutate(`/api/v1/alert-rules/${ruleId}/baseline`, 'POST', body)
+}
+
+export function clearBaseline(ruleId: number): Promise<unknown> {
+  return mutate(`/api/v1/alert-rules/${ruleId}/baseline`, 'DELETE')
+}
+
+/** The two distributions a fired shape alert is about, for the overlay. */
+export interface ShapeReference {
+  rule_id: number
+  target_id: number
+  agent_id: number
+  kind: 'golden' | 'rolling' | ''
+  available: boolean
+  reference: number[] | null
+  current: number[] | null
+}
+
+export async function fetchShapeReference(
+  ruleId: number,
+  targetId: number,
+  agentId: number,
+): Promise<ShapeReference> {
+  const p = new URLSearchParams({
+    rule_id: String(ruleId),
+    target_id: String(targetId),
+    agent_id: String(agentId),
+  })
+  const r = await fetch(`/api/v1/shape-reference?${p.toString()}`, { cache: 'no-store' })
+  if (!r.ok) throw new Error(`shape reference: HTTP ${r.status}`)
+  return (await r.json()) as ShapeReference
+}
+
 /** One outage in an availability report: a contiguous run of down intervals. */
 export interface DowntimeEpisode {
   start_ts: number

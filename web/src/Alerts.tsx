@@ -16,7 +16,12 @@ import {
   createSilence,
   deleteSilence,
   type Silence,
+  fetchAlertBaselines,
+  captureBaseline,
+  clearBaseline,
+  type AlertBaseline,
 } from './api'
+import ShapeOverlay from './ShapeOverlay'
 
 const METRICS: { value: AlertRule['metric']; label: string; unit: string }[] = [
   { value: 'loss', label: 'Packet loss', unit: '%' },
@@ -36,22 +41,25 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   const [delivering, setDelivering] = useState(true)
   const [targets, setTargets] = useState<Target[]>([])
   const [silences, setSilences] = useState<Silence[]>([])
+  const [baselines, setBaselines] = useState<AlertBaseline[]>([])
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
 
   const reload = useCallback(async () => {
     try {
-      const [r, f, t, s] = await Promise.all([
+      const [r, f, t, s, b] = await Promise.all([
         fetchAlertRules(),
         fetchFiringAlerts(),
         fetchTargets(),
         fetchSilences(),
+        fetchAlertBaselines(),
       ])
       setRules(r)
       setFiring(f.alerts ?? [])
       setDelivering(f.delivering)
       setTargets(t)
       setSilences(s)
+      setBaselines(b)
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -184,6 +192,27 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                   </tr>
                 )
               })}
+              {/* The evidence behind a fired shape alert, on its own row: a
+                  z-score is a claim, the two distributions are the thing
+                  itself. */}
+              {firing
+                .filter((a) => a.metric === 'shape')
+                .map((a) => (
+                  <tr key={`ov-${a.target}-${a.rule}`}>
+                    <td colSpan={5}>
+                      <details>
+                        <summary className="hint small">
+                          What changed in <code>{a.target}</code>: reference vs current
+                        </summary>
+                        <ShapeOverlay
+                          ruleId={a.rule_id}
+                          targetId={a.target_id}
+                          agentId={a.agent_id}
+                        />
+                      </details>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         )}
@@ -214,7 +243,10 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                   <td>
                     <code>{pathOf(r.target_id)}</code>
                   </td>
-                  <td>{r.describes}</td>
+                  <td>
+                    {r.describes}
+                    {r.baseline === 'golden' && <GoldenNote rule={r} baselines={baselines} />}
+                  </td>
                   <td className="dim">clears after {r.clear_intervals}</td>
                   {isAdmin && (
                     <td>
@@ -224,6 +256,26 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                       >
                         {r.enabled ? 'Disable' : 'Enable'}
                       </button>
+                      {r.baseline === 'golden' && (
+                        <>
+                          <button
+                            className="pill"
+                            title="Capture the last hour as this rule's reference — what the path looks like when it is healthy"
+                            onClick={() => void run(() => captureBaseline(r.id, {}))}
+                          >
+                            Capture reference
+                          </button>
+                          {baselines.some((b) => b.rule_id === r.id) && (
+                            <button
+                              className="pill"
+                              title="Drop the captured reference; the rule then has nothing to compare against and stays quiet"
+                              onClick={() => void run(() => clearBaseline(r.id))}
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </>
+                      )}
                       <button className="pill danger" onClick={() => void run(() => deleteAlertRule(r.id))}>
                         Delete
                       </button>
@@ -262,6 +314,31 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
 
       <AlertHistory />
     </>
+  )
+}
+
+/**
+ * What a golden-baseline rule is actually comparing against. A rule with no
+ * captured reference cannot fire, and saying so plainly is better than leaving
+ * an operator to wonder why a rule they created never triggers.
+ */
+function GoldenNote({ rule, baselines }: { rule: AlertRule; baselines: AlertBaseline[] }) {
+  const b = baselines.find((x) => x.rule_id === rule.id)
+  if (!b) {
+    return (
+      <span className="hint small warn-line">
+        {' '}
+        · no reference captured yet, so this rule cannot fire
+      </span>
+    )
+  }
+  return (
+    <span className="hint small">
+      {' '}
+      · reference from {new Date(b.from_ts * 1000).toLocaleString()} ({b.intervals} intervals,{' '}
+      {b.samples} samples
+      {b.captured_by ? `, by ${b.captured_by}` : ''})
+    </span>
   )
 }
 
@@ -603,6 +680,7 @@ function RuleForm({
   const [forIntervals, setForIntervals] = useState('3')
   const [clearIntervals, setClearIntervals] = useState('3')
   const [mode, setMode] = useState<'auto' | 'tunable'>('auto')
+  const [baseline, setBaseline] = useState<'rolling' | 'golden'>('rolling')
   const shape = isShapeMetric(metric)
   const unit = metric === 'bimodality' ? '' : 'ms'
 
@@ -622,7 +700,7 @@ function RuleForm({
             metric,
             op: '>',
             mode,
-            baseline: metric === 'shape' ? 'rolling' : '',
+            baseline: metric === 'shape' ? baseline : '',
             threshold: auto
               ? metric === 'bimodality'
                 ? 0.6
@@ -704,10 +782,26 @@ function RuleForm({
           )}
         </span>
       </label>
+      {metric === 'shape' && (
+        <label className="field">
+          <span>Compared against</span>
+          <span className="inline">
+            <select
+              value={baseline}
+              onChange={(e) => setBaseline(e.target.value as 'rolling' | 'golden')}
+            >
+              <option value="rolling">its own recent history (rolling)</option>
+              <option value="golden">a captured reference (golden)</option>
+            </select>
+          </span>
+        </label>
+      )}
       {shape && (
         <p className="hint small">
           {metric === 'shape'
-            ? 'Fires when the distribution shifts from its recent history (Wasserstein distance). Auto scores the shift against the series’ own recent variability — no threshold to tune.'
+            ? baseline === 'golden'
+              ? 'Fires when the distribution drifts from a reference you capture once — "this is what good looks like". Capture it from the rule list after creating the rule; until then the rule has nothing to compare against and stays quiet.'
+              : 'Fires when the distribution shifts from its recent history (Wasserstein distance). Auto scores the shift against the series’ own recent variability — no threshold to tune.'
             : 'Fires when the distribution splits into two clusters — a load-balanced or flapping path. Auto uses the 0.6 bimodality mark.'}
         </p>
       )}

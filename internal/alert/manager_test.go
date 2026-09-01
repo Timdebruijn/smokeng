@@ -316,6 +316,85 @@ func TestShapeRuleFiresOnShift(t *testing.T) {
 	}
 }
 
+// A golden-baseline rule compares against a captured reference rather than
+// recent history: with no capture it cannot fire at all, and once captured, a
+// drift away from it does.
+func TestGoldenBaselineNeedsACaptureAndThenFires(t *testing.T) {
+	ctx := context.Background()
+	st, groupID, leafID := setup(t)
+
+	cap := &capture{}
+	srv := httptest.NewServer(cap.handler())
+	defer srv.Close()
+
+	rule := alert.Rule{
+		TargetID: groupID, Name: "drift from commissioning", Metric: alert.MetricShape,
+		Op: alert.OpGreater, Threshold: 10, For: 2, ClearFor: 2, Enabled: true,
+		Mode: alert.ModeTunable, Baseline: alert.BaselineGolden,
+	}
+	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	m := alert.NewManager(st, &alert.Webhook{URL: srv.URL})
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	mk := func(step, rttUs int) alert.Input {
+		s := make([]uint32, 20)
+		for i := range s {
+			s[i] = uint32(rttUs)
+		}
+		return alert.Input{
+			TargetID: leafID, AgentID: store.LocalAgentID,
+			TS: int64(1_756_400_000 + step*60), Sent: 20, Received: 20,
+			Samples: s, LossTrusted: true, RTTTrusted: true,
+		}
+	}
+
+	// No reference captured: even a wild swing cannot fire, because there is
+	// nothing to compare against and inventing one would be worse.
+	step := 0
+	for ; step < 8; step++ {
+		m.Observe(ctx, []alert.Input{mk(step, 90000)})
+	}
+	if n := len(cap.all()); n != 0 {
+		t.Fatalf("a golden rule with no reference fired %d times", n)
+	}
+
+	// Capture "good" as 5ms, then drift far away from it.
+	good := make([]uint32, 40)
+	for i := range good {
+		good[i] = 5000
+	}
+	if err := m.CaptureBaseline(ctx, alert.Baselined{
+		RuleID: rule.ID, TargetID: leafID, AgentID: store.LocalAgentID,
+		FromTS: 1, ToTS: 2, Intervals: 2, Samples: good, CapturedAt: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for ; step < 12; step++ {
+		m.Observe(ctx, []alert.Input{mk(step, 90000)})
+	}
+	if len(cap.all()) == 0 {
+		t.Fatal("golden rule did not fire on a drift from its captured reference")
+	}
+
+	// The reference is what the UI overlays, and it is the captured one.
+	ref, kind, ok := m.ShapeReference(rule.ID, leafID, store.LocalAgentID)
+	if !ok || kind != "golden" || len(ref) != len(good) {
+		t.Fatalf("ShapeReference = (%d samples, %q, %v), want the captured golden reference", len(ref), kind, ok)
+	}
+
+	// Clearing it takes the rule back to having nothing to compare against.
+	if ok, err := m.ClearBaseline(ctx, rule.ID); err != nil || !ok {
+		t.Fatalf("ClearBaseline = %v, %v", ok, err)
+	}
+	if _, _, ok := m.ShapeReference(rule.ID, leafID, store.LocalAgentID); ok {
+		t.Fatal("reference still available after clearing it")
+	}
+}
+
 // A silence must not overreach: one scoped to an unrelated target, and one whose
 // window has passed, both leave the leaf's alert to deliver normally.
 func TestSilenceScopeAndWindowDoNotOverreach(t *testing.T) {

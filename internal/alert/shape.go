@@ -7,6 +7,23 @@ import (
 	"github.com/timdebruijn/smokeng/internal/shape"
 )
 
+// Baselined is a captured reference distribution for a golden-baseline shape
+// rule: the known-good shape an operator recorded, so a drift away from how a
+// path was commissioned is what fires, rather than a drift from whatever it has
+// been doing lately. What it was taken from is kept with it — an anonymous curve
+// nobody can trace back is not evidence of anything.
+type Baselined struct {
+	RuleID     int64    `json:"rule_id"`
+	TargetID   int64    `json:"target_id"`
+	AgentID    int64    `json:"agent_id"`
+	FromTS     int64    `json:"from_ts"`
+	ToTS       int64    `json:"to_ts"`
+	Intervals  int      `json:"intervals"`
+	Samples    []uint32 `json:"-"`
+	CapturedAt int64    `json:"captured_at"`
+	CapturedBy string   `json:"captured_by"`
+}
+
 // How much history a shape rule keeps, and how much it needs before it will fire.
 // These warm-up periods mean a shape rule is quiet for the first stretch after a
 // (re)start rather than firing on a baseline it has not seen enough of — a cold

@@ -24,6 +24,10 @@ type Store interface {
 	ListSilences(ctx context.Context) ([]Silence, error)
 	CreateSilence(ctx context.Context, s *Silence) error
 	DeleteSilence(ctx context.Context, id int64) (bool, error)
+	// Captured reference distributions for golden-baseline shape rules.
+	ListAlertBaselines(ctx context.Context) ([]Baselined, error)
+	SaveAlertBaseline(ctx context.Context, b *Baselined) error
+	DeleteAlertBaseline(ctx context.Context, ruleID int64) (bool, error)
 }
 
 // EventLog records transitions. It is optional so a store that cannot keep
@@ -70,6 +74,10 @@ type Manager struct {
 	// golden holds captured reference distributions for golden-baseline shape
 	// rules, keyed by rule id. Loaded in Reload from the store.
 	golden map[int64][]uint32
+	// goldenMeta is what each reference was taken from, so the API can say which
+	// window and series a golden baseline came from rather than showing an
+	// anonymous curve.
+	goldenMeta map[int64]Baselined
 }
 
 // NewManager evaluates rules and, when notifier is non-nil, delivers the
@@ -86,6 +94,7 @@ func NewManager(st Store, notifier Notifier) *Manager {
 		ancestors:  map[int64]map[int64]bool{},
 		shapes:     map[stateKey]*shapeState{},
 		golden:     map[int64][]uint32{},
+		goldenMeta: map[int64]Baselined{},
 	}
 }
 
@@ -118,6 +127,16 @@ func (m *Manager) Reload(ctx context.Context) error {
 	silences, err := m.st.ListSilences(ctx)
 	if err != nil {
 		return err
+	}
+	baselines, err := m.st.ListAlertBaselines(ctx)
+	if err != nil {
+		return err
+	}
+	golden := map[int64][]uint32{}
+	goldenMeta := map[int64]Baselined{}
+	for _, b := range baselines {
+		golden[b.RuleID] = b.Samples
+		goldenMeta[b.RuleID] = b
 	}
 
 	// Ancestor sets, so a silence scoped to a group can be matched against any
@@ -213,6 +232,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	}
 	m.byTarget, m.rules, m.states, m.agentNames = resolved, byID, kept, agentNames
 	m.ancestors = ancestors
+	m.golden, m.goldenMeta = golden, goldenMeta
 	// Silences are owned by the API between reloads (AddSilence/RemoveSilence
 	// keep the in-memory copy current the moment a change is made), so this
 	// wholesale refresh is only for a restart or a change made straight to the
@@ -485,6 +505,75 @@ func (m *Manager) RemoveSilence(ctx context.Context, id int64) (bool, error) {
 	m.silences = slices.DeleteFunc(m.silences, func(s Silence) bool { return s.ID == id })
 	m.mu.Unlock()
 	return true, nil
+}
+
+// CaptureBaseline stores samples as a golden-baseline rule's reference and
+// applies it at once. The caller supplies the samples and the window they came
+// from; what this owns is making the rule use them without waiting for a reload.
+func (m *Manager) CaptureBaseline(ctx context.Context, b Baselined) error {
+	if len(b.Samples) == 0 {
+		return fmt.Errorf("alert: a baseline needs samples: that window has no measurements to capture")
+	}
+	if err := m.st.SaveAlertBaseline(ctx, &b); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.golden[b.RuleID] = b.Samples
+	m.goldenMeta[b.RuleID] = b
+	m.mu.Unlock()
+	return nil
+}
+
+// ClearBaseline removes a rule's captured reference, reporting whether one
+// existed. A golden rule without a reference simply does not fire — it has
+// nothing to compare against, and inventing one would be worse.
+func (m *Manager) ClearBaseline(ctx context.Context, ruleID int64) (bool, error) {
+	ok, err := m.st.DeleteAlertBaseline(ctx, ruleID)
+	if err != nil || !ok {
+		return ok, err
+	}
+	m.mu.Lock()
+	delete(m.golden, ruleID)
+	delete(m.goldenMeta, ruleID)
+	m.mu.Unlock()
+	return true, nil
+}
+
+// Baselines reports the captured references, for the API to show what each
+// golden rule is comparing against.
+func (m *Manager) Baselines(context.Context) ([]Baselined, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Baselined, 0, len(m.goldenMeta))
+	for _, b := range m.goldenMeta {
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+// ShapeReference returns the distribution a shape rule is currently comparing
+// against for one series: the captured reference for a golden rule, or the
+// pooled recent history for a rolling one. It is what the UI overlays against
+// the current interval, so a fired shape alert can be seen rather than taken on
+// the word of a z-score. ok is false when there is nothing to compare against
+// yet — a golden rule with no capture, or a rolling one still warming up.
+func (m *Manager) ShapeReference(ruleID, targetID, agentID int64) (samples []uint32, kind string, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, exists := m.rules[ruleID]
+	if !exists || r.Metric != MetricShape {
+		return nil, "", false
+	}
+	if r.Baseline == BaselineGolden {
+		s := m.golden[ruleID]
+		return s, "golden", len(s) > 0
+	}
+	ss := m.shapes[stateKey{ruleID, targetID, agentID}]
+	if ss == nil {
+		return nil, "rolling", false
+	}
+	s := ss.pooled()
+	return s, "rolling", len(s) > 0
 }
 
 // ListSilences returns every silence, past and future, for the API to show.
