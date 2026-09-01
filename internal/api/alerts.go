@@ -46,6 +46,8 @@ func ruleJSON(r *alert.Rule) map[string]any {
 		"for_intervals":   r.For,
 		"clear_intervals": r.ClearFor,
 		"enabled":         r.Enabled,
+		"mode":            string(r.Mode),
+		"baseline":        string(r.Baseline),
 		"describes":       r.Describe(),
 	}
 }
@@ -62,6 +64,8 @@ type rulePayload struct {
 	For       *int     `json:"for_intervals"`
 	ClearFor  *int     `json:"clear_intervals"`
 	Enabled   *bool    `json:"enabled"`
+	Mode      *string  `json:"mode"`
+	Baseline  *string  `json:"baseline"`
 }
 
 func (p *rulePayload) applyTo(r *alert.Rule) {
@@ -88,6 +92,12 @@ func (p *rulePayload) applyTo(r *alert.Rule) {
 	}
 	if p.Enabled != nil {
 		r.Enabled = *p.Enabled
+	}
+	if p.Mode != nil {
+		r.Mode = alert.Mode(*p.Mode)
+	}
+	if p.Baseline != nil {
+		r.Baseline = alert.Baseline(*p.Baseline)
 	}
 }
 

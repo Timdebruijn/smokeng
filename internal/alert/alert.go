@@ -48,7 +48,42 @@ const (
 	// distribution, which is what the smoke draws and what a single-value
 	// tool cannot measure.
 	MetricSpread Metric = "spread"
+	// MetricShape fires on a change in the shape of the distribution rather than
+	// a level: the Wasserstein distance from a baseline (recent history, or a
+	// captured reference) crossing a bound. It catches a path that shifts or
+	// whose tail grows while no single percentile trips. Its value is a distance
+	// in ms (tunable mode) or a robust z-score of that distance (auto mode).
+	MetricShape Metric = "shape"
+	// MetricBimodality fires when the distribution splits into two clusters — the
+	// signature of load-balancing across unequal paths, or a flapping failover.
+	// Its value is Sarle's bimodality coefficient of the current interval, 0..1;
+	// no baseline is involved, as bimodality is a property of the interval alone.
+	MetricBimodality Metric = "bimodality"
 )
+
+// Mode is how a shape rule decides what counts as anomalous. Auto self-calibrates
+// against the series' own recent variability and needs no threshold from the
+// operator; tunable compares the raw measure against a threshold they set.
+type Mode string
+
+const (
+	ModeAuto    Mode = "auto"
+	ModeTunable Mode = "tunable"
+)
+
+// Baseline is what a shape rule compares the current interval against. Rolling
+// is the target's own recent history; golden is a reference captured once, e.g.
+// at commissioning, so a drift from the known-good state is what fires.
+type Baseline string
+
+const (
+	BaselineRolling Baseline = "rolling"
+	BaselineGolden  Baseline = "golden"
+)
+
+// IsShape reports whether a metric is one of the distribution-shape detectors,
+// which the manager computes from history rather than from one interval.
+func (m Metric) IsShape() bool { return m == MetricShape || m == MetricBimodality }
 
 // Op is the comparison a rule applies.
 type Op string
@@ -75,6 +110,10 @@ type Rule struct {
 	For      int
 	ClearFor int
 	Enabled  bool
+	// Mode and Baseline apply only to shape metrics; they are empty for the
+	// scalar ones. Mode is auto or tunable; Baseline is rolling or golden.
+	Mode     Mode
+	Baseline Baseline
 }
 
 // Validate reports whether the rule is usable. Rules come from operators, so
@@ -82,8 +121,26 @@ type Rule struct {
 func (r *Rule) Validate() error {
 	switch r.Metric {
 	case MetricLoss, MetricMedian, MetricP95, MetricSpread:
+	case MetricShape, MetricBimodality:
+		// A shape rule fires on rising anomaly, never on "less than": a
+		// distribution that is more like its baseline is not a fault.
+		if r.Op != OpGreater {
+			return fmt.Errorf("alert: a %s rule compares with > (rising anomaly), not %q", r.Metric, r.Op)
+		}
+		switch r.Mode {
+		case ModeAuto, ModeTunable:
+		default:
+			return fmt.Errorf("alert: %s mode must be auto or tunable, got %q", r.Metric, r.Mode)
+		}
+		if r.Metric == MetricShape {
+			switch r.Baseline {
+			case BaselineRolling, BaselineGolden:
+			default:
+				return fmt.Errorf("alert: shape baseline must be rolling or golden, got %q", r.Baseline)
+			}
+		}
 	default:
-		return fmt.Errorf("alert: unknown metric %q (want loss, median, p95 or spread)", r.Metric)
+		return fmt.Errorf("alert: unknown metric %q", r.Metric)
 	}
 	if r.Op != OpGreater && r.Op != OpLess {
 		return fmt.Errorf("alert: unknown comparison %q (want > or <)", r.Op)
@@ -197,19 +254,28 @@ func trustworthy(m *Input, metric Metric) bool {
 // has a gap: consecutive-interval counting means nothing across missing data,
 // so a gap resets the streak rather than silently bridging it.
 func Evaluate(r *Rule, st *State, m *Input, intervalS int) Transition {
+	value, ok := Value(m, r.Metric)
+	return EvaluateValue(r, st, value, ok, trustworthy(m, r.Metric), m.TS, intervalS)
+}
+
+// EvaluateValue is Evaluate with the metric value supplied rather than read from
+// the measurement. It exists for the shape metrics, whose value the manager
+// computes from history — a baseline the single Input does not carry — while the
+// hysteresis, gap handling and state transitions stay identical to every other
+// rule, so shape rules inherit For/ClearFor, acknowledge and delivery unchanged.
+func EvaluateValue(r *Rule, st *State, value float64, ok, trusted bool, ts int64, intervalS int) Transition {
 	if !r.Enabled {
 		return NoChange
 	}
 	// A gap, or an untrustworthy measurement, breaks continuity. Neither
 	// counts towards firing or clearing.
-	gap := st.LastTS != 0 && m.TS-st.LastTS > int64(2*intervalS)
-	value, ok := Value(m, r.Metric)
-	if gap || !ok || !trustworthy(m, r.Metric) {
+	gap := st.LastTS != 0 && ts-st.LastTS > int64(2*intervalS)
+	if gap || !ok || !trusted {
 		st.Streak = 0
-		st.LastTS = m.TS
+		st.LastTS = ts
 		return NoChange
 	}
-	st.LastTS = m.TS
+	st.LastTS = ts
 	st.Value = value
 
 	matches := value > r.Threshold
@@ -227,7 +293,7 @@ func Evaluate(r *Rule, st *State, m *Input, intervalS int) Transition {
 
 	if !st.Firing && st.Streak >= r.For {
 		st.Firing = true
-		st.Since = m.TS
+		st.Since = ts
 		st.Streak = 0
 		return Fired
 	}
@@ -246,6 +312,17 @@ func Evaluate(r *Rule, st *State, m *Input, intervalS int) Transition {
 
 // Describe renders the rule's condition the way an operator wrote it.
 func (r *Rule) Describe() string {
+	switch r.Metric {
+	case MetricShape:
+		if r.Mode == ModeAuto {
+			return fmt.Sprintf("shape shift (%s baseline) beyond z %g for %d intervals",
+				r.Baseline, r.Threshold, r.For)
+		}
+		return fmt.Sprintf("shape shift (%s baseline) > %g ms for %d intervals",
+			r.Baseline, r.Threshold, r.For)
+	case MetricBimodality:
+		return fmt.Sprintf("bimodality > %g for %d intervals", r.Threshold, r.For)
+	}
 	unit := "ms"
 	if r.Metric == MetricLoss {
 		unit = "%"

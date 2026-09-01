@@ -29,12 +29,16 @@ export interface AlertRule {
   id: number
   target_id: number
   name: string
-  metric: 'loss' | 'median' | 'p95' | 'spread'
+  metric: 'loss' | 'median' | 'p95' | 'spread' | 'shape' | 'bimodality'
   op: '>' | '<'
   threshold: number
   for_intervals: number
   clear_intervals: number
   enabled: boolean
+  /** Shape metrics only: 'auto' self-calibrates, 'tunable' uses the threshold. */
+  mode?: 'auto' | 'tunable' | ''
+  /** Shape metric only: 'rolling' recent history, or 'golden' captured reference. */
+  baseline?: 'rolling' | 'golden' | ''
   describes: string
 }
 

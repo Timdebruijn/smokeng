@@ -23,7 +23,11 @@ const METRICS: { value: AlertRule['metric']; label: string; unit: string }[] = [
   { value: 'median', label: 'Median RTT', unit: 'ms' },
   { value: 'p95', label: 'p95 RTT', unit: 'ms' },
   { value: 'spread', label: 'Spread (p95 − p5)', unit: 'ms' },
+  { value: 'shape', label: 'Shape shift', unit: 'ms' },
+  { value: 'bimodality', label: 'Bimodality', unit: '' },
 ]
+
+const isShapeMetric = (m: AlertRule['metric']) => m === 'shape' || m === 'bimodality'
 const REFRESH_MS = 15_000
 
 export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
@@ -598,13 +602,37 @@ function RuleForm({
   const [threshold, setThreshold] = useState('20')
   const [forIntervals, setForIntervals] = useState('3')
   const [clearIntervals, setClearIntervals] = useState('3')
-  const unit = METRICS.find((m) => m.value === metric)?.unit ?? ''
+  const [mode, setMode] = useState<'auto' | 'tunable'>('auto')
+  const shape = isShapeMetric(metric)
+  const unit = metric === 'bimodality' ? '' : 'ms'
 
   return (
     <form
       className="card rule-form"
       onSubmit={(e) => {
         e.preventDefault()
+        if (shape) {
+          // A shape rule always fires on rising anomaly. In auto mode the
+          // threshold is a built-in cutoff the operator does not set: a z-score
+          // of 4 for a shift, the 0.6 bimodality mark for two clusters.
+          const auto = mode === 'auto'
+          onSubmit({
+            name,
+            target_id: targetId,
+            metric,
+            op: '>',
+            mode,
+            baseline: metric === 'shape' ? 'rolling' : '',
+            threshold: auto
+              ? metric === 'bimodality'
+                ? 0.6
+                : 4
+              : Number(threshold),
+            for_intervals: Number(forIntervals),
+            clear_intervals: Number(clearIntervals),
+          })
+          return
+        }
         onSubmit({
           name,
           target_id: targetId,
@@ -640,19 +668,49 @@ function RuleForm({
               </option>
             ))}
           </select>
-          <select value={op} onChange={(e) => setOp(e.target.value as AlertRule['op'])}>
-            <option value=">">is above</option>
-            <option value="<">is below</option>
-          </select>
-          <input
-            value={threshold}
-            size={5}
-            onChange={(e) => setThreshold(e.target.value)}
-            required
-          />
-          <span className="unit">{unit}</span>
+          {shape ? (
+            <>
+              <select value={mode} onChange={(e) => setMode(e.target.value as 'auto' | 'tunable')}>
+                <option value="auto">auto (self-calibrated)</option>
+                <option value="tunable">tunable</option>
+              </select>
+              {mode === 'tunable' && (
+                <>
+                  <span className="unit">&gt;</span>
+                  <input
+                    value={threshold}
+                    size={5}
+                    onChange={(e) => setThreshold(e.target.value)}
+                    required
+                  />
+                  <span className="unit">{unit}</span>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <select value={op} onChange={(e) => setOp(e.target.value as AlertRule['op'])}>
+                <option value=">">is above</option>
+                <option value="<">is below</option>
+              </select>
+              <input
+                value={threshold}
+                size={5}
+                onChange={(e) => setThreshold(e.target.value)}
+                required
+              />
+              <span className="unit">{unit}</span>
+            </>
+          )}
         </span>
       </label>
+      {shape && (
+        <p className="hint small">
+          {metric === 'shape'
+            ? 'Fires when the distribution shifts from its recent history (Wasserstein distance). Auto scores the shift against the series’ own recent variability — no threshold to tune.'
+            : 'Fires when the distribution splits into two clusters — a load-balanced or flapping path. Auto uses the 0.6 bimodality mark.'}
+        </p>
+      )}
       <label className="field">
         <span>For</span>
         <span className="inline">

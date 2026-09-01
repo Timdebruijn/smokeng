@@ -277,6 +277,39 @@ CREATE TABLE silences (
 );
 CREATE INDEX silences_window ON silences (ends_at);
 `,
+	// v17: distribution-shape alert metrics. The metric CHECK has to widen to
+	// admit 'shape' and 'bimodality', and two columns (mode, baseline) join the
+	// rule — both need rebuilding alert_rules, which alert_state references by a
+	// foreign key. Rather than toggle foreign_keys (a no-op inside this
+	// transaction), the live alert_state is set aside, the rebuild runs with
+	// nothing referencing the old table, and the state is restored against the
+	// new one, whose ids are unchanged. Firing and acknowledgement state survives.
+	`
+CREATE TABLE alert_state_bak AS SELECT * FROM alert_state;
+DELETE FROM alert_state;
+CREATE TABLE alert_rules_new (
+  id              INTEGER PRIMARY KEY,
+  target_id       INTEGER NOT NULL REFERENCES targets(id),
+  name            TEXT NOT NULL,
+  metric          TEXT NOT NULL CHECK (metric IN ('loss','median','p95','spread','shape','bimodality')),
+  op              TEXT NOT NULL CHECK (op IN ('>','<')),
+  threshold       REAL NOT NULL,
+  for_intervals   INTEGER NOT NULL DEFAULT 3,
+  clear_intervals INTEGER NOT NULL DEFAULT 3,
+  enabled         INTEGER NOT NULL DEFAULT 1,
+  mode            TEXT NOT NULL DEFAULT '',
+  baseline        TEXT NOT NULL DEFAULT '',
+  UNIQUE (target_id, name)
+);
+INSERT INTO alert_rules_new
+  (id, target_id, name, metric, op, threshold, for_intervals, clear_intervals, enabled)
+  SELECT id, target_id, name, metric, op, threshold, for_intervals, clear_intervals, enabled
+  FROM alert_rules;
+DROP TABLE alert_rules;
+ALTER TABLE alert_rules_new RENAME TO alert_rules;
+INSERT INTO alert_state SELECT * FROM alert_state_bak;
+DROP TABLE alert_state_bak;
+`,
 }
 
 func (s *SQLite) migrate() error {

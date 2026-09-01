@@ -62,6 +62,14 @@ type Manager struct {
 	// included, so a silence scoped to a group can be matched against a leaf
 	// under it without walking the tree on every alert.
 	ancestors map[int64]map[int64]bool
+	// shapes is the per-series memory the distribution-shape metrics need — a
+	// rolling baseline and the divergence history they calibrate against. It is
+	// not persisted: a restart re-warms it, which is honest, since a baseline
+	// smokeng has not observed since restart is not one it can judge against.
+	shapes map[stateKey]*shapeState
+	// golden holds captured reference distributions for golden-baseline shape
+	// rules, keyed by rule id. Loaded in Reload from the store.
+	golden map[int64][]uint32
 }
 
 // NewManager evaluates rules and, when notifier is non-nil, delivers the
@@ -76,6 +84,8 @@ func NewManager(st Store, notifier Notifier) *Manager {
 		rules:      map[int64]*Rule{},
 		agentNames: map[int64]string{},
 		ancestors:  map[int64]map[int64]bool{},
+		shapes:     map[stateKey]*shapeState{},
+		golden:     map[int64][]uint32{},
 	}
 }
 
@@ -194,6 +204,13 @@ func (m *Manager) Reload(ctx context.Context) error {
 			kept[key] = live
 		}
 	}
+	// Drop the shape memory of rules that no longer exist, so it does not grow
+	// without bound as rules come and go.
+	for key := range m.shapes {
+		if _, ok := byID[key.ruleID]; !ok {
+			delete(m.shapes, key)
+		}
+	}
 	m.byTarget, m.rules, m.states, m.agentNames = resolved, byID, kept, agentNames
 	m.ancestors = ancestors
 	// Silences are owned by the API between reloads (AddSilence/RemoveSilence
@@ -228,7 +245,22 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 				st = &State{RuleID: r.ID, TargetID: meas.TargetID, AgentID: meas.AgentID}
 				m.states[key] = st
 			}
-			switch Evaluate(r, st, meas, app.intervalS) {
+			var t Transition
+			if r.Metric.IsShape() {
+				// Shape metrics are computed from history, not from one interval:
+				// the manager owns the baseline and divergence buffers and feeds
+				// the value into the same hysteresis every other rule uses.
+				ss := m.shapes[key]
+				if ss == nil {
+					ss = &shapeState{}
+					m.shapes[key] = ss
+				}
+				value, ok := ss.value(r, meas, m.golden[r.ID])
+				t = EvaluateValue(r, st, value, ok, meas.RTTTrusted, meas.TS, app.intervalS)
+			} else {
+				t = Evaluate(r, st, meas, app.intervalS)
+			}
+			switch t {
 			case Fired:
 				fired = append(fired, m.alertLocked(r, st, app, true))
 			case Resolved:

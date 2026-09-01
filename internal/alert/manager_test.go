@@ -259,6 +259,63 @@ func TestSilenceSuppressesDeliveryNotTheFact(t *testing.T) {
 	}
 }
 
+// A shape rule fires when the distribution shifts away from its rolling
+// baseline, and stays quiet while the series is stable — the whole point being
+// to catch a change no single percentile threshold would.
+func TestShapeRuleFiresOnShift(t *testing.T) {
+	ctx := context.Background()
+	st, groupID, leafID := setup(t)
+
+	cap := &capture{}
+	srv := httptest.NewServer(cap.handler())
+	defer srv.Close()
+
+	rule := alert.Rule{
+		TargetID: groupID, Name: "shape shift", Metric: alert.MetricShape,
+		Op: alert.OpGreater, Threshold: 10, For: 2, ClearFor: 2, Enabled: true,
+		Mode: alert.ModeTunable, Baseline: alert.BaselineRolling,
+	}
+	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	m := alert.NewManager(st, &alert.Webhook{URL: srv.URL})
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	mk := func(step, rttUs int) alert.Input {
+		s := make([]uint32, 20)
+		for i := range s {
+			s[i] = uint32(rttUs)
+		}
+		return alert.Input{
+			TargetID: leafID, AgentID: store.LocalAgentID,
+			TS: int64(1_756_400_000 + step*60), Sent: 20, Received: 20,
+			Samples: s, LossTrusted: true, RTTTrusted: true,
+		}
+	}
+
+	// Warm up and then hold steady: no shift, nothing fires.
+	step := 0
+	for ; step < 14; step++ {
+		m.Observe(ctx, []alert.Input{mk(step, 5000)})
+	}
+	if n := len(cap.all()); n != 0 {
+		t.Fatalf("shape rule fired on a stable series: %d notifications", n)
+	}
+
+	// Shift the distribution up. After the hysteresis window it fires.
+	for ; step < 18; step++ {
+		m.Observe(ctx, []alert.Input{mk(step, 60000)})
+	}
+	if len(cap.all()) == 0 {
+		t.Fatal("shape rule did not fire on a distribution shift")
+	}
+	if f := m.Firing(); len(f) != 1 || f[0].Rule.Metric != alert.MetricShape {
+		t.Fatalf("Firing() = %+v, want one firing shape rule", f)
+	}
+}
+
 // A silence must not overreach: one scoped to an unrelated target, and one whose
 // window has passed, both leave the leaf's alert to deliver normally.
 func TestSilenceScopeAndWindowDoNotOverreach(t *testing.T) {
