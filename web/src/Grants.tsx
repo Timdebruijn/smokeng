@@ -123,6 +123,9 @@ export default function Grants({
                       readOnly={readOnly}
                       busy={busy}
                       onRemove={() => run(() => deleteGrant(g.id))}
+                      onRerole={(role) =>
+                        run(() => createGrant({ group: g.group, target_id: g.target_id, role }))
+                      }
                     />
                   ))}
                 </Fragment>
@@ -158,11 +161,13 @@ function GrantRow({
   readOnly,
   busy,
   onRemove,
+  onRerole,
 }: {
   grant: Grant
   readOnly: boolean
   busy: boolean
   onRemove: () => Promise<boolean>
+  onRerole: (role: Grant['role']) => void
 }) {
   const [confirming, setConfirming] = useState(false)
   return (
@@ -172,7 +177,27 @@ function GrantRow({
         <span className="badge">+ subtree</span>
       </td>
       <td>
-        <span className="badge">{grant.role}</span>
+        {/* The role is the one part of a grant that can change in place: the
+            group and the path are what identifies it, so changing either is a
+            different grant. Editing here rather than only in the add form
+            means narrowing someone's access never goes through a state where
+            they have none. */}
+        {readOnly ? (
+          <span className="badge">{grant.role}</span>
+        ) : (
+          <select
+            value={grant.role}
+            disabled={busy}
+            aria-label={`role for ${grant.group} on ${grant.path === '' ? '/' : grant.path}`}
+            onChange={(e) => onRerole(e.target.value as Grant['role'])}
+          >
+            {ROLES.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        )}
       </td>
       <td>
         {!readOnly &&
