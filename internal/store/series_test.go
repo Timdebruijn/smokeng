@@ -319,3 +319,51 @@ func TestSeriesMeasuredButEmptySurvives(t *testing.T) {
 		t.Error("a series that was never written came back present")
 	}
 }
+
+// The send-failure reason has to reach the database and come back. Making
+// WriteMeasurements persist NULL instead left every test green, which means
+// the column could have been silently dead in production.
+func TestSendReasonRoundTripsThroughTheStore(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	want := SendReasonRefused
+	writeOne(t, s, Measurement{
+		TargetID: 1, TS: 1000, Sent: 2, Received: 1, Flags: FlagSendFailed,
+		Samples: []uint32{10}, SendErr: &want,
+	})
+	// And an interval that sent everything records nothing.
+	writeOne(t, s, Measurement{
+		TargetID: 1, TS: 2000, Sent: 1, Received: 1, Samples: []uint32{20},
+	})
+	got, err := s.QueryRange(ctx, 1, 0, 0, 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d measurements", len(got))
+	}
+	if got[0].SendErr == nil || *got[0].SendErr != want {
+		t.Errorf("SendErr = %v, want %d", got[0].SendErr, want)
+	}
+	if got[1].SendErr != nil {
+		t.Errorf("a clean interval came back with reason %d", *got[1].SendErr)
+	}
+}
+
+// And out of the agent's outbox, or remote agents lose it entirely.
+func TestSendReasonSurvivesTheOutbox(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	want := SendReasonSessionShort
+	writeOne(t, s, Measurement{
+		TargetID: 1, AgentID: 7, TS: 1000, Sent: 2, Received: 1, Flags: FlagSendFailed,
+		Samples: []uint32{10}, SendErr: &want,
+	})
+	pend, err := s.PendingMeasurements(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pend) != 1 || pend[0].SendErr == nil || *pend[0].SendErr != want {
+		t.Fatalf("the reason did not survive the outbox: %+v", pend)
+	}
+}

@@ -3,6 +3,7 @@ package probe
 import (
 	"context"
 	"net/netip"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -358,9 +359,32 @@ func TestIRTTSendFailuresAreDistinguishable(t *testing.T) {
 	if m.SendErr == nil {
 		t.Fatal("the interval says a send failed but not why; that is the state this field exists to end")
 	}
-	if *m.SendErr != store.SendReasonSessionRefused {
-		t.Errorf("SendErr = %d (%s), want SendReasonSessionRefused",
+	// Loopback to a closed port is a genuine refusal: the kernel answers with
+	// ICMP port-unreachable and the connected socket reports ECONNREFUSED.
+	if *m.SendErr != store.SendReasonRefused {
+		t.Errorf("SendErr = %d (%s), want SendReasonRefused",
 			*m.SendErr, store.SendReasonName(*m.SendErr))
+	}
+
+	// Silence is not refusal. A black-holed address answers nothing, and
+	// recording that as "the session was refused" is what sends an operator
+	// hunting a firewall that is not there — the exact confusion this field
+	// was added to end.
+	dark := spec
+	dark.Host = "192.0.2.1" // TEST-NET-1: routed nowhere, answers nothing
+	col2 := newCollector(dark.Pings, &late)
+	probeIRTT(context.Background(), col2, netip.MustParseAddr("192.0.2.1"), dark,
+		time.Now().Add(1500*time.Millisecond))
+	dm := col2.finalize(dark, 0, conditions{})
+	if dm.SendErr == nil {
+		t.Fatal("a session to a black hole recorded no reason")
+	}
+	switch *dm.SendErr {
+	case store.SendReasonSessionNoReply, store.SendReasonDeadline, store.SendReasonUnreachable:
+		// All three are honest answers depending on how the host routes it.
+	default:
+		t.Errorf("a black-holed address gave %q; silence is not a refusal",
+			store.SendReasonName(*dm.SendErr))
 	}
 
 	// A session that completes cleanly records no reason at all.
@@ -370,17 +394,20 @@ func TestIRTTSendFailuresAreDistinguishable(t *testing.T) {
 	}
 }
 
-// The reason has to survive to the master, or the field is useless for exactly
-// the deployments that have remote agents.
-func TestSendReasonSurvivesTheStore(t *testing.T) {
-	for _, reason := range []uint8{
-		store.SendReasonRefused, store.SendReasonSessionShort, store.SendReasonSessionRefused,
-	} {
-		if store.SendReasonName(reason) == "" {
-			t.Errorf("reason %d has no name", reason)
+// Every reason has a name, and an unknown code stays legible rather than being
+// guessed at, so a newer prober's data is still readable by an older browser.
+//
+// This used to be called TestSendReasonSurvivesTheStore and its comment
+// promised the reason reached the master. It never touched the store, the wire
+// or the API — the survival it claimed to prove is tested where it happens, in
+// the store and ingest packages.
+func TestSendReasonNames(t *testing.T) {
+	for r := uint8(1); r <= store.SendReasonDeadline; r++ {
+		name := store.SendReasonName(r)
+		if name == "" || strings.HasPrefix(name, "reason ") {
+			t.Errorf("reason %d has no name of its own: %q", r, name)
 		}
 	}
-	// An unknown code stays legible rather than being guessed at.
 	if got := store.SendReasonName(200); got != "reason 200" {
 		t.Errorf("SendReasonName(200) = %q", got)
 	}

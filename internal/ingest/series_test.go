@@ -156,3 +156,28 @@ func mustEncode(t *testing.T, ms []store.Measurement) []byte {
 	}
 	return b
 }
+
+// The reason has to cross the wire, or it exists only for locally probed
+// targets. Making EncodeBatch always append null left every test green.
+func TestBatchCarriesSendReason(t *testing.T) {
+	want := store.SendReasonRefused
+	in := []store.Measurement{
+		{TargetID: 1, TS: 100, Sent: 2, Received: 1, Flags: store.FlagSendFailed,
+			Samples: []uint32{10}, SendErr: &want},
+		{TargetID: 2, TS: 100, Sent: 1, Received: 1, Samples: []uint32{20}},
+	}
+	blob, err := EncodeBatch(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := DecodeBatch(blob, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].SendErr == nil || *out[0].SendErr != want {
+		t.Errorf("SendErr = %v, want %d", out[0].SendErr, want)
+	}
+	if out[1].SendErr != nil {
+		t.Errorf("a clean measurement arrived with reason %d", *out[1].SendErr)
+	}
+}
