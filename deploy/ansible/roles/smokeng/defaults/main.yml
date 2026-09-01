@@ -1,7 +1,7 @@
 ---
 # Which release to install. Pin it: an unattended "latest" turns every play
 # into an unreviewed upgrade.
-smokeng_version: v0.14.0
+smokeng_version: v0.14.1
 smokeng_repo: Timdebruijn/smokeng
 
 smokeng_user: smokeng
