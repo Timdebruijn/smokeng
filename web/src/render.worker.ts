@@ -152,9 +152,6 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
         : Math.min(us, ymax) / ymax
   const fracVal = (f: number): number =>
     signed ? ymin + f * (ymax - ymin) : log ? Math.pow(10, lmin + f * (lmax - lmin)) : f * ymax
-  // Samples outside the drawn range are left out of the density rather than
-  // pinned to the edge, for the reason spelt out at the clip below. On a
-  // signed scale that applies at both ends.
   // A sample outside the drawn range is left out of the density rather than
   // pinned to the edge, where after the blur it reads as a solid plateau at
   // that value. That has to hold at both ends: the linear branch tested only
@@ -296,11 +293,11 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   }
 
   // Where samples fell outside the drawn range, mark the edge they left by.
-  // The density deliberately excludes them — pinning them to the axis reads as
-  // a solid plateau at that value — but excluding them silently means an
-  // excursion large enough to leave the plot entirely renders as no data at
-  // all. A mark is not a value: it says "there is more this way", which is
-  // exactly as much as the plot can honestly claim about a clipped sample.
+  // Excluding them from the density (see `clipped`) is right, but excluding
+  // them *silently* means an excursion large enough to leave the plot entirely
+  // renders as no data at all. A mark is not a value: it says "there is more
+  // this way", which is exactly as much as the plot can honestly claim about a
+  // sample it refuses to place.
   ctx.fillStyle = clipMark
   for (let x = 0; x < plotW; x++) {
     if (clipHigh[x] > 0) ctx.fillRect(axisW + x, 0, 1, Math.max(1, Math.round(2 * dpr)))
