@@ -99,12 +99,28 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 // DecodeBatch reads a submission, stamping every measurement with the
 // authenticated agent's id. The id is never taken from the payload: an agent
 // must not be able to write to another agent's series by saying so.
-func DecodeBatch(body []byte, agentID int64) (ms []store.Measurement, err error) {
-	// The allocator bounds what this call may allocate, and reports crossing
-	// the bound by panicking (see limit.go). Turn that back into an error here
-	// so a hostile or broken batch costs one rejected request rather than the
-	// process.
-	mem := newLimitAllocator(maxDecodeBytes)
+func DecodeBatch(body []byte, agentID int64) ([]store.Measurement, error) {
+	return decodeBatch(body, agentID, maxDecodeBytes)
+}
+
+// decodeBatch is DecodeBatch with the allocation budget as a parameter, so a
+// test can exercise the real reader against a small one instead of having to
+// build a payload large enough to cross the production limit.
+func decodeBatch(body []byte, agentID int64, limit int) (ms []store.Measurement, err error) {
+	// The allocator bounds what this call may allocate and reports crossing the
+	// bound by panicking (see limit.go). What actually stops the OOM is the
+	// refusal itself: the allocation is never made, and a Go out-of-memory is
+	// fatal and unrecoverable, so preventing the call is the only defence that
+	// works.
+	//
+	// The recover below is not what turns that panic into an error today —
+	// arrow-go's own Reader.next and NewReaderFromMessageReader each recover
+	// first, one frame in, and surface it through reader.Err(). This is
+	// defence in depth against that changing, and against a panic raised
+	// outside their guarded regions. Said plainly because an earlier version of
+	// this comment claimed it was the mechanism, which was wrong and would have
+	// sent the next reader looking in the wrong place.
+	mem := newLimitAllocator(limit)
 	defer func() {
 		r := recover()
 		if r == nil {
