@@ -359,6 +359,13 @@ CREATE TABLE measurement_series (
 ALTER TABLE targets ADD COLUMN graph_series TEXT;
 UPDATE targets SET graph_series = 'all' WHERE parent_id IS NULL AND graph_series IS NULL;
 `,
+	// v21: why the local side could not send. FlagSendFailed said that it
+	// happened and nothing said why, so a target failing to send one probe an
+	// interval was indistinguishable between a far end refusing the packets and
+	// this prober never getting them out — a network fault and a bug here,
+	// reported identically. Null for every interval that sent everything, and
+	// for every measurement taken before this column existed.
+	`ALTER TABLE measurements ADD COLUMN send_error INTEGER`,
 }
 
 func (s *SQLite) migrate() error {
@@ -398,8 +405,8 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 	}
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT OR REPLACE INTO measurements (target_id, agent_id, ts, sent, received, flags, samples, icmp_error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+		INSERT OR REPLACE INTO measurements (target_id, agent_id, ts, sent, received, flags, samples, icmp_error, send_error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -431,7 +438,7 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 			return err
 		}
 		if _, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.TS, m.Sent, m.Received,
-			m.Flags, blob, ptrOrNil(m.ICMPErr)); err != nil {
+			m.Flags, blob, ptrOrNil(m.ICMPErr), ptrOrNil(m.SendErr)); err != nil {
 			return err
 		}
 		if _, err := delSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
@@ -471,7 +478,7 @@ func sortedSeries(m map[string][]int32) []string {
 
 func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ts, sent, received, flags, samples, icmp_error FROM measurements
+		SELECT ts, sent, received, flags, samples, icmp_error, send_error FROM measurements
 		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?
 		ORDER BY ts`, targetID, agentID, from, to)
 	if err != nil {
@@ -482,13 +489,17 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 	for rows.Next() {
 		m := Measurement{TargetID: targetID, AgentID: agentID}
 		var blob []byte
-		var icmpErr sql.NullInt64
-		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &icmpErr); err != nil {
+		var icmpErr, sendErr sql.NullInt64
+		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &icmpErr, &sendErr); err != nil {
 			return nil, err
 		}
 		if icmpErr.Valid {
 			v := uint16(icmpErr.Int64)
 			m.ICMPErr = &v
+		}
+		if sendErr.Valid {
+			v := uint8(sendErr.Int64)
+			m.SendErr = &v
 		}
 		if m.Samples, err = enc.Decode(blob); err != nil {
 			return nil, fmt.Errorf("store: measurement (%d,%d,%d): %w", targetID, agentID, m.TS, err)

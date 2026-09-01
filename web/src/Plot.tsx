@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchPathChanges, fetchSeries, icmpErrorName, type PathChange, type Target } from './api'
+import {
+  fetchPathChanges,
+  fetchSeries,
+  icmpErrorName,
+  sendReasonName,
+  type PathChange,
+  type Target,
+} from './api'
 import { setCursor, subscribeCursor } from './crosshair'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtUs, inferSpan } from './layout'
 
@@ -31,6 +38,7 @@ interface RowIndex {
   sent: Float64Array
   received: Float64Array
   icmpErrors: (number | null)[]
+  sendErrors: (number | null)[]
   span: number
 }
 
@@ -66,10 +74,12 @@ const FLAGS: { bit: number; label: string; title: string }[] = [
   },
 ]
 const FLAG_ICMP_ERROR = 1 << 4
+const FLAG_SEND_FAILED = 1 << 6
 
 function flagCounts(
   flags: Uint8Array,
   icmpErrors: (number | null)[],
+  sendErrors: (number | null)[],
 ): { label: string; title: string; count: number }[] {
   const out = FLAGS.map((f) => {
     let count = 0
@@ -90,6 +100,23 @@ function flagCounts(
     out.push({
       label: icmpErrorName(packed),
       title: 'Probes were refused with this ICMP error rather than going unanswered.',
+      count,
+    })
+  }
+
+  // And likewise for a failure to send. "Send failed" on its own could not
+  // separate a far end refusing the traffic from this prober never getting it
+  // out — a network fault and a bug here, reported identically.
+  const bySend = new Map<number, number>()
+  for (let i = 0; i < flags.length; i++) {
+    if (!(flags[i] & FLAG_SEND_FAILED)) continue
+    const e = sendErrors[i]
+    if (e !== null && e !== undefined) bySend.set(e, (bySend.get(e) ?? 0) + 1)
+  }
+  for (const [reason, count] of [...bySend].sort((a, b) => b[1] - a[1])) {
+    out.push({
+      label: sendReasonName(reason),
+      title: 'Why probes could not be put on the wire, as opposed to going unanswered.',
       count,
     })
   }
@@ -234,6 +261,8 @@ export default function Plot({
     ]
     const err = rows.icmpErrors[idx]
     if (err !== null && err !== undefined) lines.push(icmpErrorName(err))
+    const se = rows.sendErrors[idx]
+    if (se !== null && se !== undefined) lines.push(sendReasonName(se))
     // The route in force at this instant, so a step in the smoke can be read
     // against the path that carried it.
     const inForce = pathsRef.current.filter((c) => c.ts <= t).at(-1)
@@ -315,6 +344,7 @@ export default function Plot({
           sent: series.sent.slice(),
           received: series.received.slice(),
           icmpErrors: series.icmpErrors,
+          sendErrors: series.sendErrors,
           span: inferSpan(series.ts, n),
         }
         for (let i = 0; i < n; i++) {
@@ -331,7 +361,7 @@ export default function Plot({
         const cssW = stackRef.current?.clientWidth || width
         if (cssW === 0) return
         rowsRef.current = rows
-        setQuality(flagCounts(series.flags, series.icmpErrors))
+        setQuality(flagCounts(series.flags, series.icmpErrors, series.sendErrors))
         setRowCount(n)
         workerRef.current.postMessage(
           {

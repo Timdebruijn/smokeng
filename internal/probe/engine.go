@@ -697,7 +697,7 @@ func runUserspaceProbe(ctx context.Context, col *collector, idx int, addr netip.
 		// without a prober behind it. Recording it as a send failure rather
 		// than as loss keeps the distinction that matters: nothing was asked
 		// of the target, so the target is not what failed.
-		col.markSendFailed(idx)
+		col.markSendFailed(idx, store.SendReasonSocket)
 	}
 }
 

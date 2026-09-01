@@ -3,6 +3,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+
 	"github.com/timdebruijn/smokeng/internal/series"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
@@ -24,6 +26,16 @@ type Measurement struct {
 	// ICMPErr is the ICMP type and code most often reported in this interval
 	// (see ICMPError), or nil when no ping drew an error.
 	ICMPErr *uint16
+	// SendErr is why the local side could not put probes on the wire this
+	// interval — the most frequent reason, as ICMPErr is — or nil when nothing
+	// failed to send.
+	//
+	// FlagSendFailed says that it happened; without this, nothing said why, and
+	// the difference between the far end refusing the packets and this host
+	// never getting them out is the difference between a network fault and a
+	// bug here. That question came up on a real deployment and the stored data
+	// could not answer it.
+	SendErr *uint8
 	// Series holds the extra per-packet distributions a probe measured beside
 	// the round trip, keyed by series name (see SeriesIPDVSend and friends), in
 	// µs and sorted ascending. Signed, because inter-packet delay variation is.
@@ -54,6 +66,59 @@ var KnownSeries = series.All
 
 // ValidSeries reports whether name is a series smokeng knows how to record.
 func ValidSeries(name string) bool { return series.Valid(name) }
+
+// Why the local side could not put a probe on the wire. Kept deliberately
+// coarse: the value has to mean the same thing across every probe type, and a
+// reason nobody can act on differently is not worth a code of its own. The
+// detail belongs in the log line that accompanies it.
+const (
+	// SendReasonSocket is the write itself failing for a reason the prober did
+	// not recognise.
+	SendReasonSocket uint8 = 1
+	// SendReasonRefused is ECONNREFUSED. On a connected UDP socket this is the
+	// far end, or a router speaking for it, answering an earlier packet with an
+	// ICMP unreachable — a remote condition that surfaces as a local send
+	// error, which is exactly the confusion this field exists to end.
+	SendReasonRefused uint8 = 2
+	// SendReasonUnreachable is EHOSTUNREACH or ENETUNREACH: no route.
+	SendReasonUnreachable uint8 = 3
+	// SendReasonNoAddress is having nothing to send to — resolution produced no
+	// address of the family this target asks for.
+	SendReasonNoAddress uint8 = 4
+	// SendReasonSessionRefused is a session-based probe whose session never
+	// opened, so not one test packet reached the wire.
+	SendReasonSessionRefused uint8 = 5
+	// SendReasonSessionEnded is a session that opened and broke part-way.
+	SendReasonSessionEnded uint8 = 6
+	// SendReasonSessionShort is a session that ended without sending everything
+	// it was asked to. Unlike the two above, the far end reported nothing wrong:
+	// this is the prober's own pacing or deadline arithmetic falling short, and
+	// it is here so that case stops being indistinguishable from the network's.
+	SendReasonSessionShort uint8 = 7
+)
+
+// SendReasonName renders a reason for a person. An unknown code is shown as
+// itself rather than guessed at, so data from a newer prober stays legible.
+func SendReasonName(r uint8) string {
+	switch r {
+	case SendReasonSocket:
+		return "the socket refused the write"
+	case SendReasonRefused:
+		return "connection refused"
+	case SendReasonUnreachable:
+		return "no route to the target"
+	case SendReasonNoAddress:
+		return "no address to send to"
+	case SendReasonSessionRefused:
+		return "the session was refused"
+	case SendReasonSessionEnded:
+		return "the session broke part-way"
+	case SendReasonSessionShort:
+		return "the session sent fewer probes than asked"
+	default:
+		return fmt.Sprintf("reason %d", r)
+	}
+}
 
 // Measurement-quality flags (DESIGN.md §3.4). Zero means a clean measurement:
 // full kernel timestamping over a datagram ICMP socket, no dropped packets,

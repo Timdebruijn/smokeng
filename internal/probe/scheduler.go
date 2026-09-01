@@ -166,6 +166,9 @@ type ping struct {
 	// refused rather than ignored.
 	icmpErr            bool
 	icmpType, icmpCode uint8
+	// Why this probe could not be sent, when it could not. See
+	// store.SendReason*; zero means it was not recorded.
+	sendReason uint8
 }
 
 func newCollector(n int, late *atomic.Int64) *collector {
@@ -199,11 +202,15 @@ func (c *collector) markSent(idx int, seq uint16, txUser time.Time) {
 // The icmp path happened to call markSent first and so was unaffected; the
 // userspace types call this on its own, and were silently losing the flag
 // along with the row.
-func (c *collector) markSendFailed(idx int) {
+// The reason is recorded alongside the flag. The flag said that a send failed
+// and nothing said why, so a far end refusing packets and this host never
+// getting them out — a network fault and a bug here — were stored identically.
+func (c *collector) markSendFailed(idx int, reason uint8) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pings[idx].sent = true
 	c.pings[idx].sendFailed = true
+	c.pings[idx].sendReason = reason
 }
 
 func (c *collector) onRX(idx int, t time.Time, kernel bool) {
@@ -312,6 +319,7 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	// most frequent one is stored: a single value has to represent the
 	// interval, and the common cause is the useful one.
 	errCounts := map[uint16]int{}
+	sendCounts := map[uint8]int{}
 	deadline := now.Add(-timeout)
 	for i := range c.pings {
 		p := &c.pings[i]
@@ -332,6 +340,9 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 		m.Sent++
 		if p.sendFailed {
 			m.Flags |= store.FlagSendFailed
+			if p.sendReason != 0 {
+				sendCounts[p.sendReason]++
+			}
 			continue
 		}
 		if p.icmpErr {
@@ -404,6 +415,19 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 			}
 		}
 		m.ICMPErr = &best
+	}
+	// The most frequent reason represents the interval, as the ICMP tally
+	// above does: one value has to stand for it, and the common cause is the
+	// one worth acting on.
+	if len(sendCounts) > 0 {
+		var best uint8
+		bestN := -1
+		for reason, n := range sendCounts {
+			if n > bestN || (n == bestN && reason < best) {
+				best, bestN = reason, n
+			}
+		}
+		m.SendErr = &best
 	}
 	m.Series = c.series
 	return m

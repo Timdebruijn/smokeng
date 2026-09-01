@@ -278,7 +278,7 @@ func (c *conn) send(col *collector, idx int, dst netip.Addr, packetSize int) err
 				"socket and measurements fall back to userspace TX (flagged)", c.family, err)
 		}
 		c.forgetSeq(seq)
-		col.markSendFailed(idx)
+		col.markSendFailed(idx, sendReasonFor(err))
 		return err
 	}
 	return nil

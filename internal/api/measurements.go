@@ -29,6 +29,11 @@ var measurementsSchema = arrow.NewSchema([]arrow.Field{
 	// ICMP type<<8|code for the error that explains this interval's failures,
 	// null when nothing was refused.
 	{Name: "icmp_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
+	// Why the local side could not send this interval, null when it did. The
+	// quality flags say that a send failed; this says what failed, which is the
+	// difference between a far end refusing the traffic and this prober never
+	// getting it out.
+	{Name: "send_error", Type: arrow.PrimitiveTypes.Uint8, Nullable: true},
 	// The extra per-packet series, one nullable column each, in the same units
 	// and the same sorted order as samples. Null is not zero: it means this
 	// interval has no such measurement — the probe does not produce one, or the
@@ -105,10 +110,11 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	listB := rb.Field(4).(*array.ListBuilder)
 	valB := listB.ValueBuilder().(*array.Uint32Builder)
 	icmpB := rb.Field(5).(*array.Uint16Builder)
+	sendErrB := rb.Field(6).(*array.Uint8Builder)
 	seriesB := make([]*array.ListBuilder, len(store.KnownSeries))
 	seriesV := make([]*array.Int32Builder, len(store.KnownSeries))
 	for i := range store.KnownSeries {
-		seriesB[i] = rb.Field(6 + i).(*array.ListBuilder)
+		seriesB[i] = rb.Field(7 + i).(*array.ListBuilder)
 		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
 	}
 
@@ -128,6 +134,11 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 			icmpB.Append(*m.ICMPErr)
 		} else {
 			icmpB.AppendNull()
+		}
+		if m.SendErr != nil {
+			sendErrB.Append(*m.SendErr)
+		} else {
+			sendErrB.AppendNull()
 		}
 		for j, name := range store.KnownSeries {
 			vals, ok := m.Series[name]

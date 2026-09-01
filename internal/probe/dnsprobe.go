@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"codeberg.org/miekg/dns"
+
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 // defaultDNSPort is where a resolver listens unless the target says otherwise.
@@ -53,7 +55,7 @@ func probeDNS(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 		// Nothing was asked of the resolver, so the resolver is not what
 		// failed. That distinction is the difference between a broken target
 		// and a broken smokeng.
-		col.markSendFailed(idx)
+		col.markSendFailed(idx, store.SendReasonSocket)
 		log.Printf("probe: target %d: pack DNS query: %v", spec.TargetID, err)
 		return
 	}
@@ -64,7 +66,7 @@ func probeDNS(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 		// connect, or the write itself failed (a firewall REJECT on OUTPUT,
 		// ENOBUFS, an oversized query). That is smokeng's side, not the
 		// resolver's, so it must not read as a healthy resolver going lossy.
-		col.markSendFailed(idx)
+		col.markSendFailed(idx, sendReasonFor(err))
 		if idx == 0 {
 			log.Printf("probe: target %d (%s): dns query to %s never sent: %v",
 				spec.TargetID, spec.Host, server, err)

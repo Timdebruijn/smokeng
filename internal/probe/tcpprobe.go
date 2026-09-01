@@ -35,7 +35,7 @@ func probeTCP(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 		// the target failing — recording it as loss would draw an outage on a
 		// service that may be answering fine. Flag it as ours instead.
 		if isLocalResourceError(err) {
-			col.markSendFailed(idx)
+			col.markSendFailed(idx, sendReasonFor(err))
 			if idx == 0 {
 				log.Printf("probe: target %d (%s): tcp/%d dial failed locally: %v; "+
 					"recorded as a send failure, not loss", spec.TargetID, spec.Host, spec.ProbePort, err)

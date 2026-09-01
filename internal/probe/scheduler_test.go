@@ -182,8 +182,8 @@ func TestSendFailureCountsAsLoss(t *testing.T) {
 	for i := range 3 {
 		col.markSent(i, uint16(i), base)
 	}
-	col.markSendFailed(1)
-	col.markSendFailed(2)
+	col.markSendFailed(1, store.SendReasonSocket)
+	col.markSendFailed(2, store.SendReasonSocket)
 	col.onRX(0, base.Add(2*time.Millisecond), true)
 
 	m := col.finalize(spec, 1_756_400_100, conditions{})
