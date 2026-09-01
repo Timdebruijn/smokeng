@@ -87,15 +87,36 @@ func TestDecodeBatchBoundsAllocation(t *testing.T) {
 		}()
 		a.Allocate(600)
 	}()
-	// A negative size is a corrupt header, not a free allocation.
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("a negative allocation was accepted")
-			}
+	// A negative size is a corrupt header, not a free allocation — on both
+	// paths. Reallocate charges only growth, and a negative size is not growth,
+	// so it was the one path that could carry a corrupt header's arithmetic
+	// through unchecked.
+	for _, c := range []struct {
+		name string
+		call func(*limitAllocator)
+	}{
+		{"Allocate", func(a *limitAllocator) { a.Allocate(-1) }},
+		{"Reallocate", func(a *limitAllocator) { a.Reallocate(-1, make([]byte, 8)) }},
+	} {
+		func() {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("%s accepted a negative size", c.name)
+				}
+				lim, ok := r.(*errAllocationLimit)
+				if !ok {
+					t.Fatalf("%s panicked with %T, want *errAllocationLimit", c.name, r)
+				}
+				// And says what actually happened, rather than reporting a
+				// negative number of wanted bytes as if it were a shortfall.
+				if !strings.Contains(lim.Error(), "negative allocation") {
+					t.Errorf("%s: %v", c.name, lim)
+				}
+			}()
+			c.call(newLimitAllocator(1024))
 		}()
-		newLimitAllocator(1024).Allocate(-1)
-	}()
+	}
 }
 
 // List offsets arrive unvalidated and were used as a make() capacity, so a
