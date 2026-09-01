@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -328,6 +329,35 @@ CREATE TABLE alert_baselines (
   captured_by TEXT NOT NULL DEFAULT ''
 );
 `,
+	// v19: the extra per-packet series a probe can measure beside the round
+	// trip, one row per (measurement, series). A side table rather than more
+	// columns on measurements: only irtt produces any of these, so columns
+	// would be null for every other probe, and the set is open — irtt alone
+	// offers one-way delay and server processing time beside the two kept here,
+	// and adding one should not rewrite the table every measurement lives in.
+	//
+	// Absence is meaningful and is the only way this is recorded: a series that
+	// the far end gave no timestamps for has no row, which reads as "not
+	// measured" rather than as zero jitter.
+	`
+CREATE TABLE measurement_series (
+  target_id INTEGER NOT NULL,
+  agent_id  INTEGER NOT NULL,
+  ts        INTEGER NOT NULL,
+  series    TEXT NOT NULL,
+  samples   BLOB NOT NULL,
+  PRIMARY KEY (target_id, agent_id, ts, series)
+) WITHOUT ROWID;
+`,
+	// v20: which of those series a target graphs. Display only — every series
+	// measured is stored whatever this says, so switching one on shows the
+	// history it already has rather than starting it from the moment somebody
+	// thought to ask. The root defaults to "all": a measurement taken and not
+	// shown is one nobody knows to look for.
+	`
+ALTER TABLE targets ADD COLUMN graph_series TEXT;
+UPDATE targets SET graph_series = 'all' WHERE parent_id IS NULL AND graph_series IS NULL;
+`,
 }
 
 func (s *SQLite) migrate() error {
@@ -373,6 +403,23 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 		return err
 	}
 	defer stmt.Close()
+	// A measurement is replaced wholesale, so its old series rows have to go
+	// with it. Without the delete, a target whose peer stopped returning
+	// timestamps would keep serving the jitter it measured the last time it
+	// could — the stalest possible reading, presented as current.
+	delSeries, err := tx.PrepareContext(ctx, `
+		DELETE FROM measurement_series WHERE target_id = ? AND agent_id = ? AND ts = ?`)
+	if err != nil {
+		return err
+	}
+	defer delSeries.Close()
+	putSeries, err := tx.PrepareContext(ctx, `
+		INSERT INTO measurement_series (target_id, agent_id, ts, series, samples)
+		VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer putSeries.Close()
 	for _, m := range ms {
 		if m.Received != len(m.Samples) {
 			return fmt.Errorf("store: measurement (%d,%d,%d): received=%d but %d samples",
@@ -386,8 +433,39 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 			m.Flags, blob, ptrOrNil(m.ICMPErr)); err != nil {
 			return err
 		}
+		if _, err := delSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
+			return err
+		}
+		for _, name := range sortedSeries(m.Series) {
+			if !ValidSeries(name) {
+				return fmt.Errorf("store: measurement (%d,%d,%d): unknown series %q",
+					m.TargetID, m.AgentID, m.TS, name)
+			}
+			sblob, err := enc.EncodeSigned(m.Series[name])
+			if err != nil {
+				return fmt.Errorf("store: measurement (%d,%d,%d) series %q: %w",
+					m.TargetID, m.AgentID, m.TS, name, err)
+			}
+			if _, err := putSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS, name, sblob); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
+}
+
+// sortedSeries returns the series names in a stable order, so a written blob
+// set does not depend on map iteration order.
+func sortedSeries(m map[string][]int32) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error) {
@@ -416,7 +494,59 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachSeries(ctx, targetID, agentID, from, to, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// attachSeries fills in the extra per-packet distributions for an already-read
+// range, in one query rather than one per interval.
+func (s *SQLite) attachSeries(ctx context.Context, targetID, agentID, from, to int64, ms []Measurement) error {
+	if len(ms) == 0 {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ts, series, samples FROM measurement_series
+		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?`,
+		targetID, agentID, from, to)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byTS := make(map[int64]*Measurement, len(ms))
+	for i := range ms {
+		byTS[ms[i].TS] = &ms[i]
+	}
+	for rows.Next() {
+		var ts int64
+		var name string
+		var blob []byte
+		if err := rows.Scan(&ts, &name, &blob); err != nil {
+			return err
+		}
+		m := byTS[ts]
+		if m == nil {
+			// A series row with no measurement is a broken invariant, not a
+			// row to skip: it means a measurement was deleted without its
+			// series, and the next prune would leave it behind forever.
+			return fmt.Errorf("store: series %q at (%d,%d,%d) has no measurement",
+				name, targetID, agentID, ts)
+		}
+		vals, err := enc.DecodeSigned(blob)
+		if err != nil {
+			return fmt.Errorf("store: measurement (%d,%d,%d) series %q: %w",
+				targetID, agentID, ts, name, err)
+		}
+		if m.Series == nil {
+			m.Series = make(map[string][]int32, 2)
+		}
+		m.Series[name] = vals
+	}
+	return rows.Err()
 }
 
 // AvailabilitySeries returns just the reachability of each interval in the
@@ -445,7 +575,7 @@ func (s *SQLite) AvailabilitySeries(ctx context.Context, targetID, agentID, from
 
 const targetCols = `id, parent_id, name, host, address_family, title, notes,
 	hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
-	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s`
+	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s, graph_series`
 
 func (s *SQLite) ListTargets(ctx context.Context) ([]tree.Target, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+targetCols+" FROM targets ORDER BY id")
@@ -468,13 +598,14 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 	var t tree.Target
 	var parentID sql.NullInt64
 	var host, af, title, notes, probeMode, agents sql.NullString
-	var probeType, dnsQuery, dnsRRType, httpPath sql.NullString
+	var probeType, dnsQuery, dnsRRType, httpPath, graphSeries sql.NullString
 	var intervalS, pings, burstGap, timeout, packetSize, dscp, traceInterval sql.NullInt64
 	var probePort, tlsSkipVerify, retention sql.NullInt64
 	err := rows.Scan(&t.ID, &parentID, &t.Name, &host, &af, &title, &notes,
 		&t.Hidden, &t.Enabled, &t.SortOrder, &intervalS, &pings, &probeMode,
 		&burstGap, &timeout, &packetSize, &dscp, &agents, &traceInterval,
-		&probeType, &probePort, &dnsQuery, &dnsRRType, &httpPath, &tlsSkipVerify, &retention)
+		&probeType, &probePort, &dnsQuery, &dnsRRType, &httpPath, &tlsSkipVerify, &retention,
+		&graphSeries)
 	if err != nil {
 		return t, err
 	}
@@ -502,6 +633,7 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 		HTTPPath:         nullStr(httpPath),
 		TLSSkipVerify:    nullBool(tlsSkipVerify),
 		RetentionS:       nullInt(retention),
+		GraphSeries:      nullStr(graphSeries),
 	}
 	return t, nil
 }
@@ -515,8 +647,9 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 		INSERT INTO targets (id, parent_id, name, host, address_family, title, notes,
 			hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
 			burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s,
-			probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s,
+			graph_series)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			parent_id = excluded.parent_id, name = excluded.name,
 			host = excluded.host, address_family = excluded.address_family,
@@ -538,7 +671,8 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 			dns_rr_type = excluded.dns_rr_type,
 			http_path = excluded.http_path,
 			tls_skip_verify = excluded.tls_skip_verify,
-			retention_s = excluded.retention_s`,
+			retention_s = excluded.retention_s,
+			graph_series = excluded.graph_series`,
 		id, ptrOrNil(t.ParentID), t.Name, ptrOrNil(t.Host), ptrOrNil(t.AddressFamily),
 		ptrOrNil(t.Title), ptrOrNil(t.Notes), t.Hidden, t.Enabled, t.SortOrder,
 		ptrOrNil(t.Settings.IntervalS), ptrOrNil(t.Settings.PingsPerInterval),
@@ -549,7 +683,7 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 		ptrOrNil(t.Settings.ProbeType), ptrOrNil(t.Settings.ProbePort),
 		ptrOrNil(t.Settings.DNSQuery), ptrOrNil(t.Settings.DNSRRType),
 		ptrOrNil(t.Settings.HTTPPath), ptrOrNil(t.Settings.TLSSkipVerify),
-		ptrOrNil(t.Settings.RetentionS))
+		ptrOrNil(t.Settings.RetentionS), ptrOrNil(t.Settings.GraphSeries))
 	if err != nil {
 		return err
 	}
@@ -600,12 +734,32 @@ func (s *SQLite) PruneMeasurements(ctx context.Context, targetID, cutoff, sliceS
 		if end > cutoff {
 			end = cutoff
 		}
-		res, err := s.db.ExecContext(ctx,
-			"DELETE FROM measurements WHERE target_id = ? AND ts < ?", targetID, end)
-		if err != nil {
-			return total, err
-		}
-		n, err := res.RowsAffected()
+		// The measurement and its extra series go in one transaction. Deleting
+		// them separately and dying in between would leave series rows whose
+		// measurement is gone, which is not a tidiness problem: reading a range
+		// containing one is a hard error, so a crash mid-prune would make that
+		// window unreadable rather than merely untidy.
+		n, err := func() (int64, error) {
+			tx, err := s.db.BeginTx(ctx, nil)
+			if err != nil {
+				return 0, err
+			}
+			defer tx.Rollback()
+			if _, err := tx.ExecContext(ctx,
+				"DELETE FROM measurement_series WHERE target_id = ? AND ts < ?", targetID, end); err != nil {
+				return 0, err
+			}
+			res, err := tx.ExecContext(ctx,
+				"DELETE FROM measurements WHERE target_id = ? AND ts < ?", targetID, end)
+			if err != nil {
+				return 0, err
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return 0, err
+			}
+			return n, tx.Commit()
+		}()
 		if err != nil {
 			return total, err
 		}

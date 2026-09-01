@@ -21,6 +21,16 @@ export function fmtUs(us: number): string {
   return `${(us / 1_000_000).toFixed(1)}s`
 }
 
+/**
+ * The same, for a signed measure. Zero is written bare: a jitter axis reads
+ * better with one unambiguous origin than with "+0µs".
+ */
+export function fmtSigned(us: number): string {
+  const r = Math.round(us)
+  if (r === 0) return '0'
+  return (r > 0 ? '+' : '\u2212') + fmtUs(Math.abs(us))
+}
+
 export function fmtClock(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000)
   const p = (n: number) => String(n).padStart(2, '0')

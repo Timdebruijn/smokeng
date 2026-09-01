@@ -89,6 +89,38 @@ table.
 | `agents` | array | `["local"]` | every name must be enrolled | Which vantage points measure this target |
 | `trace_interval_s` | int | `300` | ≥ 0 | Seconds between traceroutes; `0` disables path discovery |
 | `retention_s` | int | `0` | ≥ 0 | Seconds to keep raw measurements; `0` keeps them forever. Older intervals are deleted whole, never downsampled — see [Operations](operations.md#storage-growth) |
+| `graph_series` | string | `all` | `all`, `""`, or names | Which extra per-packet distributions are drawn beside the round trip. Display only — everything measured is stored regardless. See below |
+
+### Extra graphs (`graph_series`)
+
+An `irtt` target measures more per packet than the round trip. smokeng keeps all of it
+from the one session, and this setting chooses what is drawn:
+
+| Series | What it is |
+| --- | --- |
+| `ipdv_send` | How much later or earlier each packet reached the far end than the one before it |
+| `ipdv_receive` | The same on the way back |
+| `server_processing` | How long the far end held each packet before replying |
+
+```toml
+graph_series = "all"                      # every series that has data (the default)
+graph_series = "ipdv_send ipdv_receive"   # just the two directions
+graph_series = ""                         # none; only the round trip
+```
+
+`all` and an explicit list are not the same thing over time: `all` picks up a series added
+in a later release, a list does not.
+
+This changes what is **shown**, never what is **kept** — so turning a graph on later shows
+the history it already has rather than starting it from that moment. Only `irtt` produces
+any of these, and only where the far end returns timestamps; where it does not, the graph
+says the series was not measured rather than drawing a flat line at zero.
+
+smokeng does not graph absolute one-way delay, which irtt also reports. That figure
+subtracts one machine's wall clock from another's and is wrong by however far apart they
+have drifted, so it measures NTP as much as the network. Inter-packet delay variation
+compares consecutive packets on the monotonic clock, so the offset cancels and the number
+holds without the two ends being synchronised.
 
 `agents` is checked against the agents you have actually enrolled. A name that
 matches none of them is refused, with the offending name and the list of what

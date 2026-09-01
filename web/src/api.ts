@@ -345,6 +345,13 @@ export interface TargetSettings {
   http_path: SettingValue<string>
   /** Off by default; trusting the issuing CA is the better answer. */
   tls_skip_verify: SettingValue<boolean>
+  /**
+   * Which extra per-packet distributions are drawn: a space-separated list of
+   * series names, "all" for every one that has data, or "" for none. Display
+   * only — everything measured is kept whatever this says, so switching a
+   * graph on shows its history rather than starting it from that moment.
+   */
+  graph_series: SettingValue<string>
 }
 
 export type SettingKey = keyof TargetSettings
@@ -462,6 +469,56 @@ export interface Series {
   values: Uint32Array // all samples, concatenated
   /** ICMP type<<8|code per row, or null where nothing was refused. */
   icmpErrors: (number | null)[]
+  /**
+   * The extra per-packet distributions measured beside the round trip, keyed
+   * by series name. Absent from the map when no interval in the window carried
+   * one, which is how "this target does not measure it" reads.
+   */
+  extra: Record<string, ExtraSeries>
+}
+
+/**
+ * One extra per-packet distribution, in the same columnar shape as the round
+ * trip. Values are signed: inter-packet delay variation is negative exactly
+ * when a packet arrived sooner than the one before it.
+ */
+export interface ExtraSeries {
+  offsets: Uint32Array // length rows+1
+  values: Int32Array // all samples, concatenated, µs
+  /**
+   * 1 where this interval measured the series, 0 where it did not. Without it
+   * a row the peer returned no timestamps for would be indistinguishable from
+   * one where every packet arrived on schedule — both hold zero samples, and
+   * only one of them is a measurement.
+   */
+  measured: Uint8Array
+}
+
+/** Series names the API can return, in the order the UI offers them. */
+export const SERIES_NAMES = ['ipdv_send', 'ipdv_receive', 'server_processing'] as const
+export type SeriesName = (typeof SERIES_NAMES)[number]
+
+/** What each extra series is, in the words the graph uses. */
+export const SERIES_LABELS: Record<string, { title: string; help: string }> = {
+  ipdv_send: {
+    title: 'Jitter towards the target',
+    help:
+      'How much later or earlier each packet reached the far end than the one before it. ' +
+      'Measured as a difference between consecutive packets, so the two clocks need not be ' +
+      'synchronised for it to mean something. Negative means a packet caught up with its predecessor.',
+  },
+  ipdv_receive: {
+    title: 'Jitter on the way back',
+    help:
+      'The same measure in the other direction. The two are separate because the paths are: ' +
+      'a round trip cannot say which half of it got worse.',
+  },
+  server_processing: {
+    title: 'Time held by the far end',
+    help:
+      'How long the target held each packet between receiving it and replying. ' +
+      'Separates a slow peer from a slow path.',
+  },
 }
 
 /**
@@ -613,7 +670,42 @@ export async function fetchSeries(
   }
   const values = new Uint32Array(total)
   for (let i = 0; i < n; i++) values.set(rows[i], offsets[i])
-  return { ts, sent, received, flags, offsets, values, icmpErrors }
+
+  // The extra series are optional columns: a master older than them, or a
+  // probe that does not produce them, simply does not send them. A column that
+  // is present but null on every row is dropped too — it means this target
+  // measures nothing of the sort, and an empty graph would invite the reader
+  // to conclude the jitter was zero.
+  const extra: Record<string, ExtraSeries> = {}
+  for (const name of SERIES_NAMES) {
+    const col = table.getChild(name)
+    if (!col) continue
+    const eOffsets = new Uint32Array(n + 1)
+    const measured = new Uint8Array(n)
+    const eRows: (ArrayLike<number> | null)[] = new Array(n)
+    let eTotal = 0
+    let any = false
+    for (let i = 0; i < n; i++) {
+      const row = col.at(i) as ArrayLike<number> | null
+      if (row === null || row === undefined) {
+        eRows[i] = null
+      } else {
+        eRows[i] = row
+        measured[i] = 1
+        eTotal += row.length
+        any = true
+      }
+      eOffsets[i + 1] = eTotal
+    }
+    if (!any) continue
+    const eValues = new Int32Array(eTotal)
+    for (let i = 0; i < n; i++) {
+      const row = eRows[i]
+      if (row) eValues.set(row instanceof Int32Array ? row : Int32Array.from(row), eOffsets[i])
+    }
+    extra[name] = { offsets: eOffsets, values: eValues, measured }
+  }
+  return { ts, sent, received, flags, offsets, values, icmpErrors, extra }
 }
 
 /** The whole target tree as TOML — the same text `config export` writes. */

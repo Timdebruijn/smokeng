@@ -59,13 +59,50 @@ is imported without one and warned about — smokeng will not measure a `tcp` ta
 set `probe_port`. An `http`/`https` probe's path is left at `/`: SmokePing hides it in
 `urlformat`/`url` in ways too varied to reconstruct safely, so set `http_path` by hand where
 a probe requested a specific path. And an `IRTT` target comes across as `irtt` — the same
-tool, so the measurement is the same — but SmokePing's IRTT probe graphs one derived figure
-per target, often the send or receive jitter, while smokeng keeps the whole round-trip
-distribution and shows the spread. The plot will look different; nothing is lost. That is
-warned about per target.
+tool, so the measurement is the same — but the graphs are arranged differently, and that
+needs a paragraph of its own.
 
 A probe module the importer does not recognise is imported as `icmp` with a warning naming
 it, so nothing is measured as something it is not without saying so.
+
+## IRTT: three SmokePing targets become one
+
+SmokePing's IRTT probe graphs one figure per target, chosen with `metric`. A typical install
+therefore has the same host three times — the round trip, `send_ipdv` and `receive_ipdv` —
+and each of those is a separate graph.
+
+They were never three measurements. All three come out of one irtt session, and importing
+them as three targets made smokeng open three sessions to the same server, which collided:
+one won each interval and the other two recorded as send failures. So the importer keeps the
+plain target and skips the derived ones, naming each in a warning.
+
+Nothing is lost by that. smokeng runs the one session and keeps all three distributions from
+it, so the two jitter graphs come back — under the round trip, on the same time cursor,
+rather than as separate targets in the tree:
+
+```toml
+[targets.'wag/Irtt']
+host = "irtt.example.org"
+probe_type = "irtt"
+graph_series = "ipdv_send ipdv_receive"   # or "all", the default, or "" for none
+```
+
+`graph_series` is inherited like any other setting and chooses what is *drawn*. Everything
+measured is stored regardless, so turning a graph on later shows the history it already has
+rather than starting it from that moment.
+
+Two differences from the SmokePing graphs are worth knowing. smokeng keeps the whole
+distribution rather than a median with percentile bands, so a jitter plot is a cloud of
+individual values around a zero line, and its sign is preserved: a packet that caught up
+with the one before it is drawn below zero, not folded onto the same side as one that fell
+behind. And smokeng does not graph absolute one-way delay, which irtt also reports. That
+figure is a subtraction between two machines' wall clocks and is wrong by however far apart
+they have drifted — it measures NTP as much as the network. Inter-packet delay variation is
+a difference between consecutive packets on the monotonic clock, so the clock offset cancels
+and the number means what it says without the two ends being synchronised.
+
+A series needs the far end to return timestamps. An `irtt server` that does not is not an
+error and does not read as zero jitter: the graph says the series was not measured.
 
 ## What is different once you are across
 

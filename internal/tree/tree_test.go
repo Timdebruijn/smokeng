@@ -17,6 +17,7 @@ func testTargets() []Target {
 			Agents:           ptr("local"),
 			TraceIntervalS:   ptr(300),
 			RetentionS:       ptr(0),
+			GraphSeries:      ptr("all"),
 			ProbeType:        ptr("icmp"),
 			TLSSkipVerify:    ptr(false),
 		}},

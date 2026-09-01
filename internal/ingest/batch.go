@@ -24,7 +24,19 @@ var BatchSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "flags", Type: arrow.PrimitiveTypes.Uint8},
 	{Name: "samples", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint32)},
 	{Name: "icmp_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
+	// The extra per-packet series, one nullable column each. Null means the
+	// probe did not measure it — an irtt peer that returns no timestamps, or
+	// any other probe type, for which these are simply not a thing. An empty
+	// list would say something different and wrong: measured, and flat.
+	{Name: store.SeriesIPDVSend, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
+	{Name: store.SeriesIPDVReceive, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
+	{Name: store.SeriesServerProcessing, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
 }, nil)
+
+// seriesColumns are the schema's optional series columns, in field order. They
+// are optional on the wire as well as nullable: an agent built before they
+// existed sends a batch without them, and the master reads what is there.
+var seriesColumns = []string{store.SeriesIPDVSend, store.SeriesIPDVReceive, store.SeriesServerProcessing}
 
 // EncodeBatch serialises measurements for submission.
 func EncodeBatch(ms []store.Measurement) ([]byte, error) {
@@ -41,6 +53,12 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 	listB := rb.Field(5).(*array.ListBuilder)
 	valB := listB.ValueBuilder().(*array.Uint32Builder)
 	icmpB := rb.Field(6).(*array.Uint16Builder)
+	seriesB := make([]*array.ListBuilder, len(seriesColumns))
+	seriesV := make([]*array.Int32Builder, len(seriesColumns))
+	for i := range seriesColumns {
+		seriesB[i] = rb.Field(7 + i).(*array.ListBuilder)
+		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
+	}
 
 	for _, m := range ms {
 		targetB.Append(m.TargetID)
@@ -54,6 +72,15 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 			icmpB.Append(*m.ICMPErr)
 		} else {
 			icmpB.AppendNull()
+		}
+		for i, name := range seriesColumns {
+			vals, ok := m.Series[name]
+			if !ok {
+				seriesB[i].AppendNull()
+				continue
+			}
+			seriesB[i].Append(true)
+			seriesV[i].AppendValues(vals, nil)
 		}
 	}
 	rec := rb.NewRecord()
@@ -80,19 +107,57 @@ func DecodeBatch(body []byte, agentID int64) ([]store.Measurement, error) {
 	var out []store.Measurement
 	for reader.Next() {
 		rec := reader.Record()
-		if rec.NumCols() != int64(len(BatchSchema.Fields())) {
-			return nil, fmt.Errorf("ingest: batch has %d columns, want %d",
-				rec.NumCols(), len(BatchSchema.Fields()))
+		// Columns are resolved by name, not by position. The series columns
+		// were added after the first agents shipped, and an agent that predates
+		// them sends a batch without them; matching on a column count would
+		// reject that agent's whole submission — every measurement lost, to
+		// gain three optional distributions. Missing required columns are still
+		// an error, and are named.
+		col := func(name string) arrow.Array {
+			for i, f := range rec.Schema().Fields() {
+				if f.Name == name {
+					return rec.Column(i)
+				}
+			}
+			return nil
 		}
-		targets, ok1 := rec.Column(0).(*array.Int64)
-		ts, ok2 := rec.Column(1).(*array.Timestamp)
-		sent, ok3 := rec.Column(2).(*array.Uint16)
-		recv, ok4 := rec.Column(3).(*array.Uint16)
-		flags, ok5 := rec.Column(4).(*array.Uint8)
-		samples, ok6 := rec.Column(5).(*array.List)
-		icmp, ok7 := rec.Column(6).(*array.Uint16)
+		var missing []string
+		must := func(name string) arrow.Array {
+			c := col(name)
+			if c == nil {
+				missing = append(missing, name)
+			}
+			return c
+		}
+		cTargets, cTS, cSent := must("target_id"), must("ts"), must("sent")
+		cRecv, cFlags, cSamples, cICMP := must("received"), must("flags"), must("samples"), must("icmp_error")
+		if len(missing) > 0 {
+			return nil, fmt.Errorf("ingest: batch is missing column(s) %v", missing)
+		}
+		targets, ok1 := cTargets.(*array.Int64)
+		ts, ok2 := cTS.(*array.Timestamp)
+		sent, ok3 := cSent.(*array.Uint16)
+		recv, ok4 := cRecv.(*array.Uint16)
+		flags, ok5 := cFlags.(*array.Uint8)
+		samples, ok6 := cSamples.(*array.List)
+		icmp, ok7 := cICMP.(*array.Uint16)
 		if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 || !ok7 {
 			return nil, fmt.Errorf("ingest: batch column types do not match the schema")
+		}
+		series := make(map[string]*array.List, len(seriesColumns))
+		for _, name := range seriesColumns {
+			c := col(name)
+			if c == nil {
+				continue // an agent older than this series
+			}
+			l, ok := c.(*array.List)
+			if !ok {
+				return nil, fmt.Errorf("ingest: column %q is not a list", name)
+			}
+			if _, ok := l.ListValues().(*array.Int32); !ok {
+				return nil, fmt.Errorf("ingest: column %q is not a list of int32", name)
+			}
+			series[name] = l
 		}
 		values, ok := samples.ListValues().(*array.Uint32)
 		if !ok {
@@ -121,6 +186,22 @@ func DecodeBatch(body []byte, agentID int64) ([]store.Measurement, error) {
 			if !icmp.IsNull(i) {
 				v := icmp.Value(i)
 				m.ICMPErr = &v
+			}
+			for _, name := range seriesColumns {
+				l := series[name]
+				if l == nil || l.IsNull(i) {
+					continue // not measured; absence is the record of that
+				}
+				vals := l.ListValues().(*array.Int32)
+				off := l.Offsets()
+				got := make([]int32, 0, off[i+1]-off[i])
+				for j := off[i]; j < off[i+1]; j++ {
+					got = append(got, vals.Value(int(j)))
+				}
+				if m.Series == nil {
+					m.Series = make(map[string][]int32, len(seriesColumns))
+				}
+				m.Series[name] = got
 			}
 			out = append(out, m)
 		}

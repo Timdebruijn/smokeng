@@ -29,6 +29,14 @@ var measurementsSchema = arrow.NewSchema([]arrow.Field{
 	// ICMP type<<8|code for the error that explains this interval's failures,
 	// null when nothing was refused.
 	{Name: "icmp_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
+	// The extra per-packet series, one nullable column each, in the same units
+	// and the same sorted order as samples. Null is not zero: it means this
+	// interval has no such measurement — the probe does not produce one, or the
+	// peer returned no timestamps to compute it from — and the graph says so
+	// rather than drawing a flat line.
+	{Name: store.SeriesIPDVSend, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
+	{Name: store.SeriesIPDVReceive, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
+	{Name: store.SeriesServerProcessing, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
 }, nil)
 
 // handleMeasurements streams one series over [from, to) as Arrow IPC.
@@ -97,6 +105,12 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	listB := rb.Field(4).(*array.ListBuilder)
 	valB := listB.ValueBuilder().(*array.Uint32Builder)
 	icmpB := rb.Field(5).(*array.Uint16Builder)
+	seriesB := make([]*array.ListBuilder, len(store.KnownSeries))
+	seriesV := make([]*array.Int32Builder, len(store.KnownSeries))
+	for i := range store.KnownSeries {
+		seriesB[i] = rb.Field(6 + i).(*array.ListBuilder)
+		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
+	}
 
 	flush := func() bool {
 		rec := rb.NewRecord()
@@ -114,6 +128,15 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 			icmpB.Append(*m.ICMPErr)
 		} else {
 			icmpB.AppendNull()
+		}
+		for j, name := range store.KnownSeries {
+			vals, ok := m.Series[name]
+			if !ok {
+				seriesB[j].AppendNull()
+				continue
+			}
+			seriesB[j].Append(true)
+			seriesV[j].AppendValues(vals, nil)
 		}
 		if (i+1)%batchRows == 0 && !flush() {
 			return // client went away mid-stream

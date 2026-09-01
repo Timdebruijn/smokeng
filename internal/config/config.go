@@ -48,6 +48,12 @@ type Values struct {
 	// seconds; 0 keeps them forever (the default). A positive value prunes
 	// whole older intervals, never consolidating them.
 	RetentionS *int `toml:"retention_s,omitempty"`
+	// GraphSeries chooses which of the extra per-packet distributions a probe
+	// measures are drawn, as a space-separated list ("ipdv_send ipdv_receive"),
+	// "all" for every series that has data, or "" for none. Display only:
+	// everything measured is stored whatever this says, so turning a graph on
+	// later shows its history rather than starting it from that moment.
+	GraphSeries *string `toml:"graph_series,omitempty"`
 	// What the probes of an interval are, and the settings the chosen type
 	// reads (DESIGN.md §3.2b). A setting belonging to another type is stored
 	// and inherited as usual, and simply not read.
@@ -316,6 +322,7 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 			// through now, alongside retention_s.
 			TraceIntervalS: e.TraceIntervalS,
 			RetentionS:     e.RetentionS,
+			GraphSeries:    e.GraphSeries,
 		}
 		if existed && !reflect.DeepEqual(before, *n) {
 			sum.Updated++
@@ -650,6 +657,7 @@ func valuesFrom(s tree.Settings) Values {
 		TLSSkipVerify:    s.TLSSkipVerify,
 		TraceIntervalS:   s.TraceIntervalS,
 		RetentionS:       s.RetentionS,
+		GraphSeries:      s.GraphSeries,
 	}
 }
 
@@ -702,6 +710,9 @@ func overlayValues(dst *tree.Settings, v Values) {
 	if v.RetentionS != nil {
 		dst.RetentionS = v.RetentionS
 	}
+	if v.GraphSeries != nil {
+		dst.GraphSeries = v.GraphSeries
+	}
 }
 
 func validatePath(p string) error {
@@ -738,6 +749,7 @@ func validateEntry(p string, e Entry) error {
 			TLSSkipVerify:    e.TLSSkipVerify,
 			TraceIntervalS:   e.TraceIntervalS,
 			RetentionS:       e.RetentionS,
+			GraphSeries:      e.GraphSeries,
 		},
 	}
 	if err := t.Validate(); err != nil {

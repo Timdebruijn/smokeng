@@ -1696,3 +1696,79 @@ a.button {
   font-size: 0.72rem;
   padding: 0.1rem 0.5rem;
 }
+
+/* The extra per-packet distributions, stacked under the round trip on the
+   detail page. Same visual language as .plot-stack — one crosshair runs
+   through all of them — but quieter: these are read alongside the round trip,
+   not instead of it. */
+.series-plot {
+  margin: 1rem 0 0;
+}
+
+.series-plot figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  font-size: 0.85rem;
+}
+
+.series-help {
+  color: var(--muted);
+  font-size: 0.78rem;
+  flex: 1 1 20rem;
+}
+
+.series-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.series-canvas {
+  position: relative;
+  cursor: crosshair;
+}
+
+.series-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.series-canvas .series-overlay {
+  position: absolute;
+  inset: 0;
+  border-color: transparent;
+  pointer-events: none;
+}
+
+/* Sits over the empty canvas rather than replacing it, so the axis frame still
+   shows the window the reader asked for while the note says why it is bare. */
+.series-note {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 2rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.series-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+
+.series-picker label.muted {
+  color: var(--muted);
+}

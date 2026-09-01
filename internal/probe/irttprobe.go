@@ -3,6 +3,7 @@ package probe
 import (
 	"context"
 	"log"
+	"math"
 	"net"
 	"net/netip"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/heistp/irtt"
+	"github.com/timdebruijn/smokeng/internal/store"
 )
 
 // defaultIRTTPort is where `irtt server` listens unless told otherwise.
@@ -166,6 +168,7 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 		}
 		col.recordRoundTrip(i, rt.RTT())
 	}
+	recordIRTTSeries(col, r)
 	// A send error leaves RoundTrips short of Pings; the tail never went out, so
 	// it is a send failure, not silent absence — otherwise Sent would under-count
 	// and the interval would look narrower than it was asked to be.
@@ -183,4 +186,64 @@ func irttStep(spec TargetSpec) time.Duration {
 		return time.Duration(spec.IntervalS) * time.Second / time.Duration(spec.Pings)
 	}
 	return time.Duration(spec.BurstGapMS) * time.Millisecond
+}
+
+// recordIRTTSeries keeps the per-packet measurements irtt makes beside the
+// round trip. They come out of the session smokeng already runs, so this costs
+// nothing but the storage — and without it the directional half of what irtt
+// measures is read off the wire and thrown away, which is what smokeng did
+// until a migration noticed SmokePing had been graphing it all along.
+//
+// Only inter-packet delay variation is kept, not the absolute one-way delays
+// sitting next to it in the same result. IPDV is a difference between
+// consecutive packets taken from the monotonic clock, so the offset between the
+// two hosts cancels; one-way delay is a difference between two hosts' wall
+// clocks, and is wrong by exactly however far apart they have drifted. That
+// makes one of them a measurement and the other a measurement of NTP, and only
+// the first belongs in a graph labelled latency.
+//
+// A series the peer gave no timestamps for is left out entirely rather than
+// stored empty: "this server does not report it" and "there was no variation"
+// are different facts, and only absence can carry the first.
+func recordIRTTSeries(col *collector, r *irtt.Result) {
+	var send, receive, processing []int32
+	for i := range r.RoundTrips {
+		rt := &r.RoundTrips[i]
+		if rt.RoundTripData == nil || !rt.ReplyReceived() {
+			continue
+		}
+		// The first packet of a session has no predecessor to vary from, so
+		// its IPDV is invalid rather than zero; so is every packet's when the
+		// server returns no timestamps.
+		if d, ok := irttMicros(rt.SendIPDV); ok {
+			send = append(send, d)
+		}
+		if d, ok := irttMicros(rt.ReceiveIPDV); ok {
+			receive = append(receive, d)
+		}
+		if d, ok := irttMicros(rt.ServerProcessingTime()); ok {
+			processing = append(processing, d)
+		}
+	}
+	col.recordSeries(store.SeriesIPDVSend, send)
+	col.recordSeries(store.SeriesIPDVReceive, receive)
+	col.recordSeries(store.SeriesServerProcessing, processing)
+}
+
+// irttMicros converts an irtt duration to microseconds, reporting whether it
+// was measured at all. irtt signals "not available" with a sentinel duration
+// rather than an error, and storing that sentinel would put a value near the
+// edge of int64 into a jitter distribution.
+func irttMicros(d time.Duration) (int32, bool) {
+	if d == irtt.InvalidDuration {
+		return 0, false
+	}
+	us := d.Microseconds()
+	if us > math.MaxInt32 || us < math.MinInt32 {
+		// Not clamped: a value this far out is not a jitter reading that needs
+		// rounding, it is a reading that cannot be true, and clamping would put
+		// a plausible-looking extreme into the distribution.
+		return 0, false
+	}
+	return int32(us), true
 }

@@ -79,6 +79,7 @@ func targetJSON(sc *Scope, n *tree.Target) (map[string]any, error) {
 			"agents":             settingJSON(sc, n.ID, res.Agents),
 			"trace_interval_s":   settingJSON(sc, n.ID, res.TraceIntervalS),
 			"retention_s":        settingJSON(sc, n.ID, res.RetentionS),
+			"graph_series":       settingJSON(sc, n.ID, res.GraphSeries),
 			"probe_type":         settingJSON(sc, n.ID, res.ProbeType),
 			"probe_port":         settingJSON(sc, n.ID, res.ProbePort),
 			"dns_query":          settingJSON(sc, n.ID, res.DNSQuery),
@@ -438,8 +439,22 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 			"dns_query":   &n.Settings.DNSQuery,
 			"dns_rr_type": &n.Settings.DNSRRType,
 			"http_path":   &n.Settings.HTTPPath,
+			// The UI sends this as an array of series names, handled below; a
+			// space-separated string still works and means the same thing.
+			"graph_series": &n.Settings.GraphSeries,
 		}
 		for key, raw := range settings {
+			// graph_series travels as an array of series names, which is what
+			// a set of checkboxes naturally produces. An empty array is not
+			// null: it means draw none, while null means inherit.
+			if key == "graph_series" && !isNull(raw) {
+				var list []string
+				if err := json.Unmarshal(raw, &list); err == nil {
+					joined := strings.Join(list, " ")
+					n.Settings.GraphSeries = &joined
+					continue
+				}
+			}
 			// The UI sends agents as an array; a string still works and means
 			// the same thing.
 			if key == "agents" && !isNull(raw) {

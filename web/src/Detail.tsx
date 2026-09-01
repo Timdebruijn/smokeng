@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import Plot from './Plot'
+import SeriesPlot from './SeriesPlot'
 import {
+  SERIES_NAMES,
   fetchAlertRules,
   fetchAvailability,
   fetchSeries,
   isUnset,
   type AgentInfo,
+  type SeriesName,
   type AlertRule,
   type AvailabilityResponse,
   type SettingValue,
@@ -200,6 +203,19 @@ export default function Detail({
             onZoom={() => undefined}
           />
         )}
+        {agentId !== null &&
+          selectedSeries(target).map((name) => (
+            <SeriesPlot
+              key={name}
+              targetId={target.id}
+              targetPath={target.path}
+              agentId={agentId}
+              name={name}
+              from={from}
+              to={to}
+              refreshKey={refreshKey}
+            />
+          ))}
       </div>
 
       <AvailabilityPanel target={target} />
@@ -326,6 +342,30 @@ function downloadCSV(filename: string, rows: string[][]) {
  * figure taken over a half-measured window cannot pass for one taken over a full
  * one. A gap is unknown time — never counted as up, and never as down.
  */
+/**
+ * Which extra distributions this target draws, from its resolved graph_series.
+ *
+ * "all" is the default and means every series that has data — which is decided
+ * by the data, not here: a series nothing measured is dropped by the fetch, and
+ * SeriesPlot says so rather than drawing an empty graph. An unparseable value
+ * falls back to all: the setting is validated on the way in, so a bad one here
+ * means something upstream went wrong, and showing more than asked is the
+ * lesser failure of the two.
+ */
+function selectedSeries(target: Target): SeriesName[] {
+  // Only irtt measures any of these. Offering them on an ICMP target would
+  // stack three panels saying "not measured" under every graph in the tree,
+  // which reads as a fault rather than as a probe type that has no such
+  // measure — and buries the one case where "not measured" is worth reading:
+  // an irtt peer that returns no timestamps.
+  if (String(target.settings.probe_type?.effective ?? 'icmp') !== 'irtt') return []
+  const raw = (target.settings.graph_series?.effective ?? 'all').trim()
+  if (raw === 'all') return [...SERIES_NAMES]
+  if (raw === '') return []
+  const want = new Set(raw.split(/\s+/))
+  return SERIES_NAMES.filter((n) => want.has(n))
+}
+
 function AvailabilityPanel({ target }: { target: Target }) {
   const [periodS, setPeriodS] = useState(7 * 86400)
   const [strict, setStrict] = useState(true) // strict = down only at 100% loss

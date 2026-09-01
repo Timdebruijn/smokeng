@@ -196,7 +196,71 @@ func (s *SQLite) PendingMeasurements(ctx context.Context, limit int) ([]Measurem
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachPendingSeries(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// attachPendingSeries fills in the extra per-packet distributions for the
+// measurements about to be pushed. Without it an agent would measure jitter and
+// then drop it on the floor at the point of submission — the master would show
+// the round trip and nothing else, and only for remotely probed targets, which
+// is precisely the kind of difference nobody notices for months.
+//
+// The rows are read in one range query rather than one per measurement: the
+// caller's slice is ordered by ts, so its first and last bound the range, and
+// the exact key match below discards anything else that falls inside it.
+func (s *SQLite) attachPendingSeries(ctx context.Context, ms []Measurement) error {
+	if len(ms) == 0 {
+		return nil
+	}
+	type key struct{ target, agent, ts int64 }
+	byKey := make(map[key]*Measurement, len(ms))
+	lo, hi := ms[0].TS, ms[0].TS
+	for i := range ms {
+		byKey[key{ms[i].TargetID, ms[i].AgentID, ms[i].TS}] = &ms[i]
+		if ms[i].TS < lo {
+			lo = ms[i].TS
+		}
+		if ms[i].TS > hi {
+			hi = ms[i].TS
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT target_id, agent_id, ts, series, samples FROM measurement_series
+		WHERE ts >= ? AND ts <= ?`, lo, hi)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k key
+		var name string
+		var blob []byte
+		if err := rows.Scan(&k.target, &k.agent, &k.ts, &name, &blob); err != nil {
+			return err
+		}
+		m := byKey[k]
+		if m == nil {
+			// Not an error here, unlike on the master: this range can legitimately
+			// contain series for measurements outside the page the limit returned.
+			continue
+		}
+		vals, err := enc.DecodeSigned(blob)
+		if err != nil {
+			return fmt.Errorf("store: pending series %q at (%d,%d,%d): %w",
+				name, k.target, k.agent, k.ts, err)
+		}
+		if m.Series == nil {
+			m.Series = make(map[string][]int32, 2)
+		}
+		m.Series[name] = vals
+	}
+	return rows.Err()
 }
 
 // DropSubmitted forgets measurements the master has confirmed. It runs only
@@ -222,8 +286,19 @@ func (s *SQLite) DropSubmitted(ctx context.Context, ms []Measurement) error {
 		return err
 	}
 	defer stmt.Close()
+	// The outbox drops the series with the measurement it belongs to. An agent
+	// that kept them would grow the table it was rewritten to stop growing.
+	delSeries, err := tx.PrepareContext(ctx,
+		"DELETE FROM measurement_series WHERE target_id = ? AND agent_id = ? AND ts = ?")
+	if err != nil {
+		return err
+	}
+	defer delSeries.Close()
 	for _, m := range ms {
 		if _, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
+			return err
+		}
+		if _, err := delSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
 			return err
 		}
 	}

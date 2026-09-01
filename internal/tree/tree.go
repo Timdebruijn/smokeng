@@ -6,6 +6,7 @@ package tree
 
 import (
 	"fmt"
+	"github.com/timdebruijn/smokeng/internal/series"
 	"slices"
 	"strings"
 )
@@ -66,6 +67,16 @@ type Settings struct {
 	// whole intervals older than it — never consolidating them, so the graph
 	// shows no data before the horizon rather than a coarsened average.
 	RetentionS *int
+	// GraphSeries chooses which of the extra per-packet distributions a probe
+	// measures are drawn, as a space-separated list of series names (see
+	// store.SeriesIPDVSend). It is about what is shown, never about what is
+	// kept: everything measured is stored regardless, so turning a graph back
+	// on shows its history rather than starting it from today.
+	//
+	// "all" draws every series that has data — the default, because a
+	// measurement smokeng took and did not show is one nobody knows to look
+	// for. The empty string draws none, leaving only the round trip.
+	GraphSeries *string
 }
 
 // Source identifies the node an effective value came from.
@@ -95,6 +106,7 @@ type Resolved struct {
 	Agents           Value[string]
 	TraceIntervalS   Value[int]
 	RetentionS       Value[int]
+	GraphSeries      Value[string]
 	ProbeType        Value[string]
 	ProbePort        Value[int]
 	DNSQuery         Value[string]
@@ -179,6 +191,11 @@ func (t *Target) Validate() error {
 	if s.Agents != nil && strings.TrimSpace(*s.Agents) == "" {
 		return fmt.Errorf("tree: agents must name at least one agent, or be unset to inherit")
 	}
+	if s.GraphSeries != nil {
+		if _, _, err := series.ParseSelection(*s.GraphSeries); err != nil {
+			return fmt.Errorf("tree: graph_series: %w", err)
+		}
+	}
 	// 0 disables path discovery, so only a negative value is wrong.
 	if s.TraceIntervalS != nil && *s.TraceIntervalS < 0 {
 		return fmt.Errorf("tree: trace_interval_s must not be negative (0 disables it)")
@@ -235,7 +252,8 @@ func New(targets []Target) (*Tree, error) {
 	if s.IntervalS == nil || s.PingsPerInterval == nil || s.ProbeMode == nil ||
 		s.BurstGapMS == nil || s.TimeoutMS == nil || s.PacketSize == nil ||
 		s.DSCP == nil || s.Agents == nil || s.TraceIntervalS == nil ||
-		s.RetentionS == nil || s.ProbeType == nil || s.TLSSkipVerify == nil {
+		s.RetentionS == nil || s.ProbeType == nil || s.TLSSkipVerify == nil ||
+		s.GraphSeries == nil {
 		return nil, fmt.Errorf("tree: root %d must set every inheritable default", t.root.ID)
 	}
 	for _, n := range t.nodes {
@@ -344,6 +362,7 @@ func (t *Tree) Resolve(id int64) (Resolved, error) {
 		TLSSkipVerify:    resolve(t, chain, func(s *Settings) *bool { return s.TLSSkipVerify }),
 		TraceIntervalS:   resolve(t, chain, func(s *Settings) *int { return s.TraceIntervalS }),
 		RetentionS:       resolve(t, chain, func(s *Settings) *int { return s.RetentionS }),
+		GraphSeries:      resolve(t, chain, func(s *Settings) *string { return s.GraphSeries }),
 	}, nil
 }
 

@@ -72,6 +72,28 @@ type collector struct {
 	// can jump.
 	startWall time.Time
 	startMono time.Time
+	// series holds the extra per-packet distributions a probe measured beside
+	// the round trip. Only irtt fills this in, and only for the series its peer
+	// gave it the timestamps to compute; the rest stay absent rather than
+	// present-and-zero. See store.SeriesIPDVSend.
+	series map[string][]int32
+}
+
+// recordSeries attaches one extra per-packet distribution to this bucket. The
+// values are sorted here rather than at the call site: what is stored is a
+// distribution, so the order packets arrived in is not part of it, and the blob
+// codec requires ascending order anyway.
+func (c *collector) recordSeries(name string, vals []int32) {
+	if len(vals) == 0 {
+		return
+	}
+	slices.Sort(vals)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.series == nil {
+		c.series = make(map[string][]int32, 2)
+	}
+	c.series[name] = vals
 }
 
 // conditions describe how the measurement was taken, as opposed to what it
@@ -370,5 +392,6 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 		}
 		m.ICMPErr = &best
 	}
+	m.Series = c.series
 	return m
 }

@@ -1,0 +1,126 @@
+package ingest
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+
+	"github.com/timdebruijn/smokeng/internal/store"
+)
+
+func TestBatchCarriesSeries(t *testing.T) {
+	in := []store.Measurement{
+		{TargetID: 1, TS: 100, Sent: 3, Received: 3, Samples: []uint32{10, 20, 30},
+			Series: map[string][]int32{
+				store.SeriesIPDVSend:    {-40, -1, 12},
+				store.SeriesIPDVReceive: {-9, 0, 3},
+			}},
+		// A second row with no series at all, so the null path is exercised in
+		// the same batch as the populated one.
+		{TargetID: 2, TS: 100, Sent: 1, Received: 1, Samples: []uint32{50}},
+	}
+	blob, err := EncodeBatch(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := DecodeBatch(blob, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("got %d measurements, want 2", len(out))
+	}
+	send := out[0].Series[store.SeriesIPDVSend]
+	if len(send) != 3 || send[0] != -40 || send[2] != 12 {
+		t.Errorf("ipdv_send = %v, want [-40 -1 12]", send)
+	}
+	if _, ok := out[0].Series[store.SeriesServerProcessing]; ok {
+		t.Error("a series that was never measured arrived present")
+	}
+	if out[1].Series != nil {
+		t.Errorf("a measurement with no series arrived carrying %v", out[1].Series)
+	}
+}
+
+// An agent built before the series columns existed submits a batch without
+// them. Rejecting it would throw away every measurement in the submission to
+// gain three optional distributions, and would make upgrading the master a
+// flag day for every remote agent.
+func TestDecodeBatchAcceptsPreSeriesAgent(t *testing.T) {
+	old := arrow.NewSchema([]arrow.Field{
+		{Name: "target_id", Type: arrow.PrimitiveTypes.Int64},
+		{Name: "ts", Type: &arrow.TimestampType{Unit: arrow.Second, TimeZone: "UTC"}},
+		{Name: "sent", Type: arrow.PrimitiveTypes.Uint16},
+		{Name: "received", Type: arrow.PrimitiveTypes.Uint16},
+		{Name: "flags", Type: arrow.PrimitiveTypes.Uint8},
+		{Name: "samples", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint32)},
+		{Name: "icmp_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
+	}, nil)
+
+	var buf bytes.Buffer
+	w := ipc.NewWriter(&buf, ipc.WithSchema(old))
+	rb := array.NewRecordBuilder(memory.DefaultAllocator, old)
+	defer rb.Release()
+	rb.Field(0).(*array.Int64Builder).Append(4)
+	rb.Field(1).(*array.TimestampBuilder).Append(arrow.Timestamp(900))
+	rb.Field(2).(*array.Uint16Builder).Append(2)
+	rb.Field(3).(*array.Uint16Builder).Append(2)
+	rb.Field(4).(*array.Uint8Builder).Append(0)
+	list := rb.Field(5).(*array.ListBuilder)
+	list.Append(true)
+	list.ValueBuilder().(*array.Uint32Builder).AppendValues([]uint32{11, 22}, nil)
+	rb.Field(6).(*array.Uint16Builder).AppendNull()
+	rec := rb.NewRecord()
+	defer rec.Release()
+	if err := w.Write(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := DecodeBatch(buf.Bytes(), 3)
+	if err != nil {
+		t.Fatalf("a batch from an agent without the series columns was refused: %v", err)
+	}
+	if len(out) != 1 || out[0].Received != 2 || len(out[0].Samples) != 2 {
+		t.Fatalf("measurement did not survive: %+v", out)
+	}
+	if out[0].Series != nil {
+		t.Errorf("series invented for an agent that sent none: %v", out[0].Series)
+	}
+}
+
+// A batch missing a column that is genuinely required is still refused, and
+// says which one, rather than being read with a silently absent field.
+func TestDecodeBatchRefusesMissingRequiredColumn(t *testing.T) {
+	bad := arrow.NewSchema([]arrow.Field{
+		{Name: "target_id", Type: arrow.PrimitiveTypes.Int64},
+		{Name: "ts", Type: &arrow.TimestampType{Unit: arrow.Second, TimeZone: "UTC"}},
+	}, nil)
+	var buf bytes.Buffer
+	w := ipc.NewWriter(&buf, ipc.WithSchema(bad))
+	rb := array.NewRecordBuilder(memory.DefaultAllocator, bad)
+	defer rb.Release()
+	rb.Field(0).(*array.Int64Builder).Append(1)
+	rb.Field(1).(*array.TimestampBuilder).Append(arrow.Timestamp(1))
+	rec := rb.NewRecord()
+	defer rec.Release()
+	if err := w.Write(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := DecodeBatch(buf.Bytes(), 1)
+	if err == nil {
+		t.Fatal("a batch with no samples column was accepted")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("samples")) {
+		t.Errorf("error does not name the missing column: %v", err)
+	}
+}

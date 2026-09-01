@@ -10,14 +10,14 @@
  * All geometry arrives in CSS pixels and is scaled by devicePixelRatio here,
  * so text, line weights and the blur keep their intended size on any display.
  */
-import { AXIS_W, AXIS_H, RAIL_H, RAIL_GAP, fmtUs, inferSpan } from './layout'
+import { AXIS_W, AXIS_H, RAIL_H, RAIL_GAP, fmtSigned, fmtUs, inferSpan } from './layout'
 
 interface SeriesMsg {
   ts: Float64Array
   sent: Float64Array
   received: Float64Array
   offsets: Uint32Array
-  values: Uint32Array
+  values: Uint32Array | Int32Array
 }
 
 interface ViewMsg {
@@ -28,6 +28,19 @@ interface ViewMsg {
   t1: number
   dark: boolean
   log: boolean
+  /**
+   * A signed series (inter-packet delay variation) rather than a duration.
+   * The scale becomes linear and symmetric about zero, with the zero line
+   * drawn: on a jitter plot the sign is the point — a packet that caught up
+   * with its predecessor and one that fell behind are different events, and a
+   * scale that started at zero would put them on top of each other.
+   */
+  signed?: boolean
+  /**
+   * Draw the loss rail. Off for the extra series, where it would repeat the
+   * round trip's loss under a graph that did not measure it.
+   */
+  rail?: boolean
 }
 
 // Density→alpha: count-normalized fixed curve alpha = 1 − exp(−K·fraction)
@@ -83,13 +96,15 @@ function viridis(t: number): [number, number, number] {
   return [r1 + f * (r2 - r1), g1 + f * (g2 - g1), b1 + f * (b2 - b1)]
 }
 
-function quantile(sorted: Uint32Array, q: number): number {
+function quantile(sorted: Uint32Array | Int32Array, q: number): number {
   if (sorted.length === 0) return 0
   return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]
 }
 
 function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   const { cssW, cssH, dpr, t0, t1, dark, log } = view
+  const signed = view.signed === true
+  const showRail = view.rail !== false
   const w = Math.round(cssW * dpr)
   const h = Math.round(cssH * dpr)
   cv.width = w
@@ -98,8 +113,8 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   ctx.clearRect(0, 0, w, h)
 
   const axisW = Math.round(AXIS_W * dpr)
-  const railH = Math.round(RAIL_H * dpr)
-  const railGap = Math.round(RAIL_GAP * dpr)
+  const railH = showRail ? Math.round(RAIL_H * dpr) : 0
+  const railGap = showRail ? Math.round(RAIL_GAP * dpr) : 0
   const axisH = Math.round(AXIS_H * dpr)
   const plotW = w - axisW
   const plotH = h - railH - railGap - axisH
@@ -111,7 +126,17 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   const allSorted = sortedCopy(d.values)
   let ymax: number
   let ymin = 0
-  if (log) {
+  if (signed) {
+    // Symmetric about zero, sized from both tails so the two directions are
+    // drawn to the same scale: a plot whose zero drifted off centre would make
+    // a link that only ever bursts late look the same as one that jitters
+    // evenly.
+    const lo = Math.abs(quantile(allSorted, 0.005))
+    const hi = Math.abs(quantile(allSorted, 0.995))
+    ymax = Math.max(lo, hi) * 1.15
+    if (!(ymax > 0)) ymax = 100 // a perfectly flat window still needs an axis
+    ymin = -ymax
+  } else if (log) {
     ymax = Math.max((allSorted[allSorted.length - 1] ?? 0) * 1.2, 1000)
     ymin = Math.max(quantile(allSorted, 0.005) * 0.7, 20)
   } else {
@@ -120,8 +145,17 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   const lmin = Math.log10(Math.max(ymin, 1))
   const lmax = Math.log10(ymax)
   const yFrac = (us: number): number =>
-    log ? (Math.log10(Math.max(us, ymin)) - lmin) / (lmax - lmin) : Math.min(us, ymax) / ymax
-  const fracVal = (f: number): number => (log ? Math.pow(10, lmin + f * (lmax - lmin)) : f * ymax)
+    signed
+      ? (us - ymin) / (ymax - ymin)
+      : log
+        ? (Math.log10(Math.max(us, ymin)) - lmin) / (lmax - lmin)
+        : Math.min(us, ymax) / ymax
+  const fracVal = (f: number): number =>
+    signed ? ymin + f * (ymax - ymin) : log ? Math.pow(10, lmin + f * (lmax - lmin)) : f * ymax
+  // Samples outside the drawn range are left out of the density rather than
+  // pinned to the edge, for the reason spelt out at the clip below. On a
+  // signed scale that applies at both ends.
+  const clipped = (v: number): boolean => (signed ? v < ymin || v > ymax : !log && v > ymax)
 
   const text = dark ? 'rgba(255,255,255,0.62)' : 'rgba(0,0,0,0.58)'
   const grid = dark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.08)'
@@ -169,7 +203,7 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
         // statistic and can legitimately sit above the drawn axis. The log
         // scale never clips (ymax there is sized from the data itself), so
         // this only applies on linear.
-        if (!log && v > ymax) {
+        if (clipped(v)) {
           pooled.push(v)
           continue
         }
@@ -226,7 +260,8 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
     ctx.moveTo(axisW, y + 0.5)
     ctx.lineTo(w, y + 0.5)
     ctx.stroke()
-    const label = log && i === 0 ? fmtUs(ymin) : fmtUs(fracVal(frac))
+    const v = fracVal(frac)
+    const label = log && !signed && i === 0 ? fmtUs(ymin) : signed ? fmtSigned(v) : fmtUs(v)
     ctx.fillText(label, axisW - 6 * dpr, Math.min(Math.max(y, 7 * dpr), plotH - 7 * dpr))
   }
 
@@ -251,7 +286,7 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   ctx.beginPath()
   let pen = false
   for (let x = 0; x < plotW; x++) {
-    if (Number.isNaN(median[x]) || (!log && median[x] > ymax)) {
+    if (Number.isNaN(median[x]) || clipped(median[x])) {
       pen = false
       continue
     }
@@ -282,8 +317,10 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
 // Per-row sample lists are sorted; a full ascending sort of the concatenation
 // is still cheap at these sizes and is only needed for the y scale.
 // TypedArray.sort() is numeric.
-function sortedCopy(values: Uint32Array): Uint32Array {
-  const copy = values.slice()
+// TypedArray.prototype.sort is numeric, not lexicographic like Array's, so
+// this orders negative values correctly as well.
+function sortedCopy<T extends Uint32Array | Int32Array>(values: T): T {
+  const copy = values.slice() as T
   copy.sort()
   return copy
 }

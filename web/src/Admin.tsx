@@ -1,6 +1,8 @@
 import TomlDialog from './TomlDialog'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  SERIES_LABELS,
+  SERIES_NAMES,
   createTarget,
   deleteTarget,
   fetchTargets,
@@ -17,7 +19,7 @@ interface SettingDef {
   key: SettingKey
   label: string
   unit?: string
-  kind: 'number' | 'text' | 'choice' | 'agents' | 'bool'
+  kind: 'number' | 'text' | 'choice' | 'agents' | 'bool' | 'series'
   min?: number
   max?: number
   choices?: { value: string; label: string }[]
@@ -125,6 +127,13 @@ const SETTINGS: SettingDef[] = [
     kind: 'number',
     min: 0,
     hint: 'How long to keep this target’s raw measurements. 0 keeps them forever, at full resolution. A positive value deletes whole intervals older than it — never averaging them away, so history before the horizon reads as absent.',
+  },
+  {
+    key: 'graph_series',
+    label: 'Extra graphs',
+    kind: 'series',
+    types: ['irtt'],
+    hint: 'Which of the per-packet distributions measured beside the round trip are drawn. This changes what is shown, never what is kept — everything measured is stored regardless, so switching one on later shows its history rather than starting it from today. Only irtt targets measure any of these, and only where the far end returns timestamps.',
   },
 ]
 
@@ -534,7 +543,13 @@ function SettingRow({
     <tr>
       <th>{def.label}</th>
       <td>
-        {def.kind === 'agents' ? (
+        {def.kind === 'series' ? (
+          <SeriesPicker
+            selected={String(value.effective)}
+            disabled={busy || !isLocal}
+            onChange={set}
+          />
+        ) : def.kind === 'agents' ? (
           <AgentPicker
             selected={String(value.effective)}
             agents={agents}
@@ -729,5 +744,54 @@ function AddChildForm({
         Cancel
       </button>
     </form>
+  )
+}
+
+/**
+ * Which extra distributions to draw. "all" is its own choice rather than every
+ * box ticked: the two mean different things over time — "all" picks up a series
+ * added later, an explicit list does not — and collapsing them would silently
+ * change a target's meaning on the next release that adds one.
+ */
+function SeriesPicker({
+  selected,
+  disabled,
+  onChange,
+}: {
+  selected: string
+  disabled: boolean
+  onChange: (v: string) => void
+}) {
+  const all = selected.trim() === 'all'
+  const chosen = new Set(all ? [] : selected.trim().split(/\s+/).filter(Boolean))
+  const toggle = (name: string, on: boolean) => {
+    const next = new Set(chosen)
+    if (on) next.add(name)
+    else next.delete(name)
+    onChange(SERIES_NAMES.filter((n) => next.has(n)).join(' '))
+  }
+  return (
+    <div className="series-picker">
+      <label>
+        <input
+          type="checkbox"
+          checked={all}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked ? 'all' : '')}
+        />{' '}
+        every series that has data
+      </label>
+      {SERIES_NAMES.map((n) => (
+        <label key={n} className={all ? 'muted' : undefined}>
+          <input
+            type="checkbox"
+            checked={all || chosen.has(n)}
+            disabled={disabled || all}
+            onChange={(e) => toggle(n, e.target.checked)}
+          />{' '}
+          {SERIES_LABELS[n]?.title ?? n}
+        </label>
+      ))}
+    </div>
   )
 }

@@ -3,6 +3,7 @@ package store
 
 import (
 	"context"
+	"github.com/timdebruijn/smokeng/internal/series"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/report"
@@ -23,7 +24,33 @@ type Measurement struct {
 	// ICMPErr is the ICMP type and code most often reported in this interval
 	// (see ICMPError), or nil when no ping drew an error.
 	ICMPErr *uint16
+	// Series holds the extra per-packet distributions a probe measured beside
+	// the round trip, keyed by series name (see SeriesIPDVSend and friends), in
+	// µs and sorted ascending. Signed, because inter-packet delay variation is.
+	//
+	// A series that was not measured is absent, never present-and-empty: the
+	// far end that returns no timestamps and the interval where every packet
+	// arrived on the same schedule are different facts, and a zero-length
+	// distribution would read as the second.
+	Series map[string][]int32
 }
+
+// The extra per-packet series are named in package series, which sits below
+// both this package and the target tree so the two agree on the vocabulary.
+// These aliases keep call sites reading as store.SeriesIPDVSend rather than
+// forcing every caller to import a package for three constants.
+const (
+	SeriesIPDVSend         = series.IPDVSend
+	SeriesIPDVReceive      = series.IPDVReceive
+	SeriesServerProcessing = series.ServerProcessing
+)
+
+// KnownSeries lists every series name the store recognises, in the order a UI
+// should offer them.
+var KnownSeries = series.All
+
+// ValidSeries reports whether name is a series smokeng knows how to record.
+func ValidSeries(name string) bool { return series.Valid(name) }
 
 // Measurement-quality flags (DESIGN.md §3.4). Zero means a clean measurement:
 // full kernel timestamping over a datagram ICMP socket, no dropped packets,
