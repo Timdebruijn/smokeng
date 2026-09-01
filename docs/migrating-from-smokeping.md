@@ -49,14 +49,23 @@ smokeng probe type, following the subclass chain so a renamed probe still resolv
 | `EchoPingHttp`, `Curl` | `http` | `port` → `probe_port` |
 | `EchoPingHttps` | `https` | `port` → `probe_port` |
 | `TCPPing`, `EchoPingTcp` | `tcp` | `port` → `probe_port` |
+| `IRTT` | `irtt` | `port` → `probe_port` |
 
-Two things need your eye afterwards. A `tcp` target with no port in the SmokePing config is
-imported without one and warned about — smokeng will not measure a `tcp` target until you
-set `probe_port`. And an `http`/`https` probe's path is left at `/`: SmokePing hides it in
+The module name is matched loosely, so a probe you renamed — `FPingContinuous`, say — still
+resolves to the type it actually measures with.
+
+Three things need your eye afterwards. A `tcp` target with no port in the SmokePing config
+is imported without one and warned about — smokeng will not measure a `tcp` target until you
+set `probe_port`. An `http`/`https` probe's path is left at `/`: SmokePing hides it in
 `urlformat`/`url` in ways too varied to reconstruct safely, so set `http_path` by hand where
-a probe requested a specific path. A probe module the importer does not recognise is
-imported as `icmp` with a warning naming it, so nothing is measured as something it is not
-without saying so.
+a probe requested a specific path. And an `IRTT` target comes across as `irtt` — the same
+tool, so the measurement is the same — but SmokePing's IRTT probe graphs one derived figure
+per target, often the send or receive jitter, while smokeng keeps the whole round-trip
+distribution and shows the spread. The plot will look different; nothing is lost. That is
+warned about per target.
+
+A probe module the importer does not recognise is imported as `icmp` with a warning naming
+it, so nothing is measured as something it is not without saying so.
 
 ## What is different once you are across
 

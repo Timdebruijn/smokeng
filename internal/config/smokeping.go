@@ -420,6 +420,14 @@ func probeTypeFor(module string) string {
 		return "http"
 	case strings.Contains(m, "tcp"):
 		return "tcp"
+	case strings.Contains(m, "irtt"):
+		// SmokePing's IRTT probe measures with the same tool smokeng does, so
+		// this is the one mapping that carries the measurement method across
+		// exactly rather than approximating it. Missing it imported a
+		// round-trip-per-packet UDP measurement as an ICMP ping — a different
+		// measurement wearing the same graph, which is the failure this whole
+		// mapping exists to prevent.
+		return "irtt"
 	case strings.Contains(m, "fping") || strings.Contains(m, "ping"):
 		return "icmp"
 	}
@@ -454,6 +462,21 @@ func applyProbeType(entry *Entry, ptype, module, path string, keys map[string]st
 			warnAt(path, "imported as tcp but no port was found; smokeng will not measure a tcp target "+
 				"without probe_port — set one")
 		}
+	case "irtt":
+		entry.ProbeType = strPtr("irtt")
+		// An irtt server's port, where the config names one. Left unset it
+		// falls to smokeng's default, the same 2112 irtt itself uses.
+		if p := probePort(keys); p != 0 {
+			entry.ProbePort = &p
+		}
+		// SmokePing's IRTT probe graphs one of several derived figures — the
+		// round trip, or the send or receive jitter — chosen by the probe
+		// variant. smokeng keeps the whole round-trip distribution and derives
+		// what it shows from that, so a target that existed to graph jitter
+		// becomes a target whose spread shows it. Nothing is lost, but the
+		// operator should know the graph will not look identical.
+		warnAt(path, "imported as irtt; smokeng graphs the round-trip distribution "+
+			"rather than a derived jitter figure, so this plot will look different")
 	case "http", "https":
 		entry.ProbeType = strPtr(ptype)
 		if p := probePort(keys); p != 0 {

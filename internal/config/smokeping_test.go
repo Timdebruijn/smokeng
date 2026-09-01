@@ -180,6 +180,81 @@ func TestParseSmokePingErrors(t *testing.T) {
 	}
 }
 
+// The probe modules a real SmokePing install actually names, mapped to the
+// smokeng type that measures the same thing. IRTT is the one that matters most:
+// smokeng probes with the same tool, so importing it as icmp would turn a UDP
+// round-trip measurement into an ICMP ping wearing the same graph — found by
+// running the importer against a production config that used it.
+func TestSmokePingProbeModuleMapping(t *testing.T) {
+	cases := map[string]string{
+		"FPing":           "icmp",
+		"FPing6":          "icmp",
+		"FPingContinuous": "icmp", // a renamed fping probe still pings
+		"IRTT":            "irtt",
+		"DNS":             "dns",
+		"EchoPingDNS":     "dns",
+		"AnotherDNS":      "dns",
+		"EchoPingHttp":    "http",
+		"Curl":            "http",
+		"EchoPingHttps":   "https",
+		"TCPPing":         "tcp",
+		"EchoPingTcp":     "tcp",
+		"":                "icmp", // no probe named: SmokePing's own default
+		"SomeUnknown":     "",     // unrecognised: warned about, never guessed
+	}
+	for module, want := range cases {
+		if got := probeTypeFor(module); got != want {
+			t.Errorf("probeTypeFor(%q) = %q, want %q", module, got, want)
+		}
+	}
+}
+
+// An IRTT target comes across as irtt, with the difference in what is graphed
+// stated rather than left for the operator to discover.
+func TestSmokePingImportsIRTT(t *testing.T) {
+	const cfg = `*** Probes ***
+
++ FPing
+binary = /usr/bin/fping
+
++ IRTT
+binary = /usr/bin/irtt
+
+*** Targets ***
+
+probe = FPing
+
++ wag
+
+++ Irtt
+probe = IRTT
+host = irtt.example.org
+`
+	f, warnings, err := ParseSmokePing([]byte(cfg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := f.Targets["wag/Irtt"]
+	if !ok {
+		t.Fatalf("target not imported; got %v", keys(f.Targets))
+	}
+	if e.ProbeType == nil || *e.ProbeType != "irtt" {
+		t.Fatalf("probe_type = %v, want irtt", e.ProbeType)
+	}
+	var said bool
+	for _, w := range warnings {
+		if strings.Contains(w, "irtt") && strings.Contains(w, "round-trip") {
+			said = true
+		}
+		if strings.Contains(w, "no smokeng equivalent") {
+			t.Errorf("IRTT reported as unmappable: %s", w)
+		}
+	}
+	if !said {
+		t.Errorf("no warning that the graph differs; got %v", warnings)
+	}
+}
+
 func keys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
