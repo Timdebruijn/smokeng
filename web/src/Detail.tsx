@@ -56,6 +56,16 @@ const SETTING_LABELS: {
     label: 'Retention',
     render: (v) => (v === 0 ? 'forever' : `${v} s`),
   },
+  {
+    key: 'graph_series',
+    label: 'Extra graphs',
+    render: (v) => {
+      const raw = String(v).trim()
+      if (raw === 'all') return 'every series that has data'
+      if (raw === '') return 'none'
+      return raw.split(/\s+/).join(', ')
+    },
+  },
 ]
 
 /**
@@ -347,10 +357,12 @@ function downloadCSV(filename: string, rows: string[][]) {
  *
  * "all" is the default and means every series that has data — which is decided
  * by the data, not here: a series nothing measured is dropped by the fetch, and
- * SeriesPlot says so rather than drawing an empty graph. An unparseable value
- * falls back to all: the setting is validated on the way in, so a bad one here
- * means something upstream went wrong, and showing more than asked is the
- * lesser failure of the two.
+ * SeriesPlot says so rather than drawing an empty graph.
+ *
+ * An unrecognised name is dropped rather than treated as "all". The setting is
+ * validated at every write path, so one reaching this component means the value
+ * came from somewhere that skipped validation, and inventing panels the
+ * operator did not ask for is not a safer answer than showing fewer.
  */
 function selectedSeries(target: Target): SeriesName[] {
   // Only irtt measures any of these. Offering them on an ICMP target would

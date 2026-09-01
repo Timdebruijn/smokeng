@@ -625,7 +625,81 @@ export function deleteAgentToken(id: number): Promise<unknown> {
   return mutate(`/api/v1/agent-tokens/${id}`, 'DELETE')
 }
 
-export async function fetchSeries(
+/**
+ * Requests for the same window that are already in flight, so the detail page
+ * asks once instead of once per plot.
+ *
+ * A target drawing the round trip and three extra series mounts four
+ * components, each of which fetched and decoded the whole Arrow payload —
+ * four identical requests, four full decodes, for one window. Only *concurrent*
+ * requests are shared: nothing is cached after it settles, so a refresh or a
+ * range change still goes to the server and there is no staleness to reason
+ * about.
+ *
+ * Each caller gets its own copy of the buffers. They are transferred to a
+ * render worker, which neuters them, so handing the same arrays to four
+ * consumers would leave three of them holding empty views.
+ */
+const inFlight = new Map<string, { at: number; p: Promise<Series> }>()
+
+/**
+ * How long a settled response stays shareable.
+ *
+ * Sharing only *concurrent* requests was not enough: the four plots mount a few
+ * milliseconds apart, so the first often settles before the last asks, and the
+ * page still made two round trips. The key carries the exact time range, and
+ * the shortest interval a target can be configured with is ten seconds, so a
+ * window this brief cannot serve anything the caller would not have received
+ * from its own request.
+ */
+const SHARE_MS = 2000
+
+function copySeries(s: Series): Series {
+  const extra: Record<string, ExtraSeries> = {}
+  for (const [k, v] of Object.entries(s.extra)) {
+    extra[k] = {
+      offsets: v.offsets.slice(),
+      values: v.values.slice(),
+      measured: v.measured.slice(),
+    }
+  }
+  return {
+    ts: s.ts.slice(),
+    sent: s.sent.slice(),
+    received: s.received.slice(),
+    flags: s.flags.slice(),
+    offsets: s.offsets.slice(),
+    values: s.values.slice(),
+    icmpErrors: s.icmpErrors.slice(),
+    extra,
+  }
+}
+
+export function fetchSeries(
+  targetId: number,
+  agentId: number,
+  from: number,
+  to: number,
+): Promise<Series> {
+  const key = `${targetId}/${agentId}/${from}/${to}`
+  const now = Date.now()
+  const hit = inFlight.get(key)
+  if (hit && now - hit.at < SHARE_MS) return hit.p.then(copySeries)
+  const p = fetchSeriesUncached(targetId, agentId, from, to).catch((e: unknown) => {
+    // A failure is never shared: the next caller must be able to try again.
+    inFlight.delete(key)
+    throw e
+  })
+  inFlight.set(key, { at: now, p })
+  // Bounded: entries are dropped once they can no longer be shared, so a long
+  // session scrubbing through ranges does not accumulate them.
+  setTimeout(() => {
+    if (inFlight.get(key)?.p === p) inFlight.delete(key)
+  }, SHARE_MS)
+  return p.then(copySeries)
+}
+
+async function fetchSeriesUncached(
   targetId: number,
   agentId: number,
   from: number,

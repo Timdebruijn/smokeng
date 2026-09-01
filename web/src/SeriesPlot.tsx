@@ -44,7 +44,21 @@ export default function SeriesPlot({
   const cursorRef = useRef<number | null>(null)
   const [state, setState] = useState<'loading' | 'ok' | 'unmeasured' | 'error'>('loading')
   const [readout, setReadout] = useState<string | null>(null)
+  // Re-fetch and re-render on a real width change. Without this the density
+  // canvas kept the bitmap it was given — time axis baked in — while CSS
+  // stretched it to the new width, so an excursion sat visually at one time
+  // while the crosshair, which measures the live element, reported another.
+  const [width, setWidth] = useState(0)
   const label = SERIES_LABELS[name]
+
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => setWidth(Math.round(entry.contentRect.width)))
+    ro.observe(el)
+    setWidth(el.clientWidth)
+    return () => ro.disconnect()
+  }, [])
 
   useEffect(() => {
     const cv = canvasRef.current
@@ -90,7 +104,10 @@ export default function SeriesPlot({
           median[i] = ex.measured[i] === 1 && b > a ? ex.values[a + ((b - a) >> 1)] : NaN
         }
         rowsRef.current = { ts: s.ts.slice(), median, span: inferSpan(s.ts, n) }
-        const cssW = wrapRef.current?.clientWidth ?? 0
+        // Measured now rather than when the effect started: at effect time the
+        // element may not have been laid out, and a zero width would render an
+        // empty plot that never recovers.
+        const cssW = wrapRef.current?.clientWidth || width
         if (cssW === 0) return
         setState('ok')
         workerRef.current.postMessage(
@@ -128,7 +145,7 @@ export default function SeriesPlot({
     return () => {
       cancelled = true
     }
-  }, [targetId, agentId, name, from, to, refreshKey, targetPath])
+  }, [targetId, agentId, name, from, to, refreshKey, targetPath, width])
 
   // The shared cursor: one crosshair across every stacked plot.
   useEffect(() => {
@@ -137,9 +154,15 @@ export default function SeriesPlot({
       const wrap = wrapRef.current
       if (!cv || !wrap) return
       const dpr = window.devicePixelRatio || 1
-      const cssW = wrap.clientWidth
-      cv.width = Math.round(cssW * dpr)
-      cv.height = Math.round(HEIGHT * dpr)
+      const w = Math.round(wrap.clientWidth * dpr)
+      const h = Math.round(HEIGHT * dpr)
+      // Only on a real size change. Assigning width or height clears the
+      // canvas and reallocates its buffer, and this runs on every mousemove
+      // over any plot on the page — Plot.tsx guards it for the same reason.
+      if (cv.width !== w || cv.height !== h) {
+        cv.width = w
+        cv.height = h
+      }
       const ctx = cv.getContext('2d')!
       ctx.clearRect(0, 0, cv.width, cv.height)
       const t = cursorRef.current
@@ -163,19 +186,28 @@ export default function SeriesPlot({
         setReadout(null)
         return
       }
+      // The last row starting at or before the cursor — a row's ts is the
+      // start of the interval it covers, [ts, ts+span). Picking the *nearest*
+      // row instead reported the following interval's median for everything
+      // past the midpoint of each bucket, which is the number an operator
+      // reads off the graph. Plot.tsx has always done it this way.
       let lo = 0
       let hi = rows.ts.length - 1
-      while (lo < hi) {
+      let idx = -1
+      while (lo <= hi) {
         const mid = (lo + hi) >> 1
-        if (rows.ts[mid] < t) lo = mid + 1
-        else hi = mid
+        if (rows.ts[mid] <= t) {
+          idx = mid
+          lo = mid + 1
+        } else {
+          hi = mid - 1
+        }
       }
-      // Outside the interval the cursor sits in, there is nothing to report.
-      if (lo > 0 && Math.abs(rows.ts[lo - 1] - t) < Math.abs(rows.ts[lo] - t)) lo--
-      if (Math.abs(rows.ts[lo] - t) > rows.span) {
+      if (idx < 0 || t > rows.ts[idx] + rows.span) {
         setReadout(null)
         return
       }
+      lo = idx
       const v = rows.median[lo]
       setReadout(
         `${fmtClock(rows.ts[lo])} · median ${

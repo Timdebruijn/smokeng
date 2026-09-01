@@ -26,9 +26,17 @@ export function fmtUs(us: number): string {
  * better with one unambiguous origin than with "+0µs".
  */
 export function fmtSigned(us: number): string {
-  const r = Math.round(us)
-  if (r === 0) return '0'
-  return (r > 0 ? '+' : '\u2212') + fmtUs(Math.abs(us))
+  const a = Math.abs(us)
+  // Sub-microsecond precision below 10µs. These are axis positions, not
+  // measurements, and rounding every one of them to whole microseconds gave a
+  // low-jitter target five gridlines labelled "\u22121µs, \u22121µs, 0, +1µs,
+  // +1µs" — a scale that says less the closer you look at it.
+  if (a < 10) {
+    const v = Math.round(us * 10) / 10
+    if (v === 0) return '0'
+    return (v > 0 ? '+' : '\u2212') + Math.abs(v).toFixed(1) + 'µs'
+  }
+  return (us > 0 ? '+' : '\u2212') + fmtUs(a)
 }
 
 export function fmtClock(unixSeconds: number): string {
