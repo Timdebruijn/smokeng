@@ -298,7 +298,7 @@ There are no local accounts and no password handling. Point smokeng at an OIDC p
 ```bash
 smokeng serve --db smokeng.db --listen 0.0.0.0:8080 \
   --oidc-issuer https://id.example.org/application/o/smokeng/ \
-  --oidc-client-id smokeng --oidc-client-secret "$SECRET" \
+  --oidc-client-id smokeng --oidc-client-secret-file /var/lib/smokeng/oidc-client-secret \
   --oidc-redirect-url https://smokeng.example.org/auth/callback \
   --oidc-admin-value smokeng-admins
 ```

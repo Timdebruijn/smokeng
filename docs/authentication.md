@@ -21,7 +21,7 @@ smokeng serve \
   --listen 0.0.0.0:8080 \
   --oidc-issuer https://auth.example.org/application/o/smokeng/ \
   --oidc-client-id smokeng \
-  --oidc-client-secret "$SMOKENG_CLIENT_SECRET" \
+  --oidc-client-secret-file /var/lib/smokeng/oidc-client-secret \
   --oidc-redirect-url https://smokeng.example.org/auth/callback \
   --oidc-admin-claim groups \
   --oidc-admin-value smokeng-admins
@@ -31,14 +31,38 @@ smokeng serve \
 | --- | --- | --- |
 | `--oidc-issuer` | — | Issuer URL; setting it enables authentication |
 | `--oidc-client-id` | — | Client id registered with the provider |
-| `--oidc-client-secret` | — | Client secret |
+| `--oidc-client-secret-file` | — | File holding the client secret. **Prefer this.** |
+| `--oidc-client-secret` | — | Client secret inline — see the warning below |
 | `--oidc-redirect-url` | `{external-url}/auth/callback`, else `http://{listen}/auth/callback` | Must match the provider's registration exactly |
 | `--oidc-admin-claim` | `groups` | The ID-token claim listing the user's groups |
-| `--oidc-admin-value` | — | Membership in this group grants admin |
+| `--oidc-admin-value` | — | Membership in this group grants admin. **Empty means every authenticated user is an admin**, and the API can edit and delete the tree. |
 
 Register `https://your-host/auth/callback` as the redirect URI with your provider, and
 make sure the claim named by `--oidc-admin-claim` is actually included in the ID token —
 in Authentik and Keycloak that is a scope or mapper you have to add explicitly.
+
+### Keep the secret off the command line
+
+A process's command line is world-readable in `/proc`, so `--oidc-client-secret` hands
+the secret to every local user, to anything that logs `ps` output, and to anyone who can
+read the systemd unit that carries it — units are mode 0644 by convention. Put it in a
+file only the service user can read:
+
+```bash
+install -o smokeng -g smokeng -m 600 /dev/null /var/lib/smokeng/oidc-client-secret
+printf %s "$SECRET" > /var/lib/smokeng/oidc-client-secret
+```
+
+smokeng trims surrounding whitespace, refuses an empty file, and logs a warning if the
+file is readable by anyone but its owner. The two flags are mutually exclusive: passing
+both is an error rather than a silent precedence rule, so there is never a question about
+which secret is in use.
+
+The Ansible role does this for you — set `smokeng_oidc_client_secret` from a vault and it
+is written 0600 and passed as a file.
+
+If a secret has ever been on a command line, treat it as disclosed and rotate it at the
+provider. Moving it to a file afterwards does not un-publish it.
 
 ## Roles
 

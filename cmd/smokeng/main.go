@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -208,7 +209,14 @@ func serve(args []string) error {
 		"how often to prune measurements past each target's retention_s (retention itself is per target; 0 there keeps forever)")
 	oidcIssuer := fs.String("oidc-issuer", "", "OIDC issuer URL; enables authentication")
 	oidcClientID := fs.String("oidc-client-id", "", "OIDC client id")
-	oidcSecret := fs.String("oidc-client-secret", "", "OIDC client secret")
+	oidcSecret := fs.String("oidc-client-secret", "",
+		"OIDC client secret. A command line is world-readable in /proc, so anyone "+
+			"with a shell on this host can read it, and so can anyone who can read "+
+			"the unit file; prefer --oidc-client-secret-file")
+	oidcSecretFile := fs.String("oidc-client-secret-file", "",
+		"path to a file containing the OIDC client secret, so the secret is readable "+
+			"only by whoever may read that file. Mutually exclusive with "+
+			"--oidc-client-secret")
 	oidcRedirect := fs.String("oidc-redirect-url", "",
 		"OIDC redirect URL, e.g. https://smokeng.example.org/auth/callback")
 	oidcAdminClaim := fs.String("oidc-admin-claim", "groups",
@@ -257,6 +265,21 @@ func serve(args []string) error {
 	case auth.RoleViewer, auth.RoleNone:
 	default:
 		return fmt.Errorf("--default-role must be viewer or none, got %q", *defaultRole)
+	}
+
+	if *oidcSecretFile != "" {
+		if *oidcSecret != "" {
+			return fmt.Errorf("--oidc-client-secret and --oidc-client-secret-file both given: " +
+				"pass one, so there is no question which secret is in use")
+		}
+		b, err := readSecretFile(*oidcSecretFile)
+		if err != nil {
+			return fmt.Errorf("--oidc-client-secret-file: %w", err)
+		}
+		*oidcSecret = strings.TrimSpace(string(b))
+		if *oidcSecret == "" {
+			return fmt.Errorf("--oidc-client-secret-file: %s is empty", *oidcSecretFile)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -464,11 +487,33 @@ func splitList(s string) []string {
 // changes. An empty path installs nothing. The secrets live only in this file
 // on this host (deploy it from a vault); they never enter the target tree, the
 // API or an export.
+// readSecretFile reads a file holding a secret and says so when the file is
+// readable by anyone but its owner. It does not refuse: a mode that is wrong
+// for one deployment is deliberate in another (a shared group for an operator
+// account), and a monitor that will not start is worse than one that starts
+// and tells you. But it must not pass in silence — the whole point of moving a
+// secret out of the command line is that fewer people can read it, and a
+// world-readable file gives that back without anybody noticing.
+func readSecretFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err == nil {
+		if mode := fi.Mode().Perm(); mode&0o077 != 0 {
+			log.Printf("warning: %s holds a secret but is mode %#o; "+
+				"anyone who can read it can use the secret (chmod 600)", path, mode)
+		}
+	}
+	return io.ReadAll(f)
+}
+
 func loadIRTTHMACKeys(path string) error {
 	if path == "" {
 		return nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := readSecretFile(path)
 	if err != nil {
 		return err
 	}
