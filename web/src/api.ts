@@ -643,14 +643,19 @@ export function deleteAgentToken(id: number): Promise<unknown> {
 const inFlight = new Map<string, { at: number; p: Promise<Series> }>()
 
 /**
- * How long a settled response stays shareable.
+ * How long a request stays shareable, measured from when it was *started*, not
+ * from when it settled.
  *
- * Sharing only *concurrent* requests was not enough: the four plots mount a few
- * milliseconds apart, so the first often settles before the last asks, and the
- * page still made two round trips. The key carries the exact time range, and
- * the shortest interval a target can be configured with is ten seconds, so a
- * window this brief cannot serve anything the caller would not have received
- * from its own request.
+ * Sharing only strictly concurrent requests was not enough: the four plots
+ * mount a few milliseconds apart, so the first often settles before the last
+ * asks, and the page still made two round trips.
+ *
+ * Timing from the start rather than the settle bounds how old the data can be
+ * when it is handed out, at the cost of not sharing a request that itself took
+ * longer than this — which is the right way round. The key carries the exact
+ * time range, and the shortest interval a target can be configured with is ten
+ * seconds, so a window this brief cannot serve anything a caller would not have
+ * received from its own request.
  */
 const SHARE_MS = 2000
 
