@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"html"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -228,12 +230,15 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 			continue
 		}
 
-		// A line starting with whitespace continues the previous value.
+		// A line starting with whitespace continues the previous value. The
+		// backslash that marks the continuation is SmokePing's syntax, not part
+		// of the text: leaving it in put a stray "\" in the middle of every
+		// wrapped sentence, which is what a real import produced.
 		if pendingKey != "" && (strings.HasPrefix(raw, " ") || strings.HasPrefix(raw, "\t")) {
 			if pendingNode != nil {
-				pendingNode.keys[pendingKey] += " " + trimmed
+				pendingNode.keys[pendingKey] = joinContinuation(pendingNode.keys[pendingKey], trimmed)
 			} else {
-				top[pendingKey] += " " + trimmed
+				top[pendingKey] = joinContinuation(top[pendingKey], trimmed)
 			}
 			continue
 		}
@@ -315,13 +320,14 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 		entry := Entry{}
 		host := strings.TrimSpace(n.keys["host"])
 
-		// Presentation.
-		if v := n.keys["title"]; v != "" {
+		// Presentation. SmokePing renders these as HTML; smokeng renders them
+		// as text, so the markup has to come out here rather than be shown.
+		if v := plainText(n.keys["title"]); v != "" {
 			entry.Title = strPtr(v)
-		} else if v := n.keys["menu"]; v != "" {
+		} else if v := plainText(n.keys["menu"]); v != "" {
 			entry.Title = strPtr(v)
 		}
-		if v := n.keys["remark"]; v != "" {
+		if v := plainText(n.keys["remark"]); v != "" {
 			entry.Notes = strPtr(v)
 		}
 		if isYes(n.keys["hide"]) {
@@ -578,3 +584,36 @@ func isYes(v string) bool {
 }
 
 func strPtr(s string) *string { return &s }
+
+// joinContinuation appends a continuation line, dropping the backslash that
+// marked the previous line as continued.
+func joinContinuation(sofar, next string) string {
+	return strings.TrimSuffix(strings.TrimSpace(sofar), "\\") + " " + next
+}
+
+// plainText turns one of SmokePing's display strings into text.
+//
+// SmokePing renders title, menu and remark as HTML and its configs use that:
+// entities for punctuation, <b> for emphasis, <br> for a break. smokeng renders
+// them as text, so an import carried the markup through literally — "&mdash;"
+// where a dash belonged, "<b>" around a word. A migration produced sixteen of
+// the first and ten of the second, and they were being corrected by hand one
+// title at a time.
+//
+// Tags are removed before entities are decoded, so a config that escaped a
+// literal "<b>" as "&lt;b&gt;" keeps it as text rather than having it stripped
+// on the second pass.
+func plainText(s string) string {
+	s = htmlBreak.ReplaceAllString(s, " ")
+	s = htmlTag.ReplaceAllString(s, "")
+	s = html.UnescapeString(s)
+	// Collapsing runs of space last: removing a tag or folding a line leaves
+	// doubled spaces that were not in the original.
+	return strings.TrimSpace(spaceRun.ReplaceAllString(s, " "))
+}
+
+var (
+	htmlBreak = regexp.MustCompile(`(?i)<br\s*/?>`)
+	htmlTag   = regexp.MustCompile(`</?[a-zA-Z][a-zA-Z0-9]*(\s[^<>]*)?/?>`)
+	spaceRun  = regexp.MustCompile(`[ \t]{2,}`)
+)
