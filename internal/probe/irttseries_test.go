@@ -473,6 +473,14 @@ func TestShortSessionIsNotLoss(t *testing.T) {
 // a skip advances that slot by a whole extra interval. So after n sends with s
 // skipped slots the next slot sits at (n+s) steps, and the session sends
 // ceil(duration/step) - s probes.
+//
+// This is a model of the library's loop, not the loop itself, and that is a
+// real limitation: an irtt upgrade that changed the tie-break or the rounding
+// would leave this test green while the margin silently went wrong again. It is
+// written this way because the failure it guards against — one skipped slot —
+// depends on when a packet happens to be sent, so driving the real loop cannot
+// produce it on demand. The end-to-end tests exercise the real sender; they
+// would catch a gross change, not a shifted margin.
 func TestIRTTDurationLeavesRoomForASkippedSlot(t *testing.T) {
 	spec := TargetSpec{Pings: 20, Mode: "burst", BurstGapMS: 1000, IntervalS: 300}
 	step := irttStep(spec)
