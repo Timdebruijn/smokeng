@@ -92,18 +92,15 @@ smokeng_irtt_hmac_keyfile: "{{ smokeng_state_dir }}/irtt-hmac-keys.toml"
 # names smokeng_prober_agent_name.
 smokeng_prober_enabled: false
 smokeng_prober_agent_name: local-probe
-# Where the prober reaches the master. The prober is on the same host, so
-# nothing has to leave it and plain http is accepted for exactly that reason.
+# Where the prober reaches the master. Always loopback: the prober is on the
+# same host, so nothing has to leave it, and plain http is accepted for exactly
+# that reason.
 #
-# Loopback whenever the master can be reached there, which covers both the
-# default and a wildcard bind: "0.0.0.0:8080" is where to listen, not somewhere
-# to connect, and the agent rightly refuses it as neither HTTPS nor loopback.
-#
-# A master bound to one specific address is the exception. Nothing listens on
-# loopback then, so the prober has to name that address or every pull fails
-# with "connection refused" — silently, since the prober keeps buffering and
-# the master simply never hears from it.
-smokeng_prober_master_url: "http://{{ '127.0.0.1' if (smokeng_listen | regex_replace(':[0-9]+$', '')) in ['127.0.0.1', '[::1]', 'localhost', '0.0.0.0', '[::]', ''] else (smokeng_listen | regex_replace(':[0-9]+$', '')) }}:{{ smokeng_listen.split(':') | last }}"
+# Only the port is taken from smokeng_listen. Reusing the whole value breaks
+# the moment the master binds a wildcard — "0.0.0.0:8080" is where to listen,
+# not somewhere to connect, and the agent rightly refuses it as neither HTTPS
+# nor loopback.
+smokeng_prober_master_url: "http://127.0.0.1:{{ smokeng_listen.split(':') | last }}"
 smokeng_prober_key: "{{ smokeng_state_dir }}/prober.key"
 smokeng_prober_db: "{{ smokeng_state_dir }}/prober.db"
 
