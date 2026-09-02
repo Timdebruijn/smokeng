@@ -75,7 +75,13 @@
     owner: root
     group: root
     mode: "0755"
-  notify: Restart smokeng
+  # Both, or the prober keeps running the binary it started with: replacing the
+  # file leaves the running process on the old inode, which /proc reports as
+  # "(deleted)". The master would move to the new release and the prober would
+  # not, which is how the two halves end up speaking different versions.
+  notify:
+    - Restart smokeng
+    - Restart smokeng prober
 
 # The irtt HMAC secrets, service-owned and 0600. Rendered before the units so
 # the flag that points at it never names a file that is not there yet. Both the
