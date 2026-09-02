@@ -2,6 +2,7 @@ package probe
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"strings"
 	"sync/atomic"
@@ -499,7 +500,9 @@ func TestIRTTDurationLeavesRoomForASkippedSlot(t *testing.T) {
 			"so it was not the cause", got, spec.Pings)
 	}
 
-	now := irttDuration(spec, step)
+	// A bucket with room to spare, so this exercises the ideal rather than the
+	// clamp; the clamp has its own test.
+	now := irttDuration(spec, step, time.Duration(spec.IntervalS)*time.Second)
 	if got := sends(now, 1); got < spec.Pings {
 		t.Errorf("one skipped slot still sends only %d of %d probes", got, spec.Pings)
 	}
@@ -512,5 +515,78 @@ func TestIRTTDurationLeavesRoomForASkippedSlot(t *testing.T) {
 	// honestly rather than assumed away.
 	if got := sends(now, 2); got >= spec.Pings {
 		t.Errorf("two skipped slots send %d; the tail handling is then unreachable", got)
+	}
+}
+
+// The window has to fit inside the bucket that is waiting for it.
+//
+// In spread mode the step is the whole interval divided by the probe count, so
+// one interval of room past the last slot runs past the end of the bucket: at
+// 300 seconds and 20 probes the ideal asks for 315 seconds. Unclamped, the
+// bucket's deadline cancels every session, the cancellation reports an error,
+// and the target reads as total loss for ever — a far worse failure than the
+// one the wider window was added to fix.
+func TestIRTTDurationFitsTheBucket(t *testing.T) {
+	spread := TargetSpec{Pings: 20, Mode: "spread", IntervalS: 300}
+	step := irttStep(spread)
+	available := time.Duration(spread.IntervalS) * time.Second
+
+	ideal := step * time.Duration(spread.Pings+1)
+	if ideal <= available {
+		t.Fatalf("premise wrong: the ideal window (%v) already fits in %v, "+
+			"so this test no longer guards anything", ideal, available)
+	}
+	got := irttDuration(spread, step, available)
+	if got >= available {
+		t.Errorf("duration %v leaves the bucket (%v) no room to finalize", got, available)
+	}
+	// And it must still be long enough to be worth running.
+	if got < step*time.Duration(spread.Pings-1) {
+		t.Errorf("duration %v is too short to pace %d probes", got, spread.Pings)
+	}
+
+	// Burst mode has room to spare, so the clamp must not touch it.
+	burst := TargetSpec{Pings: 20, Mode: "burst", BurstGapMS: 1000, IntervalS: 300}
+	bstep := irttStep(burst)
+	want := bstep * time.Duration(burst.Pings+1)
+	if got := irttDuration(burst, bstep, 300*time.Second); got != want {
+		t.Errorf("burst duration = %v, want the unclamped %v", got, want)
+	}
+}
+
+// A session cut short by a receive failure broke; it did not merely pace fewer
+// packets. Keying the tail only on the send error left a local receive failure
+// indistinguishable from ordinary pacing.
+func TestReceiveErrorIsABrokenSession(t *testing.T) {
+	quietLog(t)
+	spec := TargetSpec{TargetID: 1, Host: "h", Pings: 20, TimeoutMS: 1000}
+	var late atomic.Int64
+	col := newCollector(spec.Pings, &late)
+	for i := range 19 {
+		col.markSent(i, uint16(i), time.Now())
+		col.onRX(i, time.Now().Add(time.Millisecond), true)
+	}
+	// Through the selection the prober actually uses, not by handing the error
+	// straight to markUnsentTail — which is what an earlier version of this
+	// test did, so removing the selection left it green.
+	markUnsentTail(col, spec, 19, sessionError(&irtt.Result{ReceiveErr: syscall.ECONNRESET}))
+	m := col.finalize(spec, 0, conditions{})
+	if m.Sent != 20 {
+		t.Errorf("Sent = %d; a broken session still owed its tail", m.Sent)
+	}
+	if m.Flags&store.FlagSendFailed == 0 {
+		t.Errorf("flags 0x%x: a broken session is a send failure", m.Flags)
+	}
+	if m.SendErr == nil {
+		t.Error("a broken session recorded no reason")
+	}
+	// And a result with neither error is not a broken session.
+	if err := sessionError(&irtt.Result{}); err != nil {
+		t.Errorf("a clean result reported %v as the cause of a break", err)
+	}
+	// The send error wins when both are set: it is the more specific cause.
+	both := &irtt.Result{SendErr: syscall.ECONNREFUSED, ReceiveErr: syscall.ECONNRESET}
+	if !errors.Is(sessionError(both), syscall.ECONNREFUSED) {
+		t.Errorf("with both errors set, sessionError chose %v", sessionError(both))
 	}
 }

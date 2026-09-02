@@ -126,7 +126,7 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 	// below counts what was sent rather than what was asked for. SmokePing's
 	// own IRTT probe uses Pings*interval, which has exactly the same arithmetic
 	// and exactly the same failure.
-	cfg.Duration = irttDuration(spec, step)
+	cfg.Duration = irttDuration(spec, step, time.Until(deadline))
 	cfg.Length = spec.PacketSize
 	cfg.DSCP = spec.DSCP
 	cfg.IPVersion = irtt.IPv4
@@ -214,7 +214,20 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 	// left uncounted instead, so the interval is 19 of 19: a narrower
 	// distribution than was configured, which `sent` records and the graph
 	// shows, and no loss, because none occurred.
-	markUnsentTail(col, spec, seen, r.SendErr)
+	markUnsentTail(col, spec, seen, sessionError(r))
+}
+
+// sessionError is what broke the session, if anything did.
+//
+// Either half counts: a receive failure stops the client just as a send failure
+// does, and the tail it stopped short of was owed. Keying only on the send
+// error left a local receive failure looking like ordinary pacing, which is the
+// one thing the tail handling exists to tell apart.
+func sessionError(r *irtt.Result) error {
+	if r.SendErr != nil {
+		return r.SendErr
+	}
+	return r.ReceiveErr
 }
 
 // markUnsentTail decides what to do about probes the session never produced a
@@ -253,8 +266,33 @@ func markUnsentTail(col *collector, spec TargetSpec, seen int, sendErr error) {
 // probes. Its own function so the arithmetic that decides whether a skipped
 // slot costs a packet is the arithmetic a test can read, rather than a constant
 // a test can restate and then agree with itself about.
-func irttDuration(spec TargetSpec, step time.Duration) time.Duration {
-	return step * time.Duration(spec.Pings+1)
+//
+// The ideal is one interval past the last packet's slot, which absorbs a
+// skipped slot. It is clamped to the time the bucket actually has left, because
+// in spread mode the step is the whole interval divided by the probe count, so
+// the ideal runs *past the end of the bucket* — at 300s and 20 probes it asks
+// for 315 seconds of a 300-second interval. Unclamped, the deadline cuts every
+// session off and the target reads as total loss forever, which is a far worse
+// failure than the one the wider window was added to fix.
+//
+// Clamped, spread mode gets no room for a skip and will occasionally come up a
+// probe short. That is what markUnsentTail is for, and it is why the shortfall
+// is counted honestly rather than assumed away.
+func irttDuration(spec TargetSpec, step time.Duration, available time.Duration) time.Duration {
+	want := step * time.Duration(spec.Pings+1)
+	// A margin so the session ends before the bucket does rather than being
+	// cancelled by it: a cancelled session reports an error, and an error means
+	// the tail is counted as owed.
+	limit := available - step
+	if limit < step {
+		// Too little left for even one more slot. Ask for what remains; the
+		// session will be short and will say so.
+		limit = available
+	}
+	if want > limit {
+		return limit
+	}
+	return want
 }
 
 // irttStep is the spacing between an irtt session's packets, paced to match the
