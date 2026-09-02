@@ -111,10 +111,22 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 		cfg.HMACKey = k
 	}
 	cfg.Interval = step
-	// The first packet leaves at t=0, so N packets need the run to last past
-	// the (N-1)th interval. Half a step of margin keeps a scheduling hiccup
-	// from costing the last packet of every bucket.
-	cfg.Duration = step*time.Duration(spec.Pings-1) + step/2
+	// One interval of room past the last packet's slot.
+	//
+	// irtt's sender does not count packets, it runs until a duration elapses,
+	// and it keeps to the interval grid: a packet sent more than halfway
+	// through its slot makes the client aim at the slot *after* next, which
+	// costs a whole interval. The old margin was half a step, so a single late
+	// send anywhere in the train ended the session one packet short — about a
+	// quarter of intervals on a real target.
+	//
+	// A wider margin makes that rare, and cannot make it impossible: with no
+	// skip this now schedules Pings+1 packets and the collector discards the
+	// surplus, and with two skips it still comes up short. That is why the tail
+	// below counts what was sent rather than what was asked for. SmokePing's
+	// own IRTT probe uses Pings*interval, which has exactly the same arithmetic
+	// and exactly the same failure.
+	cfg.Duration = irttDuration(spec, step)
 	cfg.Length = spec.PacketSize
 	cfg.DSCP = spec.DSCP
 	cfg.IPVersion = irtt.IPv4
@@ -192,17 +204,57 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 		col.recordRoundTrip(i, rt.RTT())
 	}
 	recordIRTTSeries(col, r, spec.Pings)
-	// A send error leaves RoundTrips short of Pings; the tail never went out, so
-	// it is a send failure, not silent absence — otherwise Sent would under-count
-	// and the interval would look narrower than it was asked to be.
-	for i := seen; i < spec.Pings; i++ {
-		// Nothing was reported wrong: the session simply ended without sending
-		// everything it was asked to. That is this prober's own pacing or
-		// deadline arithmetic falling short, and recording it as the same thing
-		// as a refused send is what made a real investigation impossible —
-		// every failure looked identical in the stored data.
-		col.markSendFailed(i, store.SendReasonSessionShort)
+	// A session that broke leaves the tail unsent, and that is a send failure.
+	// A session that simply ended early is not: irtt paced fewer packets into
+	// the window than were asked for, nothing failed, and nothing was lost.
+	//
+	// Marking the tail regardless made the interval read 19 of 20 with a
+	// quality flag — five percent loss that never happened, on the one target
+	// type where loss is the whole point. The probes that were not sent are
+	// left uncounted instead, so the interval is 19 of 19: a narrower
+	// distribution than was configured, which `sent` records and the graph
+	// shows, and no loss, because none occurred.
+	markUnsentTail(col, spec, seen, r.SendErr)
+}
+
+// markUnsentTail decides what to do about probes the session never produced a
+// result for.
+//
+// It is a function of its own because it is the whole distinction: a session
+// that *broke* left its tail unsent and that is a send failure, while a session
+// that simply ended early sent fewer packets and nothing failed at all. Inline,
+// the second case could only be reached by waiting for irtt's pacing to skip a
+// slot, which is timing-dependent; here it is a two-line test.
+func markUnsentTail(col *collector, spec TargetSpec, seen int, sendErr error) {
+	if seen >= spec.Pings {
+		return
 	}
+	if sendErr != nil {
+		for i := seen; i < spec.Pings; i++ {
+			col.markSendFailed(i, sendReasonOr(sendErr, store.SendReasonSessionEnded))
+		}
+		return
+	}
+	// Nothing failed. irtt paced fewer packets into the window than were asked
+	// for, so the probes below were never attempted — counting them made the
+	// interval read 19 of 20 with a quality flag, five percent loss that never
+	// happened, on the one probe type where loss is the whole point. Left
+	// uncounted, the interval is 19 of 19: a narrower distribution than was
+	// configured, which `sent` records, and no loss, because none occurred.
+	//
+	// Once per interval, because it is this prober's pacing rather than the
+	// network's doing, and because it is the only trace the measurement leaves.
+	log.Printf("probe: target %d (%s): irtt paced %d of %d probes into the interval; "+
+		"the rest were never sent, so they are not counted as lost",
+		spec.TargetID, spec.Host, seen, spec.Pings)
+}
+
+// irttDuration is how long to let an irtt session run for the interval's
+// probes. Its own function so the arithmetic that decides whether a skipped
+// slot costs a packet is the arithmetic a test can read, rather than a constant
+// a test can restate and then agree with itself about.
+func irttDuration(spec TargetSpec, step time.Duration) time.Duration {
+	return step * time.Duration(spec.Pings+1)
 }
 
 // irttStep is the spacing between an irtt session's packets, paced to match the

@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -410,5 +411,98 @@ func TestSendReasonNames(t *testing.T) {
 	}
 	if got := store.SendReasonName(200); got != "reason 200" {
 		t.Errorf("SendReasonName(200) = %q", got)
+	}
+}
+
+// A session that paced fewer probes into the window than were asked for did
+// not fail to send them, and must not be recorded as loss.
+//
+// irtt's sender runs until a duration elapses rather than counting packets, and
+// it keeps to the interval grid — a packet sent past the halfway point of its
+// slot makes the client aim at the slot after next, costing a whole interval.
+// Marking the shortfall as a send failure reported five percent loss that never
+// happened, on the one probe type where loss is the whole point.
+func TestShortSessionIsNotLoss(t *testing.T) {
+	quietLog(t)
+	spec := TargetSpec{TargetID: 1, Host: "h", Pings: 20, TimeoutMS: 1000}
+
+	// Ended early with nothing reported wrong: the probes were never sent, so
+	// they are neither attempted nor lost.
+	var late atomic.Int64
+	col := newCollector(spec.Pings, &late)
+	for i := range 19 {
+		col.markSent(i, uint16(i), time.Now())
+		col.onRX(i, time.Now().Add(time.Millisecond), true)
+	}
+	markUnsentTail(col, spec, 19, nil)
+	m := col.finalize(spec, 0, conditions{})
+	if m.Sent != 19 || m.Received != 19 {
+		t.Errorf("%d/%d: a probe that was never sent is being counted", m.Received, m.Sent)
+	}
+	if m.Flags&store.FlagSendFailed != 0 {
+		t.Errorf("flags 0x%x: a short session is not a send failure", m.Flags)
+	}
+	if m.SendErr != nil {
+		t.Errorf("a short session recorded reason %q", store.SendReasonName(*m.SendErr))
+	}
+
+	// A session that broke is the opposite: the tail was owed and never went
+	// out, so it counts, and it says why.
+	col2 := newCollector(spec.Pings, &late)
+	for i := range 19 {
+		col2.markSent(i, uint16(i), time.Now())
+		col2.onRX(i, time.Now().Add(time.Millisecond), true)
+	}
+	markUnsentTail(col2, spec, 19, syscall.ECONNREFUSED)
+	m2 := col2.finalize(spec, 0, conditions{})
+	if m2.Sent != 20 || m2.Received != 19 {
+		t.Errorf("%d/%d: a broken session must still count what it owed", m2.Received, m2.Sent)
+	}
+	if m2.Flags&store.FlagSendFailed == 0 {
+		t.Errorf("flags 0x%x: a broken session is a send failure", m2.Flags)
+	}
+	if m2.SendErr == nil || *m2.SendErr != store.SendReasonRefused {
+		t.Errorf("SendErr = %v, want the refusal that broke it", m2.SendErr)
+	}
+}
+
+// The margin has to leave room for one skipped slot. Half a step did not,
+// which is what made the shortfall about a quarter of all intervals.
+//
+// irtt's sender breaks when the next scheduled slot reaches the duration, and
+// a skip advances that slot by a whole extra interval. So after n sends with s
+// skipped slots the next slot sits at (n+s) steps, and the session sends
+// ceil(duration/step) - s probes.
+func TestIRTTDurationLeavesRoomForASkippedSlot(t *testing.T) {
+	spec := TargetSpec{Pings: 20, Mode: "burst", BurstGapMS: 1000, IntervalS: 300}
+	step := irttStep(spec)
+	sends := func(duration time.Duration, skips int) int {
+		n := int(duration / step)
+		if duration%step != 0 {
+			n++ // ceil: a partial step still admits one more send
+		}
+		return n - skips
+	}
+
+	const old = 19.5 // steps: the margin this replaced
+	oldDuration := time.Duration(float64(step) * old)
+	if got := sends(oldDuration, 1); got >= spec.Pings {
+		t.Fatalf("premise wrong: the old margin sent %d of %d with one skipped slot, "+
+			"so it was not the cause", got, spec.Pings)
+	}
+
+	now := irttDuration(spec, step)
+	if got := sends(now, 1); got < spec.Pings {
+		t.Errorf("one skipped slot still sends only %d of %d probes", got, spec.Pings)
+	}
+	// With nothing skipped it schedules one more than asked; the collector caps
+	// it, so the wider window costs a packet rather than a wrong distribution.
+	if got := sends(now, 0); got != spec.Pings+1 {
+		t.Errorf("with no skip the session sends %d, expected one surplus", got)
+	}
+	// And two skips still come up short, which is why the shortfall is counted
+	// honestly rather than assumed away.
+	if got := sends(now, 2); got >= spec.Pings {
+		t.Errorf("two skipped slots send %d; the tail handling is then unreachable", got)
 	}
 }
