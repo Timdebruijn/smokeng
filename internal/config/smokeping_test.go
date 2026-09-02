@@ -17,7 +17,7 @@ pings = 15
 + Datacenter
 menu = DC
 title = Datacenter hosts
-remark = Racks 1 through 4,
+remark = Racks 1 through 4, \
          second floor
 
 ++ router1
@@ -75,7 +75,9 @@ func TestParseSmokePing(t *testing.T) {
 	if dc.Title == nil || *dc.Title != "Datacenter hosts" {
 		t.Errorf("title = %v", dc.Title)
 	}
-	// The continuation line is folded into the remark.
+	// The continuation line is folded into the remark. It is marked as one with
+	// a trailing backslash, which is what SmokePing's own parser keys on; the
+	// fixture used to rely on indentation alone, which SmokePing does not.
 	if dc.Notes == nil || !strings.Contains(*dc.Notes, "second floor") {
 		t.Errorf("remark continuation lost: %v", dc.Notes)
 	}
@@ -429,4 +431,87 @@ func derefOr(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// The cases the first version of plainText got wrong, each of which produced
+// something worse than the markup it was removing.
+func TestPlainTextEdges(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		// A tag must start with a letter, so ordinary prose survives. This is
+		// the case that matters most: a remark is written by a person.
+		{"less-than in prose", "latency < 5ms is fine", "latency < 5ms is fine"},
+		{"less-than before a digit", "threshold <5ms", "threshold <5ms"},
+		// A break carrying an attribute used to fall through to the generic
+		// stripper, which removes without leaving a space — so two sentences
+		// were glued into one word.
+		{"break with an attribute", "One.<br class=\"spacer\">Two.", "One. Two."},
+		{"break, plain and closed", "a<br>b<br/>c<BR>d", "a b c d"},
+		// A ">" inside a quoted attribute ended the match early and left the
+		// remainder of the attribute in the text: wreckage, not markup.
+		{"quoted > in an attribute", `<a href="http://x?y=1>2">Link</a> tail`, "Link tail"},
+		{"hyphenated tag", "<my-tag>hello</my-tag>", "hello"},
+		// A non-breaking space is a space once this is text; left alone it
+		// survives the collapse and reads as one wide gap.
+		{"nbsp used for spacing", "word1&nbsp;&nbsp;&nbsp;word2", "word1 word2"},
+		// A single one is the case that needs the normalisation: a run is
+		// already caught by the collapse, so testing only runs left the
+		// conversion unguarded.
+		{"a single nbsp", "word1&nbsp;word2", "word1 word2"},
+		{"entity and tag together", "Telfort &mdash; <b>burst</b>", "Telfort — burst"},
+		{"escaped markup is text", "literally &lt;b&gt; and &amp; itself", "literally <b> and & itself"},
+		{"nothing to do", "plain text", "plain text"},
+	}
+	for _, c := range cases {
+		if got := plainText(c.in); got != c.want {
+			t.Errorf("%s:\n  in   %q\n  got  %q\n  want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// A value continues onto the next line when it ends with a backslash, and only
+// then. That is SmokePing's own rule — Config::Grammar reads
+// `while (/\\$/) { s/\\$//; ... $_ .= ' ' . $n }` — and it says nothing about
+// indentation.
+//
+// Keying on indentation instead was wrong in both directions, and the second
+// one is the dangerous half: an indented line that never asked to be joined was
+// silently glued onto the value above it.
+func TestSmokePingContinuationFollowsTheBackslash(t *testing.T) {
+	const cfg = `*** Targets ***
+
+probe = FPing
+
++ a
+host = 10.0.0.1
+title = joined \
+        across two lines
+remark = not continued
+         this line is indented but was never asked for
+
++ b
+host = 10.0.0.2
+title = continued \
+even without indentation
+`
+	f, warnings, err := ParseSmokePing([]byte(cfg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := derefOr(f.Targets["a"].Title); got != "joined across two lines" {
+		t.Errorf("a.title = %q, want the two lines folded", got)
+	}
+	// The indented line is not part of the remark above it.
+	if got := derefOr(f.Targets["a"].Notes); got != "not continued" {
+		t.Errorf("a.notes = %q; an indented line was glued on without being asked for", got)
+	}
+	// And it is reported rather than dropped in silence.
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "this line is indented") {
+		t.Errorf("nothing warned about the stray line:\n%s", joined)
+	}
+	// A continued line joins whether or not it is indented, because the
+	// backslash is what decides.
+	if got := derefOr(f.Targets["b"].Title); got != "continued even without indentation" {
+		t.Errorf("b.title = %q", got)
+	}
 }

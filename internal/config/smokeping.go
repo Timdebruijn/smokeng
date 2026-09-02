@@ -230,11 +230,21 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 			continue
 		}
 
-		// A line starting with whitespace continues the previous value. The
-		// backslash that marks the continuation is SmokePing's syntax, not part
-		// of the text: leaving it in put a stray "\" in the middle of every
-		// wrapped sentence, which is what a real import produced.
-		if pendingKey != "" && (strings.HasPrefix(raw, " ") || strings.HasPrefix(raw, "\t")) {
+		// A value continues onto the next line when it ends with a backslash,
+		// which is what SmokePing's own parser does — Config::Grammar reads
+		// `while (/\\$/) { s/\\$//; ... $_ .= ' ' . $n }`. Indentation has
+		// nothing to do with it.
+		//
+		// This used to key on indentation instead, which is wrong in both
+		// directions: an indented line after a value that did not ask to be
+		// continued was glued onto it, and a continued line that happened not to
+		// be indented was not. The backslash was also kept, so every wrapped
+		// sentence arrived with a stray one in the middle.
+		sofar := top[pendingKey]
+		if pendingNode != nil {
+			sofar = pendingNode.keys[pendingKey]
+		}
+		if pendingKey != "" && continues(sofar) {
 			if pendingNode != nil {
 				pendingNode.keys[pendingKey] = joinContinuation(pendingNode.keys[pendingKey], trimmed)
 			} else {
@@ -607,13 +617,32 @@ func plainText(s string) string {
 	s = htmlBreak.ReplaceAllString(s, " ")
 	s = htmlTag.ReplaceAllString(s, "")
 	s = html.UnescapeString(s)
+	// A non-breaking space is a space once this is text. Left alone it survives
+	// the collapse below, so "&nbsp;&nbsp;&nbsp;" — an old habit for spacing —
+	// arrives as three invisible characters that behave like one wide gap.
+	s = strings.ReplaceAll(s, "\u00a0", " ")
 	// Collapsing runs of space last: removing a tag or folding a line leaves
 	// doubled spaces that were not in the original.
 	return strings.TrimSpace(spaceRun.ReplaceAllString(s, " "))
 }
 
+// The attribute part accepts quoted values so a ">" inside one does not end the
+// match early. Without that, `<a href="http://x?y=1>2">Link</a>` matched up to
+// the quoted ">" and left `2">` behind as visible text — worse than an
+// unstripped tag, because it is wreckage rather than markup.
+//
+// A tag has to start with a letter, so a bare "<" stays: "latency < 5ms" is
+// ordinary prose in a remark and must survive untouched.
+const htmlAttrs = `(\s+(?:"[^"]*"|'[^']*'|[^<>"'])*)?`
+
 var (
-	htmlBreak = regexp.MustCompile(`(?i)<br\s*/?>`)
-	htmlTag   = regexp.MustCompile(`</?[a-zA-Z][a-zA-Z0-9]*(\s[^<>]*)?/?>`)
-	spaceRun  = regexp.MustCompile(`[ \t]{2,}`)
+	htmlBreak = regexp.MustCompile(`(?i)<br` + htmlAttrs + `\s*/?>`)
+	htmlTag   = regexp.MustCompile(`</?[a-zA-Z][a-zA-Z0-9-]*` + htmlAttrs + `/?>`)
+	spaceRun  = regexp.MustCompile("[ \t\u00a0]{2,}")
 )
+
+// continues reports whether a value asks for the next line, by SmokePing's
+// rule: it ends with a backslash.
+func continues(v string) bool {
+	return strings.HasSuffix(strings.TrimRight(v, " \t"), "\\")
+}
