@@ -353,3 +353,80 @@ metric = receive_ipdv
 		}
 	}
 }
+
+// SmokePing renders title, menu and remark as HTML and its configs use that:
+// entities for punctuation, <b> for emphasis, <br> for a break. smokeng renders
+// them as text, so an import that carried the markup through showed "&mdash;"
+// where a dash belonged and "<b>" around a word — sixteen and ten of them
+// respectively on a real migration, corrected by hand one title at a time.
+//
+// The trailing backslash is SmokePing's line-continuation marker, not text, and
+// leaving it in put a stray "\" in the middle of every wrapped sentence.
+func TestSmokePingImportsDisplayTextAsText(t *testing.T) {
+	const cfg = `*** Targets ***
+
+probe = FPing
+
++ wag
+host = 10.0.0.1
+title = Telfort(KPN) &mdash; IRTT round-trip
+remark = Meet met UDP. <b>Burst</b> is de klassieke meting, \
+         en <b>Continu</b> pingt door.<br><br>Wijken die af, \
+         dan zit het in korte pieken.
+`
+	f, _, err := ParseSmokePing([]byte(cfg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := f.Targets["wag"]
+	if !ok {
+		t.Fatalf("target missing; got %v", keys(f.Targets))
+	}
+	if e.Title == nil || *e.Title != "Telfort(KPN) — IRTT round-trip" {
+		t.Errorf("title = %q, want the entity decoded to a dash", derefOr(e.Title))
+	}
+	if e.Notes == nil {
+		t.Fatal("no notes imported")
+	}
+	notes := *e.Notes
+	for _, unwanted := range []string{"<b>", "</b>", "<br>", "&mdash;", "\\"} {
+		if strings.Contains(notes, unwanted) {
+			t.Errorf("notes still carry %q: %s", unwanted, notes)
+		}
+	}
+	// The words survive, and so does the sentence break, as a space.
+	for _, want := range []string{"Burst", "Continu", "korte pieken"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes lost %q: %s", want, notes)
+		}
+	}
+	if strings.Contains(notes, "  ") {
+		t.Errorf("notes carry a doubled space left by the stripping: %q", notes)
+	}
+}
+
+// Markup a config deliberately escaped is text, and must survive as text.
+func TestSmokePingKeepsEscapedMarkup(t *testing.T) {
+	const cfg = `*** Targets ***
+
+probe = FPing
+
++ a
+host = 10.0.0.1
+title = literally &lt;b&gt; and &amp; itself
+`
+	f, _, err := ParseSmokePing([]byte(cfg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := derefOr(f.Targets["a"].Title); got != "literally <b> and & itself" {
+		t.Errorf("title = %q", got)
+	}
+}
+
+func derefOr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
