@@ -90,10 +90,16 @@ const (
 	SendReasonSessionRefused uint8 = 5
 	// SendReasonSessionEnded is a session that opened and broke part-way.
 	SendReasonSessionEnded uint8 = 6
-	// SendReasonSessionShort is a session that ended without sending everything
-	// it was asked to. Unlike the two above, the far end reported nothing wrong:
-	// this is the prober's own pacing or deadline arithmetic falling short, and
-	// it is here so that case stops being indistinguishable from the network's.
+	// SendReasonSessionShort is retired and no longer recorded. It marked a
+	// session that ended without sending everything it was asked to, which was
+	// filed as a send failure — and that was the mistake: nothing failed, irtt
+	// had simply paced fewer packets into the window, so the interval reported
+	// loss that never happened. Those probes are now left uncounted instead of
+	// counted as failed.
+	//
+	// The code stays defined and named because measurements carrying it are
+	// already stored, and a reason that renders as "reason 7" for the rest of
+	// that data's life would be worse than a retired one that still reads.
 	SendReasonSessionShort uint8 = 7
 	// SendReasonSessionNoReply is a session handshake that drew no answer at
 	// all. Silence is not refusal: a black-holed address, a filtered port and a
