@@ -515,3 +515,73 @@ even without indentation
 		t.Errorf("b.title = %q", got)
 	}
 }
+
+// A continuation takes the very next line, whatever it is.
+//
+// SmokePing's inner loop reads that line straight from the file handle and only
+// trims it: no comment stripping, no skipping of blanks. So a blank line after
+// a backslash ends the value rather than being stepped over, and a "#" on a
+// continued line is data. Checking the continuation after the blank-and-comment
+// skip let a dangling backslash reach past a blank line and swallow whatever
+// came next — the same mis-join the backslash rule was adopted to stop.
+func TestSmokePingContinuationDoesNotStepOverBlanks(t *testing.T) {
+	const cfg = `*** Targets ***
+
+probe = FPing
+
++ a
+host = 10.0.0.1
+title = dangling \
+
+remark = this is its own key, not part of the title
+
++ b
+host = 10.0.0.2
+# a comment before the value
+title = b's title
+`
+	f, _, err := ParseSmokePing([]byte(cfg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := derefOr(f.Targets["a"].Title); got != "dangling" {
+		t.Errorf("a.title = %q; the backslash reached past the blank line", got)
+	}
+	if got := derefOr(f.Targets["a"].Notes); got != "this is its own key, not part of the title" {
+		t.Errorf("a.notes = %q; the remark was swallowed by the title above it", got)
+	}
+	if got := derefOr(f.Targets["b"].Title); got != "b's title" {
+		t.Errorf("b.title = %q", got)
+	}
+}
+
+// A comment is removed before anything decides whether a line continues, so a
+// backslash inside one does not continue the value — it was never there.
+func TestSmokePingCommentIsStrippedBeforeTheBackslash(t *testing.T) {
+	const cfg = `*** Targets ***
+
+probe = FPing
+
++ a
+host = 10.0.0.1
+title = kept # dropped \
+remark = also its own key
+
++ b
+host = 10.0.0.2
+title = trailing comment removed   # like this
+`
+	f, _, err := ParseSmokePing([]byte(cfg), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := derefOr(f.Targets["a"].Title); got != "kept" {
+		t.Errorf("a.title = %q; a backslash inside a comment continued the value", got)
+	}
+	if got := derefOr(f.Targets["a"].Notes); got != "also its own key" {
+		t.Errorf("a.notes = %q", got)
+	}
+	if got := derefOr(f.Targets["b"].Title); got != "trailing comment removed" {
+		t.Errorf("b.title = %q; a trailing comment became part of the value", got)
+	}
+}
