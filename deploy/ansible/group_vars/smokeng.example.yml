@@ -1,6 +1,12 @@
 ---
-# Copy to group_vars/smokeng.yml and adjust. Real inventories and group_vars
-# are gitignored: they name your hosts.
+# Copy to group_vars/<group>.yml — named after the group your host is in, not
+# after "smokeng" — and adjust. Real inventories and group_vars are gitignored:
+# they name your hosts.
+#
+# The name matters once there is more than one instance. A file named
+# group_vars/smokeng.yml applies to every host in the group, so settings meant
+# for one machine reach all of them; naming it after the child group its host
+# belongs to keeps each instance's settings to itself. See inventory.example.ini.
 
 # Loopback is the default. To reach the UI from elsewhere, put a
 # TLS-terminating proxy in front and enable OIDC rather than opening it up.

@@ -14,8 +14,8 @@ an optional declarative import of the target tree.
 
 ```bash
 cp inventory.example.ini inventory.ini
-cp group_vars/smokeng.example.yml group_vars/smokeng.yml
-$EDITOR inventory.ini group_vars/smokeng.yml
+cp group_vars/smokeng.example.yml group_vars/home.yml
+$EDITOR inventory.ini group_vars/home.yml
 ansible-galaxy install -r requirements.yml
 ansible-playbook -i inventory.ini site.yml
 ```
