@@ -168,7 +168,35 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 	for _, sl := range lines {
 		raw := sl.text
 		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+
+		// A pending continuation takes the very next line, whatever it is.
+		//
+		// SmokePing's inner loop reads it straight from the file handle and
+		// only trims it: no comment stripping, no skipping of blank lines. So a
+		// blank line after a backslash is consumed as an empty continuation and
+		// ends the value, and a "#" on a continued line is data. Checking this
+		// after the blank-and-comment skip below let a dangling backslash reach
+		// past a blank line and swallow whatever came next — the same class of
+		// mis-join the backslash rule was adopted to stop.
+		sofar := top[pendingKey]
+		if pendingNode != nil {
+			sofar = pendingNode.keys[pendingKey]
+		}
+		if pendingKey != "" && continues(sofar) {
+			if pendingNode != nil {
+				pendingNode.keys[pendingKey] = joinContinuation(sofar, trimmed)
+			} else {
+				top[pendingKey] = joinContinuation(sofar, trimmed)
+			}
+			continue
+		}
+
+		// An ordinary line loses its comment first, which is what decides
+		// whether it ends in a backslash at all: "title = a # b \" is not a
+		// continued value in SmokePing, because the backslash is inside the
+		// comment that has already been removed.
+		trimmed = stripComment(trimmed)
+		if trimmed == "" {
 			continue
 		}
 
@@ -227,29 +255,6 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 			}
 			warn(sl, "@include is not followed by the byte parser; use "+
 				"`smokeng config import-smokeping FILE`, which follows includes relative to the file")
-			continue
-		}
-
-		// A value continues onto the next line when it ends with a backslash,
-		// which is what SmokePing's own parser does — Config::Grammar reads
-		// `while (/\\$/) { s/\\$//; ... $_ .= ' ' . $n }`. Indentation has
-		// nothing to do with it.
-		//
-		// This used to key on indentation instead, which is wrong in both
-		// directions: an indented line after a value that did not ask to be
-		// continued was glued onto it, and a continued line that happened not to
-		// be indented was not. The backslash was also kept, so every wrapped
-		// sentence arrived with a stray one in the middle.
-		sofar := top[pendingKey]
-		if pendingNode != nil {
-			sofar = pendingNode.keys[pendingKey]
-		}
-		if pendingKey != "" && continues(sofar) {
-			if pendingNode != nil {
-				pendingNode.keys[pendingKey] = joinContinuation(pendingNode.keys[pendingKey], trimmed)
-			} else {
-				top[pendingKey] = joinContinuation(top[pendingKey], trimmed)
-			}
 			continue
 		}
 
@@ -645,4 +650,14 @@ var (
 // rule: it ends with a backslash.
 func continues(v string) bool {
 	return strings.HasSuffix(strings.TrimRight(v, " \t"), "\\")
+}
+
+// stripComment removes a "#" and everything after it, as SmokePing does to
+// every line before deciding anything else about it. A continued line is the
+// exception and never reaches here: SmokePing reads that one raw.
+func stripComment(s string) string {
+	if i := strings.Index(s, "#"); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
 }
