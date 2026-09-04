@@ -55,10 +55,15 @@
     sysctl_set: true
     reload: true
 
-# The prober sizes its receive queue when the socket opens and never again, so
-# raising the ceiling under a running master changes nothing until it restarts.
-# Notifying the handler here is what makes the setting take effect on the run
-# that introduces it, rather than at whatever unrelated restart comes next.
+# A socket's receive queue is sized when it opens and never again, so raising
+# the ceiling under a running process changes nothing until it restarts.
+# Notifying here is what makes the setting take effect on the run that
+# introduces it, rather than at whatever unrelated restart comes next.
+#
+# Both units, because both open their own sockets: the master through its
+# built-in prober, and the standalone prober through the same engine. Restarting
+# only the master would leave the very process this is named for on the old
+# buffer, with nothing to say so.
 - name: Raise the receive-buffer ceiling the prober asks for
   ansible.posix.sysctl:
     name: net.core.rmem_max
@@ -67,7 +72,9 @@
     sysctl_set: true
     reload: true
   when: smokeng_rmem_max | int > 0
-  notify: Restart smokeng
+  notify:
+    - Restart smokeng
+    - Restart smokeng prober
 
 - name: Create the state directory
   ansible.builtin.file:

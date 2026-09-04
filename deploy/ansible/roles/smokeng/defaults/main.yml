@@ -119,7 +119,12 @@ smokeng_ping_group_range: ""
 # than it asked for and says so at every start.
 #
 # This is a ceiling, not an allocation: raising it costs nothing until a process
-# asks, and only smokeng does. Set it to 0 to leave the kernel's own value
-# alone — the shortfall is then logged and harmless until the drop counter
-# actually moves. See docs/operations.md.
+# asks, and only smokeng does. The shortfall is logged either way and stays
+# harmless until the drop counter actually moves, so 0 is a reasonable choice
+# for anyone who would rather watch that counter than raise the ceiling.
+#
+# 0 skips the task rather than undoing it: a value an earlier run wrote stays in
+# the drop-in file and in the running kernel. To take it back, remove the line
+# from /etc/sysctl.d/99-smokeng.conf yourself; the live value survives until the
+# host reboots. See docs/operations.md.
 smokeng_rmem_max: 4194304
