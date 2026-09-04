@@ -112,3 +112,14 @@ smokeng_targets_prune: false
 # to every user on the box. Override with a literal "low high" pair if you have
 # a reason to widen it.
 smokeng_ping_group_range: ""
+
+# Ceiling for a socket's receive buffer, in bytes. The prober asks for 4 MiB on
+# each ICMP socket and the kernel silently caps the grant at this value, so a
+# distribution default of ~208 KiB means smokeng runs with a queue far smaller
+# than it asked for and says so at every start.
+#
+# This is a ceiling, not an allocation: raising it costs nothing until a process
+# asks, and only smokeng does. Set it to 0 to leave the kernel's own value
+# alone — the shortfall is then logged and harmless until the drop counter
+# actually moves. See docs/operations.md.
+smokeng_rmem_max: 4194304

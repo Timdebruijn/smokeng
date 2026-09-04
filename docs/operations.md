@@ -207,13 +207,21 @@ Five of these are worth an alert of their own:
   ```
 
   — and that line on its own is not a problem to fix. It says what the kernel granted, not
-  that anything was lost. Act when the counter moves:
+  that anything was lost; a host can log it for months and never drop a reply. The counter
+  is what decides, not the log line.
+
+  The Ansible role raises the ceiling anyway, through `smokeng_rmem_max`, because a
+  warning that fires at every start and never means anything teaches you to skim past the
+  ones that do. Deploying by hand, the same thing is:
 
   ```bash
   echo 'net.core.rmem_max = 4194304' | sudo tee /etc/sysctl.d/60-smokeng-rmem.conf
   sudo sysctl -p /etc/sysctl.d/60-smokeng-rmem.conf
   sudo systemctl restart smokeng   # the buffer is sized when the socket opens
   ```
+
+  That restart is not optional bookkeeping: a socket's queue is sized when it opens, so a
+  raised ceiling reaches a running prober only through a new one.
 
   Note that this is the setting on the machine smokeng runs on. On a virtual machine that
   is the guest's own kernel; a generous value on the hypervisor does nothing for it.
