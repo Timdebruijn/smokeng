@@ -218,6 +218,7 @@ Five of these are worth an alert of their own:
   echo 'net.core.rmem_max = 4194304' | sudo tee /etc/sysctl.d/60-smokeng-rmem.conf
   sudo sysctl -p /etc/sysctl.d/60-smokeng-rmem.conf
   sudo systemctl restart smokeng   # the buffer is sized when the socket opens
+  sudo systemctl restart smokeng-prober   # too, if the standalone prober runs here
   ```
 
   That restart is not optional bookkeeping: a socket's queue is sized when it opens, so a
