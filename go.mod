@@ -1,17 +1,17 @@
 module github.com/timdebruijn/smokeng
 
-go 1.27.0
+go 1.27.1
 
 require (
-	codeberg.org/miekg/dns v0.6.105
-	github.com/apache/arrow-go/v18 v18.7.0
-	github.com/coreos/go-oidc/v3 v3.20.0
+	codeberg.org/miekg/dns v0.6.109
+	github.com/apache/arrow-go/v18 v18.8.0
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/heistp/irtt v0.9.2
 	github.com/pelletier/go-toml/v2 v2.4.3
-	golang.org/x/net v0.58.0
-	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sys v0.47.0
-	modernc.org/sqlite v1.57.0
+	golang.org/x/net v0.59.0
+	golang.org/x/oauth2 v0.37.0
+	golang.org/x/sys v0.48.0
+	modernc.org/sqlite v1.59.0
 )
 
 require (
@@ -31,9 +31,9 @@ require (
 	github.com/pkg/profile v1.7.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
-	modernc.org/libc v1.75.6 // indirect
+	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
