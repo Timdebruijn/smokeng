@@ -3,7 +3,7 @@ module github.com/timdebruijn/smokeng
 go 1.27.1
 
 require (
-	codeberg.org/miekg/dns v0.6.109
+	codeberg.org/miekg/dns v0.6.117
 	github.com/apache/arrow-go/v18 v18.8.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/heistp/irtt v0.9.2
