@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -267,5 +269,107 @@ func TestUnsignedFloodDoesNotStarveTheAgent(t *testing.T) {
 	s := parse(t, signedRequest(t, "POST", "/api/v1/ingest", agent.ID, key, []byte("real"), now))
 	if _, err := v.Check(s, now); err != nil {
 		t.Fatalf("the genuine agent was rejected after an unauthenticated flood: %v", err)
+	}
+}
+
+// A request that is rate limited must not leave its nonce behind. The nonce
+// used to be stored before the limiter was asked, so an agent past its budget
+// still filled the cache with everything it sent — and a nonce is whatever
+// string the sender chose, up to the header limit.
+func TestRateLimitedRequestsDoNotFillTheNonceCache(t *testing.T) {
+	agent, key := newAgent(t, 7, "ams")
+	now := time.Unix(1_756_400_000, 0)
+	v := verifierFor(agent)
+	for range burstSize * 10 {
+		s := parse(t, signedRequest(t, "POST", "/api/v1/ingest", agent.ID, key, []byte("b"), now))
+		_, _ = v.Check(s, now)
+	}
+	if got := len(v.nonces.seen); got != burstSize {
+		t.Errorf("the cache holds %d nonces after %d requests, want only the %d that were admitted",
+			got, burstSize*10, burstSize)
+	}
+}
+
+// The other direction: a replay verifies a second time, because it is a
+// genuine signed request, so it has to be refused before it touches the rate
+// budget. Otherwise anyone who has seen one valid request can drain that
+// agent's bucket by repeating it.
+func TestReplayDoesNotSpendTheRateBudget(t *testing.T) {
+	agent, key := newAgent(t, 7, "ams")
+	now := time.Unix(1_756_400_000, 0)
+	v := verifierFor(agent)
+	s := parse(t, signedRequest(t, "POST", "/api/v1/ingest", agent.ID, key, []byte("b"), now))
+	if _, err := v.Check(s, now); err != nil {
+		t.Fatal(err)
+	}
+	before := v.limits.buckets[agent.ID].tokens
+	for range 100 {
+		if _, err := v.Check(s, now); err == nil {
+			t.Fatal("a replay was accepted")
+		}
+	}
+	if after := v.limits.buckets[agent.ID].tokens; after != before {
+		t.Errorf("replays spent rate budget: %.1f tokens left, was %.1f", after, before)
+	}
+}
+
+// A nonce is exactly nonceBytes of base64, which is what Sign produces and has
+// since the header was introduced. Anything else is refused at Parse, because
+// the master holds an accepted nonce for ten minutes and its size is what that
+// costs.
+func TestParseRejectsMalformedNonces(t *testing.T) {
+	agent, key := newAgent(t, 7, "ams")
+	now := time.Unix(1_756_400_000, 0)
+	enc := base64.StdEncoding.EncodeToString
+	cases := map[string]struct {
+		nonce string
+		ok    bool
+	}{
+		"a real one":          {enc(make([]byte, nonceBytes)), true},
+		"one byte short":      {enc(make([]byte, nonceBytes-1)), false},
+		"one byte long":       {enc(make([]byte, nonceBytes+1)), false},
+		"not base64":          {"not base64 at all!!", false},
+		"a megabyte":          {strings.Repeat("A", 1<<20), false},
+		"url-safe alphabet":   {strings.NewReplacer("+", "-", "/", "_").Replace(enc(bytes.Repeat([]byte{0xFB, 0xFF}, 8))), false},
+		"unpadded base64 (!)": {strings.TrimRight(enc(make([]byte, nonceBytes)), "="), false},
+	}
+	for name, c := range cases {
+		r := signedRequest(t, "POST", "/api/v1/ingest", agent.ID, key, []byte("b"), now)
+		r.Header.Set(HeaderNonce, c.nonce)
+		_, err := Parse(r, 1<<20)
+		if (err == nil) != c.ok {
+			t.Errorf("%s: Parse err = %v, want ok=%v", name, err, c.ok)
+		}
+	}
+}
+
+// Expired nonces are dropped on a timer. "Sweep when the map is big" meant a
+// walk of the whole map under the lock on every request for as long as the map
+// stayed big, which is exactly when nothing in it had expired to delete.
+func TestNonceSweepRunsOnATimerNotOnEveryInsert(t *testing.T) {
+	var c nonceCache
+	t0 := time.Unix(1_756_400_000, 0)
+	ok := func() bool { return true }
+	stale := func(n int, at time.Time) {
+		for i := range n {
+			c.seen[strings.Repeat("s", 1+i%7)+string(rune('a'+i%26))+time.Duration(i).String()] = at
+		}
+	}
+	c.admit("first", t0, ok)
+	stale(5000, t0)
+
+	// A sweep is due: everything past its TTL goes.
+	later := t0.Add(NonceTTL + time.Second)
+	c.admit("second", later, ok)
+	if n := len(c.seen); n != 1 {
+		t.Fatalf("after the sweep the cache holds %d entries, want only the fresh one", n)
+	}
+
+	// One second after that no sweep is due, so stale entries are left alone
+	// and the insert stays cheap.
+	stale(5000, t0)
+	c.admit("third", later.Add(time.Second), ok)
+	if n := len(c.seen); n < 5000 {
+		t.Errorf("the cache was swept again within %s (%d entries left)", nonceSweepEvery, n)
 	}
 }
