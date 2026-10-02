@@ -101,6 +101,47 @@ func (p *rulePayload) applyTo(r *alert.Rule) {
 	}
 }
 
+// noSuchRule is the one answer for a rule the caller may not know about, which
+// is also the answer for a rule that does not exist. They used to differ — a
+// missing rule was "not found" and an invisible one was refused as a target the
+// caller could not see — so asking for rule ids one after another told them
+// which ones were real, and whose.
+func noSuchRule(w http.ResponseWriter) {
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such rule"})
+}
+
+// ruleFor finds the rule an endpoint addresses and authorises the caller
+// against the node it is defined on, before anything else about it is said. A
+// rule on a node they cannot see is answered as absent; one they can see but
+// not change is forbidden, if the endpoint writes.
+func (s *server) ruleFor(w http.ResponseWriter, r *http.Request, id int64, write bool) (*alert.Rule, *Scope, bool) {
+	sc, _, ok := s.withScope(w, r)
+	if !ok {
+		return nil, nil, false
+	}
+	rules, err := s.st.ListAlertRules(r.Context())
+	if err != nil {
+		internalError(w, err)
+		return nil, nil, false
+	}
+	for i := range rules {
+		if rules[i].ID != id {
+			continue
+		}
+		rule := &rules[i]
+		if !sc.Visible(rule.TargetID) {
+			break
+		}
+		if write && !sc.CanWrite(rule.TargetID) {
+			sc.deny(w, rule.TargetID)
+			return nil, nil, false
+		}
+		return rule, sc, true
+	}
+	noSuchRule(w)
+	return nil, nil, false
+}
+
 func (s *server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 	var p rulePayload
 	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20)).Decode(&p); err != nil {
@@ -134,22 +175,7 @@ func (s *server) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("bad rule id"))
 		return
 	}
-	rules, err := s.st.ListAlertRules(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	var rule *alert.Rule
-	for i := range rules {
-		if rules[i].ID == id {
-			rule = &rules[i]
-		}
-	}
-	if rule == nil {
-		notFound(w)
-		return
-	}
-	sc, ok := s.requireWrite(w, r, rule.TargetID)
+	rule, sc, ok := s.ruleFor(w, r, id, true)
 	if !ok {
 		return
 	}
@@ -181,22 +207,7 @@ func (s *server) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("bad rule id"))
 		return
 	}
-	rules, err := s.st.ListAlertRules(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	var target int64 = -1
-	for i := range rules {
-		if rules[i].ID == id {
-			target = rules[i].TargetID
-		}
-	}
-	if target < 0 {
-		notFound(w)
-		return
-	}
-	if _, ok := s.requireWrite(w, r, target); !ok {
+	if _, _, ok := s.ruleFor(w, r, id, true); !ok {
 		return
 	}
 	if err := s.st.DeleteAlertRule(r.Context(), id); err != nil {

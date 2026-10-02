@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/timdebruijn/smokeng/internal/auth"
@@ -147,6 +148,14 @@ func (sc *Scope) PathIn(id int64) (string, error) {
 		return full, nil
 	}
 	return strings.TrimPrefix(full, parent), nil
+}
+
+// Within reports whether a node is the given ancestor or lies beneath it, in
+// the tree as stored. It says nothing about what the caller may see: an id that
+// is not in the tree at all is simply not within anything, which is also what
+// makes it answer the same as an id that is, but elsewhere.
+func (sc *Scope) Within(id, ancestor int64) bool {
+	return slices.Contains(sc.chain(id), ancestor)
 }
 
 // chain lists a node and its ancestors, root first.

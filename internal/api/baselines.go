@@ -75,32 +75,30 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rules, err := s.st.ListAlertRules(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	var rule *alert.Rule
-	for i := range rules {
-		if rules[i].ID == ruleID {
-			rule = &rules[i]
-		}
-	}
-	if rule == nil {
-		notFound(w)
+	// The rule is authorised before anything about it is said: whether it
+	// exists, what kind it is and what it would capture are all answered only to
+	// someone who may write on the node it is defined on. Capturing a reference
+	// changes what the rule fires on, so that is the right to ask for.
+	rule, sc, ok := s.ruleFor(w, r, ruleID, true)
+	if !ok {
 		return
 	}
 	if rule.Metric != alert.MetricShape || rule.Baseline != alert.BaselineGolden {
 		badRequest(w, errors.New("only a shape rule with a golden baseline has a reference to capture"))
 		return
 	}
-	// Capturing a reference changes what the rule fires on, so it is a write on
-	// the node the rule is defined on.
-	if _, ok := s.requireWrite(w, r, rule.TargetID); !ok {
-		return
-	}
 	if body.TargetID == 0 {
 		body.TargetID = rule.TargetID
+	}
+	// The target to read from is the rule's own node or something beneath it.
+	// It used to be taken from the request as given, so an editor of one
+	// customer could point their own rule at another customer's target and
+	// have its measurements stored as the reference, then read them back
+	// through shape-reference. Anything else is answered as a target that does
+	// not exist, whether it does or not.
+	if !sc.Within(body.TargetID, rule.TargetID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such target"})
+		return
 	}
 	if body.To == 0 {
 		body.To = time.Now().Unix()
@@ -110,6 +108,14 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.From >= body.To {
 		badRequest(w, errors.New("the capture window must end after it starts"))
+		return
+	}
+	// Every sample in the window is read into memory, concatenated, sorted and
+	// stored as one blob, so the window is bounded the way a measurements
+	// request is.
+	if rows := rangeRows(body.From, body.To); rows > maxRowsPerRequest {
+		badRequest(w, fmt.Errorf("that window could hold about %d intervals, more than the %d one capture reads; "+
+			"capture a shorter window", rows, maxRowsPerRequest))
 		return
 	}
 
@@ -200,31 +206,16 @@ func (s *server) handleClearBaseline(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("bad rule id"))
 		return
 	}
-	rules, err := s.st.ListAlertRules(r.Context())
+	if _, _, ok := s.ruleFor(w, r, ruleID, true); !ok {
+		return
+	}
+	cleared, err := s.alerts.ClearBaseline(r.Context(), ruleID)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
-	var rule *alert.Rule
-	for i := range rules {
-		if rules[i].ID == ruleID {
-			rule = &rules[i]
-		}
-	}
-	if rule == nil {
-		notFound(w)
-		return
-	}
-	if _, ok := s.requireWrite(w, r, rule.TargetID); !ok {
-		return
-	}
-	ok, err := s.alerts.ClearBaseline(r.Context(), ruleID)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	if !ok {
-		notFound(w)
+	if !cleared {
+		notFound(w) // the rule is theirs and has no reference to clear
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"cleared": ruleID})
@@ -250,6 +241,37 @@ func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("target_id is required"))
 		return
 	}
+	// Authorise before anything is resolved or said. The target comes first:
+	// one the caller cannot see does not exist as far as they are concerned. The
+	// rule has to be one that applies to that target, which is the node it is
+	// defined on or an ancestor of it (rules inherit downward). Naming a rule
+	// that does not exist, one on another customer's node, and a real rule that
+	// does not reach this target all get the same answer, because which rule ids
+	// exist is itself something this endpoint would otherwise tell.
+	sc, _, ok := s.withScope(w, r)
+	if !ok {
+		return
+	}
+	if !sc.Visible(targetID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such target"})
+		return
+	}
+	rules, err := s.st.ListAlertRules(r.Context())
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	var rule *alert.Rule
+	for i := range rules {
+		if rules[i].ID == ruleID && sc.Within(targetID, rules[i].TargetID) {
+			rule = &rules[i]
+		}
+	}
+	if rule == nil {
+		noSuchRule(w)
+		return
+	}
+
 	// The caller normally names the vantage point, since a firing alert knows
 	// which one it is about. Without it, resolve the target's assigned agent
 	// rather than assuming the local prober.
@@ -265,11 +287,23 @@ func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if !s.requireVisible(w, r, targetID) {
-		return
-	}
 
-	reference, kind, ok := s.alerts.ShapeReference(ruleID, targetID, agentID)
+	reference, kind, avail := s.alerts.ShapeReference(ruleID, targetID, agentID)
+	// A golden reference is the rule's, not the target's: one distribution
+	// captured from one series and compared against every series the rule
+	// reaches. So it is theirs to read only if the series it came from is. A
+	// caller who sees part of the rule's subtree is shown a reference captured
+	// from a part they cannot see as not available, which is the same thing
+	// they would see for a rule nothing has been captured for.
+	if kind == "golden" && avail {
+		if bs, err := s.alerts.Baselines(r.Context()); err == nil {
+			for _, b := range bs {
+				if b.RuleID == ruleID && !sc.Visible(b.TargetID) {
+					reference, avail = nil, false
+				}
+			}
+		}
+	}
 	// The current side: the most recent interval measured for this series.
 	to := time.Now().Unix()
 	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, to-6*3600, to)
@@ -284,7 +318,7 @@ func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"rule_id": ruleID, "target_id": targetID, "agent_id": agentID,
 		"kind":      kind,
-		"available": ok,
+		"available": avail,
 		"reference": reference,
 		"current":   current,
 	})
