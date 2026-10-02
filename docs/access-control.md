@@ -49,8 +49,16 @@ Concretely:
 
 - Paths are rendered relative to their grant. Someone granted
   `Klanten/GemeenteX` sees `/GemeenteX` and `/GemeenteX/gw`.
-- A parent they cannot see is not named in the response.
+- A parent they cannot see is not named in the response. That holds for every
+  place a path or a name appears: a setting's source, a firing alert, an
+  availability report. Each is rendered as the caller sees it, and a test calls
+  every read route as a scoped user and fails if any answer names anything above
+  their grant, beside it, or measuring something else.
 - Every list is filtered: targets, alert rules, firing alerts, agents.
+- An id works the same way. For every route that takes one, an id belonging to
+  someone else is answered exactly as an id that does not exist, status and body,
+  so trying numbers tells a caller nothing. A rule, a silence and a baseline are
+  no different from a target in that.
 - A target outside their scope is answered as **absent**, not forbidden.
   "You may not read that" would confirm there is something to read.
 
@@ -72,6 +80,14 @@ However wide the subtree, a grant does not reach:
   user sees the *names* and liveness of the agents that measure targets they can
   see — otherwise "from ams-01" on their own graph is unreadable — and no public
   keys, no tokens, and no evidence that other agents exist.
+
+  An editor may set a target's `agents` to those same agents and no others: the set the
+  agent picker offers. An agent sitting in another customer's network is a vantage point
+  into it, and naming one is not something a grant on a subtree should allow. Naming any
+  other is refused with a message that does not say whether the agent exists, and that
+  lists none. A global admin may name any enrolled agent, and is told which exist when
+  they get one wrong. Changing a node's title is not refused because of an agent the node
+  already carries: the list is checked when a request sets it.
 - **The root defaults.**
 - **`/metrics`**, which counts and names things across the whole installation.
 - **`config import` and `config export`**, which are declarative over the entire
