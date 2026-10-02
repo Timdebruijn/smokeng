@@ -150,6 +150,43 @@ func (sc *Scope) PathIn(id int64) (string, error) {
 	return strings.TrimPrefix(full, parent), nil
 }
 
+// agentSet is the agents a caller may name or be told about.
+type agentSet struct {
+	all   bool
+	names map[string]bool
+}
+
+func (a agentSet) has(name string) bool { return a.all || a.names[name] }
+
+// agentsInScope returns the agents this caller has any business with. A global
+// admin has all of them. Anyone else has the ones that already measure
+// something they can see, which is exactly the set the agent picker offers
+// them: agents are global infrastructure and a grant never confers anything
+// over them (DESIGN.md §7.4), so what the API accepts has to be what the UI
+// shows. Otherwise an editor could point a target at any agent there is, and an
+// agent sitting inside another customer's network is a vantage point into it;
+// and the error for naming one that does not exist would list every agent, or
+// tell them by its absence which ones do.
+func (sc *Scope) agentsInScope(targets []tree.Target) (agentSet, error) {
+	if sc.IsGlobalAdmin() {
+		return agentSet{all: true}, nil
+	}
+	set := agentSet{names: map[string]bool{}}
+	for i := range targets {
+		if targets[i].Host == nil || !sc.Visible(targets[i].ID) {
+			continue
+		}
+		res, err := sc.tr.Resolve(targets[i].ID)
+		if err != nil {
+			return agentSet{}, err
+		}
+		for _, name := range strings.Fields(res.Agents.Effective) {
+			set.names[name] = true
+		}
+	}
+	return set, nil
+}
+
 // Within reports whether a node is the given ancestor or lies beneath it, in
 // the tree as stored. It says nothing about what the caller may see: an id that
 // is not in the tree at all is simply not within anything, which is also what
