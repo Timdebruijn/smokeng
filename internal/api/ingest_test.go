@@ -236,3 +236,75 @@ func TestAgentTargetsAreScopedAndResolved(t *testing.T) {
 		}
 	}
 }
+
+// An agent cannot rewrite an interval it has already reported. The upsert used
+// to make a replay "change nothing" only when the bytes were identical; the
+// same key with different values silently replaced stored history, which for a
+// system whose point is keeping every interval as it was measured is the one
+// write that must not be possible.
+func TestIngestKeepsWhatIsAlreadyStored(t *testing.T) {
+	h, st, agentID, key, mine, _ := ingestFixture(t)
+	const ts = 1_756_400_000
+
+	if rec := submit(t, h, agentID, key, []store.Measurement{measurement(mine, ts)}, time.Now()); rec.Code != http.StatusOK {
+		t.Fatalf("first submission = %d: %s", rec.Code, rec.Body)
+	}
+
+	// Same key, different measurement: more probes, different replies.
+	rewrite := store.Measurement{TargetID: mine, TS: ts, Sent: 9, Received: 1, Samples: []uint32{42}}
+	rec := submit(t, h, agentID, key, []store.Measurement{rewrite}, time.Now())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resubmission = %d: %s", rec.Code, rec.Body)
+	}
+	var resp struct{ Accepted, Duplicates int }
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Accepted != 0 || resp.Duplicates != 1 {
+		t.Errorf("response = %+v, want 0 accepted and 1 duplicate", resp)
+	}
+
+	got, err := st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("stored %d rows, want 1", len(got))
+	}
+	if got[0].Sent != 5 || got[0].Received != 3 || len(got[0].Samples) != 3 {
+		t.Errorf("the stored interval was rewritten: %+v", got[0])
+	}
+}
+
+// A measurement is the interval that began at its timestamp, so none can be
+// later than now. Rows beyond the clock skew the signature check tolerates are
+// dropped, and the rest of the batch still lands: refusing the whole batch is
+// what wedges an agent's outbox. A row inside the skew is an honest clock
+// slightly ahead, and stays.
+func TestIngestDropsFutureRowsButKeepsTheRest(t *testing.T) {
+	h, st, agentID, key, mine, _ := ingestFixture(t)
+	now := time.Now()
+	inSkew := now.Add(ingest.MaxSkew - time.Minute).Unix()
+	future := now.Add(ingest.MaxSkew + time.Hour).Unix()
+
+	rec := submit(t, h, agentID, key, []store.Measurement{
+		measurement(mine, future),
+		measurement(mine, inSkew),
+		measurement(mine, 1_756_400_000),
+	}, now)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a batch with a future row = %d, want it accepted: %s", rec.Code, rec.Body)
+	}
+	got, err := st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var have []int64
+	for _, m := range got {
+		have = append(have, m.TS)
+	}
+	if len(have) != 2 || have[0] != 1_756_400_000 || have[1] != inSkew {
+		t.Errorf("stored timestamps %v, want the past row and the one inside the skew (%d), not %d",
+			have, inSkew, future)
+	}
+}

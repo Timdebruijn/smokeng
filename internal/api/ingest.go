@@ -83,27 +83,50 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	// anything again. Skipping the offending rows preserves the property that
 	// matters, which is that an agent cannot write a series it was not given,
 	// without letting one stale row wedge the outbox.
+	//
+	// The same goes for a timestamp in the future. A measurement is the
+	// interval that began at its ts, so none can honestly be later than now;
+	// the allowance is the clock skew the signature check already tolerates.
+	// Kept, such a row sits outside every window anyone is looking at and
+	// outlives the agent being disabled, to surface later as data attributed
+	// to it. Dropped rather than refused, for the reason above.
+	horizon := time.Now().Add(ingest.MaxSkew).Unix()
 	kept := measurements[:0]
 	var skipped []int64
+	var future int
 	for _, m := range measurements {
-		if assigned[m.TargetID] {
+		switch {
+		case !assigned[m.TargetID]:
+			skipped = append(skipped, m.TargetID)
+		case m.TS > horizon:
+			future++
+		default:
 			kept = append(kept, m)
-			continue
 		}
-		skipped = append(skipped, m.TargetID)
 	}
 	if len(skipped) > 0 {
 		log.Printf("ingest: agent %q submitted %d measurement(s) for targets not assigned to it "+
 			"(%v); those were discarded and the rest of the batch accepted",
 			agent.Name, len(skipped), uniqueIDs(skipped))
 	}
+	if future > 0 {
+		log.Printf("ingest: agent %q submitted %d measurement(s) timestamped in the future; "+
+			"those were discarded and the rest of the batch accepted (check its clock)",
+			agent.Name, future)
+	}
 	measurements = kept
 
-	// Writes upsert on (target, agent, ts), so a replayed batch is a
-	// byte-identical no-op. That, not the nonce cache, is the replay defense.
-	if err := s.st.WriteMeasurements(r.Context(), measurements); err != nil {
+	// First write wins (see IngestMeasurements), so a replayed batch is a true
+	// no-op and an agent cannot rewrite an interval it has already reported.
+	// That, not the nonce cache, is the replay defense.
+	dup, err := s.st.IngestMeasurements(r.Context(), measurements)
+	if err != nil {
 		internalError(w, err)
 		return
+	}
+	if dup > 0 {
+		log.Printf("ingest: agent %q resubmitted %d measurement(s) already stored; kept as they were",
+			agent.Name, dup)
 	}
 	// Unsigned, and only display metadata about an agent whose identity the
 	// signature has already established — see TouchAgent.
@@ -111,7 +134,7 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		agentVersion(r)); err != nil {
 		log.Printf("ingest: recording last_seen for %q: %v", agent.Name, err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"accepted": len(measurements)})
+	writeJSON(w, http.StatusOK, map[string]any{"accepted": len(measurements) - dup, "duplicates": dup})
 }
 
 // handleAgentTargets hands an agent its assignments: resolved settings and
