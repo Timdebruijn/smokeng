@@ -60,11 +60,16 @@ func (s *SQLite) ListAlertRules(ctx context.Context) ([]alert.Rule, error) {
 
 // UpsertAlertRule inserts (ID == 0, assigning r.ID) or updates a rule.
 func (s *SQLite) UpsertAlertRule(ctx context.Context, r *alert.Rule) error {
-	var id any
-	if r.ID != 0 {
-		id = r.ID
+	// A new rule gets an id from the counter, never the next free rowid: a
+	// deleted rule's id must not come back (see ids.go).
+	if r.ID == 0 {
+		id, err := allocRuleID(ctx, s.db)
+		if err != nil {
+			return err
+		}
+		r.ID = id
 	}
-	res, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_rules (id, target_id, name, metric, op, threshold,
 			for_intervals, clear_intervals, enabled, mode, baseline)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -74,19 +79,9 @@ func (s *SQLite) UpsertAlertRule(ctx context.Context, r *alert.Rule) error {
 			for_intervals = excluded.for_intervals,
 			clear_intervals = excluded.clear_intervals, enabled = excluded.enabled,
 			mode = excluded.mode, baseline = excluded.baseline`,
-		id, r.TargetID, r.Name, string(r.Metric), string(r.Op), r.Threshold,
+		r.ID, r.TargetID, r.Name, string(r.Metric), string(r.Op), r.Threshold,
 		r.For, r.ClearFor, r.Enabled, string(r.Mode), string(r.Baseline))
-	if err != nil {
-		return err
-	}
-	if r.ID == 0 {
-		newID, err := res.LastInsertId()
-		if err != nil {
-			return err
-		}
-		r.ID = newID
-	}
-	return nil
+	return err
 }
 
 // DeleteAlertRule removes a rule and any state it accumulated.

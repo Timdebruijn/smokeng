@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-// Target and agent ids are never reused.
+// Target, agent and alert-rule ids are never reused.
 //
 // Both tables used a bare INTEGER PRIMARY KEY, which SQLite hands out as one
 // more than the largest id present. Delete the newest target and the next one
@@ -15,7 +15,10 @@ import (
 // deliberately kept on delete — measurements, traceroute hops, alert state,
 // baselines — is now that new target's history, to whoever has a grant on it.
 // Agents are the same: a removed agent's measurements, paths and alert state
-// stay, and the next agent enrolled inherits them.
+// stay, and the next agent enrolled inherits them. And so are alert rules: a
+// silence names a rule by id and has no foreign key to it, so a silence made for
+// a rule that was then deleted muted whichever rule was created next, which may
+// belong to someone else.
 //
 // Rebuilding either table to add AUTOINCREMENT would mean copying it while
 // other tables hold foreign keys into it, inside the migration's transaction,
@@ -45,6 +48,13 @@ func allocAgentID(ctx context.Context, q idRunner) (int64, error) {
 		"INSERT INTO agent_ids DEFAULT VALUES",
 		"DELETE FROM agent_ids WHERE id = ?",
 		"SELECT 1 FROM agents WHERE id = ?")
+}
+
+func allocRuleID(ctx context.Context, q idRunner) (int64, error) {
+	return alloc(ctx, q,
+		"INSERT INTO rule_ids DEFAULT VALUES",
+		"DELETE FROM rule_ids WHERE id = ?",
+		"SELECT 1 FROM alert_rules WHERE id = ?")
 }
 
 // alloc takes the next id and checks no row already holds it. The check is not
@@ -78,9 +88,9 @@ func alloc(ctx context.Context, q idRunner, insert, del, taken string) (int64, e
 	return 0, errors.New("store: could not find an unused id")
 }
 
-// seedIDsMigration creates both counters and starts them above every id that
+// seedIDsMigration creates the counters and starts them above every id that
 // has ever been used, and that includes ids that no longer have a row in
-// targets or agents: history, paths and alert state were kept when those were
+// targets, agents or alert_rules: history, paths and alert state were kept when those were
 // deleted, so a counter that began at the highest *live* id would hand a
 // deleted one back out the first time it was asked.
 //
@@ -140,5 +150,16 @@ SELECT COALESCE(MAX(m), 0) FROM (
   UNION ALL SELECT MAX(agent_id) FROM enrolment_tokens
 );
 DELETE FROM agent_ids;
+
+CREATE TABLE rule_ids (id INTEGER PRIMARY KEY AUTOINCREMENT);
+INSERT INTO rule_ids (id)
+SELECT COALESCE(MAX(m), 0) FROM (
+  SELECT MAX(id)        AS m FROM alert_rules
+  UNION ALL SELECT MAX(rule_id) FROM alert_state
+  UNION ALL SELECT MAX(rule_id) FROM alert_events
+  UNION ALL SELECT MAX(rule_id) FROM alert_baselines
+  UNION ALL SELECT MAX(rule_id) FROM silences
+);
+DELETE FROM rule_ids;
 `
 }
