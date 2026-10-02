@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/timdebruijn/smokeng/internal/tree"
@@ -221,5 +222,45 @@ func TestPruneMeasurements(t *testing.T) {
 	}
 	if deleted != 0 {
 		t.Fatalf("prune below all data deleted %d rows, want 0", deleted)
+	}
+}
+
+// The pool has to stay bounded under concurrent readers. Without a limit
+// database/sql opens a connection per waiting caller, which is how a slow spell
+// turns into an unbounded number of SQLite connections instead of a queue.
+func TestPoolIsBounded(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "pool.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	const limit = 8
+	if got := s.db.Stats().MaxOpenConnections; got != limit {
+		t.Fatalf("MaxOpenConnections = %d, want %d", got, limit)
+	}
+
+	// Far more callers than the limit, each holding a read open long enough to
+	// overlap the others.
+	var wg sync.WaitGroup
+	peak := make(chan int, 64)
+	for range 64 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var n int
+			if err := s.db.QueryRow("select count(*) from targets").Scan(&n); err != nil {
+				t.Error(err)
+				return
+			}
+			peak <- s.db.Stats().OpenConnections
+		}()
+	}
+	wg.Wait()
+	close(peak)
+	for got := range peak {
+		if got > limit {
+			t.Fatalf("pool grew to %d connections, limit is %d", got, limit)
+		}
 	}
 }
