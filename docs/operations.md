@@ -259,6 +259,13 @@ Stop the service, replace the binary, start it. The database schema migrates for
 open. Downgrades are not supported — take a backup first if you are trying a new version
 on real data.
 
+One failure of a downgrade is quiet, so it is worth spelling out. An older binary opens a
+newer database without complaint, and one from before target, agent and rule ids stopped
+being reused will reuse them again, because the counters that prevent it live in tables it
+does not know about. Upgrading again does not repair that: the counters are seeded once,
+by the migration. If you did downgrade and ids were created in between, restore the backup
+instead.
+
 ## Health check
 
 `GET /healthz` needs no authentication and is the right target for a load balancer or an

@@ -104,6 +104,12 @@ A `shape` rule compares against one of two things:
   with no captured reference cannot fire, and says so** rather than quietly never
   triggering.
 
+  The button captures the last hour. Through the API a window may be chosen, but not
+  wider than about 55 hours (200,000 seconds): every sample in it is read into memory,
+  sorted and stored as one blob, so it is bounded the way a measurements request is, at
+  the densest a series can be. A reference can only be captured from the node the rule is
+  defined on or one beneath it.
+
 ### Seeing what changed
 
 A z-score is a claim. When a `shape` rule fires, the Alerts page offers the evidence —

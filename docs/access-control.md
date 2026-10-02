@@ -51,14 +51,17 @@ Concretely:
   `Klanten/GemeenteX` sees `/GemeenteX` and `/GemeenteX/gw`.
 - A parent they cannot see is not named in the response. That holds for every
   place a path or a name appears: a setting's source, a firing alert, an
-  availability report. Each is rendered as the caller sees it, and a test calls
-  every read route as a scoped user and fails if any answer names anything above
-  their grant, beside it, or measuring something else.
+  availability report. Each is rendered as the caller sees it. A test calls every
+  scoped read route as a scoped user, taking the routes from the router's own
+  table so that a new one fails the test until it is covered, and fails if any
+  answer names anything above their grant, beside it, or measuring something
+  else. It looks for names, not for another customer's numeric ids.
 - Every list is filtered: targets, alert rules, firing alerts, agents.
-- An id works the same way. For every route that takes one, an id belonging to
-  someone else is answered exactly as an id that does not exist, status and body,
-  so trying numbers tells a caller nothing. A rule, a silence and a baseline are
-  no different from a target in that.
+- An id works the same way. For every route that takes a target, rule or silence
+  id, one belonging to someone else is answered exactly as one that does not
+  exist, status and body, so trying numbers tells a caller nothing. Agent ids are
+  global and are not part of that; what an agent id reveals is its name, which is
+  shown only for agents in the caller's scope.
 - A target outside their scope is answered as **absent**, not forbidden.
   "You may not read that" would confirm there is something to read.
 
