@@ -125,11 +125,15 @@ func decodeBatch(body []byte, agentID int64, limit int) ([]store.Measurement, er
 	return decodeFrames(body, agentID, limit)
 }
 
-// maxBatchRows bounds one submission. An agent sends at most pushBatch (2000)
-// rows at a time; this leaves room for a different batch size without letting
-// an 8 MiB body decode to 200k rows, which was measured at 100 MiB of heap
-// outside the Arrow budget and close to a second of write lock.
-const maxBatchRows = 10_000
+// MaxBatchRows bounds one submission. An agent sends at most pushBatch (2000)
+// rows at a time, and a test in the agent package holds that below this, so a
+// larger batch size cannot be introduced there without being refused here: the
+// master answers 400 and an agent drops a batch it was told it cannot decode.
+// The headroom is for a different batch size, and the cap is there because a
+// body of a few megabytes can otherwise carry well over a hundred thousand
+// rows, each materialised outside the Arrow budget and written in one
+// transaction.
+const MaxBatchRows = 10_000
 
 // decodeFrames is decodeBatch past the framing screen, with the allocation
 // budget as a parameter so a test can run the real reader against a small one.
@@ -172,11 +176,11 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 	defer reader.Release()
 
 	var out []store.Measurement
-	var resorted int
+	var resorted, impossible int
 	for reader.Next() {
 		rec := reader.Record()
-		if len(out)+int(rec.NumRows()) > maxBatchRows {
-			return nil, fmt.Errorf("ingest: batch holds more than %d rows", maxBatchRows)
+		if len(out)+int(rec.NumRows()) > MaxBatchRows {
+			return nil, fmt.Errorf("ingest: batch holds more than %d rows", MaxBatchRows)
 		}
 		// Columns are resolved by name, not by position. The series columns
 		// were added after the first agents shipped, and an agent that predates
@@ -292,10 +296,13 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 					m.TargetID, m.TS, m.Received, len(m.Samples))
 			}
 			// A reply needs a probe: more received than sent is not a measurement
-			// of anything, and reads as negative loss.
+			// of anything, and reads as negative loss. The row is dropped and the
+			// rest kept. Refusing the batch is a 400, a 400 makes the agent
+			// discard the whole batch, and one impossible row would then cost up
+			// to a batch of honest ones; a gap is the truthful record here.
 			if m.Received > m.Sent {
-				return nil, fmt.Errorf("ingest: target %d at %d claims %d replies to %d probes",
-					m.TargetID, m.TS, m.Received, m.Sent)
+				impossible++
+				continue
 			}
 			if !icmp.IsNull(i) {
 				v := icmp.Value(i)
@@ -351,6 +358,10 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 		log.Printf("ingest: agent %d sent %d unsorted distribution(s); they were sorted on the way in, "+
 			"which changes nothing about the measurement, but the agent is not producing what it should",
 			agentID, resorted)
+	}
+	if impossible > 0 {
+		log.Printf("ingest: agent %d sent %d measurement(s) with more replies than probes; "+
+			"those were dropped and the rest of the batch accepted", agentID, impossible)
 	}
 	return out, reader.Err()
 }
