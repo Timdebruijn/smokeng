@@ -662,7 +662,13 @@ const targetCols = `id, parent_id, name, host, address_family, title, notes,
 	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s, graph_series`
 
 func (s *SQLite) ListTargets(ctx context.Context) ([]tree.Target, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+targetCols+" FROM targets ORDER BY id")
+	return listTargets(ctx, s.db)
+}
+
+// listTargets reads the whole tree through anything that can query, so a write
+// can read it inside the transaction that then changes it.
+func listTargets(ctx context.Context, q queryer) ([]tree.Target, error) {
+	rows, err := q.QueryContext(ctx, "SELECT "+targetCols+" FROM targets ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -723,16 +729,20 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 }
 
 func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
+	return upsertTarget(ctx, s.db, t)
+}
+
+func upsertTarget(ctx context.Context, q idRunner, t *tree.Target) error {
 	// A new target gets an id from the counter, never the next free rowid: a
 	// deleted target's id must not come back (see ids.go).
 	if t.ID == 0 {
-		id, err := allocTargetID(ctx, s.db)
+		id, err := allocTargetID(ctx, q)
 		if err != nil {
 			return err
 		}
 		t.ID = id
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := q.ExecContext(ctx, `
 		INSERT INTO targets (id, parent_id, name, host, address_family, title, notes,
 			hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
 			burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s,
@@ -777,11 +787,6 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 		return err
 	}
 	return nil
-}
-
-func (s *SQLite) DeleteTarget(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM targets WHERE id = ?", id)
-	return err
 }
 
 // PruneMeasurements deletes one target's measurements older than cutoff (a Unix

@@ -116,6 +116,47 @@ func settingJSON[T any](sc *Scope, nodeID int64, v tree.Value[T]) map[string]any
 	return map[string]any{"local": v.Local, "effective": v.Effective, "source": src}
 }
 
+// changeTargets runs one write to the tree as a single transaction: the tree is
+// read, fn decides what to write against exactly what was read, and it is
+// applied together or not at all. The caller's scope is worked out inside it,
+// against that same tree, so a move that lands between two requests cannot
+// shift the boundary a check was made against.
+//
+// fn refuses a request by returning refuse(respond), which records what to say
+// and returns the error that abandons the write; changeTargets says it, and
+// reports false. Any other error is an internal one.
+//
+// This replaced reading the tree, validating, and writing as separate steps. Two
+// requests validated against the same snapshot, both passed, and both wrote:
+// moving A under B and B under A are each fine alone and a cycle together, and a
+// cycle makes tree.New fail on every request until the database is edited by
+// hand.
+func (s *server) changeTargets(w http.ResponseWriter, r *http.Request,
+	fn func(current []tree.Target, sc *Scope, refuse func(func()) error) (store.TargetChange, error)) bool {
+	var respond func()
+	refuse := func(f func()) error { respond = f; return store.ErrAbort }
+	err := s.st.ChangeTargets(r.Context(), func(current []tree.Target) (store.TargetChange, error) {
+		tr, err := tree.New(current)
+		if err != nil {
+			return store.TargetChange{}, err
+		}
+		sc, err := s.scopeFor(r, tr)
+		if err != nil {
+			return store.TargetChange{}, err
+		}
+		return fn(current, sc, refuse)
+	})
+	if respond != nil {
+		respond()
+		return false
+	}
+	if err != nil {
+		internalError(w, err)
+		return false
+	}
+	return true
+}
+
 // handleCreateTarget adds a node. Settings absent from the payload stay NULL,
 // which means "inherit".
 func (s *server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
@@ -124,12 +165,6 @@ func (s *server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
-	targets, err := s.st.ListTargets(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-
 	n := tree.Target{Enabled: true}
 	if err := applyPatch(&n, body); err != nil {
 		badRequest(w, err)
@@ -141,45 +176,35 @@ func (s *server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		badRequestMsg(w, "a new target needs a parent")
 		return
 	}
-	sc, ok := s.requireWrite(w, r, *n.ParentID)
-	if !ok {
-		return
-	}
-	mayName, err := sc.agentsInScope(targets)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	if err := s.checkAgentNames(r.Context(), mayName, n.Settings.Agents); err != nil {
-		badRequest(w, err)
-		return
-	}
-	// After authorisation, so a refusal says nothing about what the caller may
-	// not see. A new node has no before, so every field is held to the limits.
-	if err := tree.CheckLimits(nil, &n); err != nil {
-		badRequest(w, err)
-		return
-	}
-	if n.ParentID == nil {
-		badRequest(w, errors.New("parent_id is required; there is exactly one root and it already exists"))
-		return
-	}
-
-	// Validate the whole resulting tree before writing anything. The new node
-	// gets a synthetic id so inheritance and structure can be checked.
-	planned := append(append([]tree.Target(nil), targets...), n)
-	planned[len(planned)-1].ID = synthID(targets)
-	if _, err := tree.New(planned); err != nil {
-		badRequest(w, err)
-		return
-	}
-	if err := tree.CheckTreeLimits(targets, planned); err != nil {
-		badRequest(w, err)
-		return
-	}
-
-	if err := s.st.UpsertTarget(r.Context(), &n); err != nil {
-		internalError(w, err)
+	parent := *n.ParentID
+	if !s.changeTargets(w, r, func(targets []tree.Target, sc *Scope, refuse func(func()) error) (store.TargetChange, error) {
+		if !sc.CanWrite(parent) {
+			return store.TargetChange{}, refuse(func() { sc.deny(w, parent) })
+		}
+		mayName, err := sc.agentsInScope(targets)
+		if err != nil {
+			return store.TargetChange{}, err
+		}
+		if err := s.checkAgentNames(r.Context(), mayName, n.Settings.Agents); err != nil {
+			return store.TargetChange{}, refuse(func() { badRequest(w, err) })
+		}
+		// After authorisation, so a refusal says nothing about what the caller may
+		// not see. A new node has no before, so every field is held to the limits.
+		if err := tree.CheckLimits(nil, &n); err != nil {
+			return store.TargetChange{}, refuse(func() { badRequest(w, err) })
+		}
+		// Validate the whole resulting tree before writing anything. The new node
+		// gets a synthetic id so inheritance and structure can be checked.
+		planned := append(append([]tree.Target(nil), targets...), n)
+		planned[len(planned)-1].ID = synthID(targets)
+		if _, err := tree.New(planned); err != nil {
+			return store.TargetChange{}, refuse(func() { badRequest(w, err) })
+		}
+		if err := tree.CheckTreeLimits(targets, planned); err != nil {
+			return store.TargetChange{}, refuse(func() { badRequest(w, err) })
+		}
+		return store.TargetChange{Upsert: []*tree.Target{&n}}, nil
+	}) {
 		return
 	}
 	s.respondTarget(w, r, n.ID, http.StatusCreated)
@@ -198,85 +223,70 @@ func (s *server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
-	sc, ok := s.requireWrite(w, r, id)
-	if !ok {
-		return
-	}
-	// A move is checked at both ends. Checking only the node would make
-	// "change your parent" a way to carry a target across a boundary, in
-	// either direction.
-	if raw, moving := body["parent_id"]; moving && !isNull(raw) {
-		var dest int64
-		if err := json.Unmarshal(raw, &dest); err != nil {
-			badRequest(w, err)
-			return
+	if !s.changeTargets(w, r, func(targets []tree.Target, sc *Scope, refuse func(func()) error) (store.TargetChange, error) {
+		if !sc.CanWrite(id) {
+			return store.TargetChange{}, refuse(func() { sc.deny(w, id) })
 		}
-		if !sc.CanWrite(dest) {
-			sc.deny(w, dest)
-			return
+		// A move is checked at both ends. Checking only the node would make
+		// "change your parent" a way to carry a target across a boundary, in
+		// either direction.
+		if raw, moving := body["parent_id"]; moving && !isNull(raw) {
+			var dest int64
+			if err := json.Unmarshal(raw, &dest); err != nil {
+				return store.TargetChange{}, refuse(func() { badRequest(w, err) })
+			}
+			if !sc.CanWrite(dest) {
+				return store.TargetChange{}, refuse(func() { sc.deny(w, dest) })
+			}
 		}
-	}
-	targets, err := s.st.ListTargets(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
+		idx := -1
+		for i := range targets {
+			if targets[i].ID == id {
+				idx = i
+			}
+		}
+		if idx < 0 {
+			return store.TargetChange{}, refuse(func() { notFound(w) })
+		}
+		if targets[idx].ParentID == nil {
+			if _, moving := body["parent_id"]; moving {
+				return store.TargetChange{}, refuse(func() {
+					badRequest(w, errors.New("the root target cannot be reparented"))
+				})
+			}
+		}
 
-	idx := -1
-	for i := range targets {
-		if targets[i].ID == id {
-			idx = i
+		updated := targets[idx]
+		if err := applyPatch(&updated, body); err != nil {
+			return store.TargetChange{}, refuse(func() { badRequest(w, err) })
 		}
-	}
-	if idx < 0 {
-		notFound(w)
-		return
-	}
-	if targets[idx].ParentID == nil {
-		if _, moving := body["parent_id"]; moving {
-			badRequest(w, errors.New("the root target cannot be reparented"))
-			return
+		// Only when the request touches it. Re-checking an unchanged list would
+		// refuse an editor changing a title because an admin once gave the node an
+		// agent that is not among the ones they are offered.
+		if touchesAgents(body) {
+			mayName, err := sc.agentsInScope(targets)
+			if err != nil {
+				return store.TargetChange{}, err
+			}
+			if err := s.checkAgentNames(r.Context(), mayName, updated.Settings.Agents); err != nil {
+				return store.TargetChange{}, refuse(func() { badRequest(w, err) })
+			}
 		}
-	}
-
-	updated := targets[idx]
-	if err := applyPatch(&updated, body); err != nil {
-		badRequest(w, err)
-		return
-	}
-	// Only when the request touches it. Re-checking an unchanged list would
-	// refuse an editor changing a title because an admin once gave the node an
-	// agent that is not among the ones they are offered.
-	if touchesAgents(body) {
-		mayName, err := sc.agentsInScope(targets)
-		if err != nil {
-			internalError(w, err)
-			return
+		// Only what this request changes is held to the limits: a node that predates
+		// one is not refused an unrelated edit for it.
+		if err := tree.CheckLimits(&targets[idx], &updated); err != nil {
+			return store.TargetChange{}, refuse(func() { badRequest(w, err) })
 		}
-		if err := s.checkAgentNames(r.Context(), mayName, updated.Settings.Agents); err != nil {
-			badRequest(w, err)
-			return
+		planned := append([]tree.Target(nil), targets...)
+		planned[idx] = updated
+		if _, err := tree.New(planned); err != nil {
+			return store.TargetChange{}, refuse(func() { badRequest(w, err) })
 		}
-	}
-	// Only what this request changes is held to the limits: a node that predates
-	// one is not refused an unrelated edit for it.
-	if err := tree.CheckLimits(&targets[idx], &updated); err != nil {
-		badRequest(w, err)
-		return
-	}
-	planned := append([]tree.Target(nil), targets...)
-	planned[idx] = updated
-	if _, err := tree.New(planned); err != nil {
-		badRequest(w, err)
-		return
-	}
-	if err := tree.CheckTreeLimits(targets, planned); err != nil {
-		badRequest(w, err)
-		return
-	}
-
-	if err := s.st.UpsertTarget(r.Context(), &updated); err != nil {
-		internalError(w, err)
+		if err := tree.CheckTreeLimits(targets, planned); err != nil {
+			return store.TargetChange{}, refuse(func() { badRequest(w, err) })
+		}
+		return store.TargetChange{Upsert: []*tree.Target{&updated}}, nil
+	}) {
 		return
 	}
 	s.respondTarget(w, r, id, http.StatusOK)
@@ -290,61 +300,55 @@ func (s *server) handleDeleteTarget(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("bad target id"))
 		return
 	}
-	sc, ok := s.requireWrite(w, r, id)
-	if !ok {
-		return
-	}
-	targets, err := s.st.ListTargets(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	// A recursive delete is a write to every node it removes, and a scope can
-	// end part-way down a subtree.
-	for i := range targets {
-		if !sc.CanWrite(targets[i].ID) && isDescendantOf(targets, targets[i].ID, id) {
-			sc.deny(w, targets[i].ID)
-			return
-		}
-	}
-	byID := map[int64]*tree.Target{}
-	children := map[int64][]int64{}
-	for i := range targets {
-		byID[targets[i].ID] = &targets[i]
-		if p := targets[i].ParentID; p != nil {
-			children[*p] = append(children[*p], targets[i].ID)
-		}
-	}
-	n, ok := byID[id]
-	if !ok {
-		notFound(w)
-		return
-	}
-	if n.ParentID == nil {
-		badRequest(w, errors.New("the root target cannot be deleted"))
-		return
-	}
-
-	// Collect the subtree, deepest first, so foreign keys stay satisfied.
 	var order []int64
-	var walk func(int64)
-	walk = func(cur int64) {
-		for _, c := range children[cur] {
-			walk(c)
+	if !s.changeTargets(w, r, func(targets []tree.Target, sc *Scope, refuse func(func()) error) (store.TargetChange, error) {
+		if !sc.CanWrite(id) {
+			return store.TargetChange{}, refuse(func() { sc.deny(w, id) })
 		}
-		order = append(order, cur)
-	}
-	walk(id)
-	if len(order) > 1 && r.URL.Query().Get("recursive") != "true" {
-		badRequest(w, fmt.Errorf("target %d has %d descendant(s); pass ?recursive=true to delete them too",
-			id, len(order)-1))
+		// A recursive delete is a write to every node it removes, and a scope can
+		// end part-way down a subtree.
+		for i := range targets {
+			if !sc.CanWrite(targets[i].ID) && isDescendantOf(targets, targets[i].ID, id) {
+				victim := targets[i].ID
+				return store.TargetChange{}, refuse(func() { sc.deny(w, victim) })
+			}
+		}
+		byID := map[int64]*tree.Target{}
+		children := map[int64][]int64{}
+		for i := range targets {
+			byID[targets[i].ID] = &targets[i]
+			if p := targets[i].ParentID; p != nil {
+				children[*p] = append(children[*p], targets[i].ID)
+			}
+		}
+		n, ok := byID[id]
+		if !ok {
+			return store.TargetChange{}, refuse(func() { notFound(w) })
+		}
+		if n.ParentID == nil {
+			return store.TargetChange{}, refuse(func() {
+				badRequest(w, errors.New("the root target cannot be deleted"))
+			})
+		}
+		// Collect the subtree, deepest first, so foreign keys stay satisfied.
+		order = nil
+		var walk func(int64)
+		walk = func(cur int64) {
+			for _, c := range children[cur] {
+				walk(c)
+			}
+			order = append(order, cur)
+		}
+		walk(id)
+		if len(order) > 1 && r.URL.Query().Get("recursive") != "true" {
+			count := len(order) - 1
+			return store.TargetChange{}, refuse(func() {
+				badRequest(w, fmt.Errorf("target %d has %d descendant(s); pass ?recursive=true to delete them too", id, count))
+			})
+		}
+		return store.TargetChange{Delete: order}, nil
+	}) {
 		return
-	}
-	for _, victim := range order {
-		if err := s.st.DeleteTarget(r.Context(), victim); err != nil {
-			internalError(w, err)
-			return
-		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": order})
 }

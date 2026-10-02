@@ -7,6 +7,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/timdebruijn/smokeng/internal/auth"
+	"github.com/timdebruijn/smokeng/internal/store"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
@@ -157,5 +159,193 @@ func TestAGroupSettingThatPushesALeafOverALimitIsRefused(t *testing.T) {
 	_, listing := call(t, h, "GET", "/api/v1/targets", nil)
 	if strings.Contains(listing, `"pings_per_interval":{"effective":1000`) {
 		t.Errorf("the refused setting was stored: %.300s", listing)
+	}
+}
+
+// Moving A under B and B under A are each fine on their own and a cycle
+// together. Each request validated against the tree as it had read it, both
+// passed, and both wrote, after which tree.New failed on every request until
+// the database was edited by hand. The writes are serialised now, so the second
+// validates against the result of the first: exactly one of the two succeeds.
+//
+// Many rounds, because a race is not guaranteed to show; with the writes
+// unserialised this fails on the first rounds in practice.
+func TestTwoMovesThatWouldMakeACycleCannotBothSucceed(t *testing.T) {
+	f := tenants(t)
+	admin := New(f.st, Options{}, fstest.MapFS{})
+	mk := func(name string) int64 {
+		code, body := call(t, admin, "POST", "/api/v1/targets", map[string]any{"parent_id": f.groupA, "name": name})
+		if code != http.StatusCreated {
+			t.Fatalf("%d %s", code, body)
+		}
+		return idOfName(t, func() string { _, l := call(t, admin, "GET", "/api/v1/targets", nil); return l }(), name)
+	}
+	for round := range 25 {
+		a, b := mk("a"+num(int64(round))), mk("b"+num(int64(round)))
+		start := make(chan struct{})
+		res := make(chan int, 2)
+		move := func(node, under int64) {
+			<-start
+			code, _ := call(t, admin, "PATCH", "/api/v1/targets/"+num(node), map[string]any{"parent_id": under})
+			res <- code
+		}
+		go move(a, b)
+		go move(b, a)
+		close(start)
+		ok := 0
+		for range 2 {
+			if <-res == http.StatusOK {
+				ok++
+			}
+		}
+		if ok != 1 {
+			t.Fatalf("round %d: %d of the two moves succeeded, want exactly one", round, ok)
+		}
+		// And the tree is still one the whole installation can read.
+		all, err := f.st.ListTargets(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tree.New(all); err != nil {
+			t.Fatalf("round %d left a tree that does not load: %v", round, err)
+		}
+	}
+}
+
+// Rules are defined on a node and go with it. A recursive delete of a subtree
+// holding a rule used to fail part-way: children gone, the node refused by the
+// foreign key, the handler answering 500, and nothing to say what was left.
+func TestDeletingASubtreeWithRulesIsAllOrNothing(t *testing.T) {
+	f := tenants(t) // GemeenteA carries a rule, and so does GemeenteB
+	admin := New(f.st, Options{}, fstest.MapFS{})
+	code, body := call(t, admin, "DELETE", "/api/v1/targets/"+num(f.groupA)+"?recursive=true", nil)
+	if code != http.StatusOK {
+		t.Fatalf("deleting a subtree with a rule = %d %s", code, body)
+	}
+	all, err := f.st.ListTargets(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range all {
+		if n.ID == f.groupA || n.ID == f.hostA {
+			t.Errorf("target %d (%s) survived the delete", n.ID, n.Name)
+		}
+	}
+	rules, err := f.st.ListAlertRules(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rules {
+		if r.TargetID == f.groupA {
+			t.Errorf("rule %d outlived the node it was defined on", r.ID)
+		}
+	}
+	// The other customer is untouched.
+	var keptB bool
+	for _, n := range all {
+		if n.ID == f.hostB {
+			keptB = true
+		}
+	}
+	if !keptB {
+		t.Error("the other customer's target went with it")
+	}
+}
+
+// gatedStore holds a tree write until released, so a test can let something else
+// change the tree between a request starting and its transaction beginning.
+//
+// It embeds the concrete store and not the Store interface. New asks the store
+// whether it can also list grants, enrol agents and so on, by type assertion; an
+// embedded interface hides those, the server then knows no grants at all, and
+// every scoped caller is refused for that reason whatever else is true. An
+// earlier version of the test below did exactly that and could not fail.
+type gatedStore struct {
+	*store.SQLite
+	entered chan struct{}
+	gate    chan struct{}
+}
+
+func (g gatedStore) ChangeTargets(ctx context.Context, fn func([]tree.Target) (store.TargetChange, error)) error {
+	close(g.entered)
+	<-g.gate
+	return g.SQLite.ChangeTargets(ctx, fn)
+}
+
+// A request is authorised against the tree it is applied to, inside the
+// transaction, not against one read before it. An editor's right to write a node
+// is a fact about where the node sits when the write happens: here an admin moves
+// it out of their grant after the request has started and before it is applied.
+func TestAMoveIsAuthorisedAgainstTheTreeItIsAppliedTo(t *testing.T) {
+	f := tenants(t)
+	g := gatedStore{SQLite: f.st, entered: make(chan struct{}), gate: make(chan struct{})}
+	g0 := store.Grant{Group: "team-a", TargetID: f.groupA, Role: "editor"}
+	if err := f.st.UpsertGrant(context.Background(), &g0); err != nil {
+		t.Fatal(err)
+	}
+	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{"team-a"}, Expires: 1 << 40}
+	editor := New(g, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone}, fstest.MapFS{})
+
+	type result struct {
+		code int
+		body string
+	}
+	done := make(chan result, 1)
+	go func() {
+		code, body := call(t, editor, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"title": "mine still?"})
+		done <- result{code, body}
+	}()
+	<-g.entered // the request is in flight and has not touched the tree yet
+
+	// Meanwhile an admin moves the node into the other customer's subtree.
+	if err := f.st.ChangeTargets(context.Background(), func(cur []tree.Target) (store.TargetChange, error) {
+		for i := range cur {
+			if cur[i].ID == f.hostA {
+				moved := cur[i]
+				moved.ParentID = &f.groupB
+				moved.Name = "gw-from-a"
+				return store.TargetChange{Upsert: []*tree.Target{&moved}}, nil
+			}
+		}
+		return store.TargetChange{}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(g.gate)
+
+	r := <-done
+	t.Logf("the in-flight edit was answered %d %.160s", r.code, r.body)
+	if r.code != http.StatusNotFound {
+		t.Errorf("an edit to a node that left their grant while the request was in flight = %d %.200s, want 404", r.code, r.body)
+	}
+	all, _ := f.st.ListTargets(context.Background())
+	for _, n := range all {
+		if n.ID == f.hostA && n.Title != nil && *n.Title == "mine still?" {
+			t.Error("the edit was applied to a node outside their grant")
+		}
+	}
+}
+
+// The control for the test above: through the same gated store, with nothing
+// moved in between, the editor's edit goes through. Without it, a server that
+// refused every scoped caller would pass the test above for the wrong reason.
+func TestTheGatedServerAnswersAnEditorNormally(t *testing.T) {
+	f := tenants(t)
+	g := gatedStore{SQLite: f.st, entered: make(chan struct{}), gate: make(chan struct{})}
+	grant := store.Grant{Group: "team-a", TargetID: f.groupA, Role: "editor"}
+	if err := f.st.UpsertGrant(context.Background(), &grant); err != nil {
+		t.Fatal(err)
+	}
+	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{"team-a"}, Expires: 1 << 40}
+	editor := New(g, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone}, fstest.MapFS{})
+	done := make(chan int, 1)
+	go func() {
+		code, _ := call(t, editor, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"title": "still mine"})
+		done <- code
+	}()
+	<-g.entered
+	close(g.gate)
+	if code := <-done; code != http.StatusOK {
+		t.Errorf("an edit within their grant, through the gated store = %d, want 200", code)
 	}
 }
