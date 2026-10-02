@@ -212,3 +212,86 @@ func TestSignedRejectsWrappingDelta(t *testing.T) {
 		t.Fatalf("a delta that wraps the accumulator was accepted, decoding to %v", got)
 	}
 }
+
+// Decoding sizes its output from the varint count and allocates it once.
+// Growing by append took several times the final size at its peak, on the path
+// that decodes every row of every request.
+func TestDecodeAllocatesOnce(t *testing.T) {
+	samples := make([]uint32, 5000)
+	for i := range samples {
+		samples[i] = uint32(100 + i*3)
+	}
+	blob, err := Encode(samples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := testing.AllocsPerRun(20, func() { _, _ = Decode(blob) }); n > 1 {
+		t.Errorf("Decode of %d samples made %.0f allocations, want 1", len(samples), n)
+	}
+	signed := make([]int32, 5000)
+	for i := range signed {
+		signed[i] = int32(-2000 + i*3)
+	}
+	sblob, err := EncodeSigned(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := testing.AllocsPerRun(20, func() { _, _ = DecodeSigned(sblob) }); n > 1 {
+		t.Errorf("DecodeSigned of %d samples made %.0f allocations, want 1", len(signed), n)
+	}
+}
+
+// Counting varints must not change what is decoded, including for a blob whose
+// last varint is cut short, which is an error and not a short result.
+func TestDecodeCountsVarintsCorrectly(t *testing.T) {
+	for _, in := range [][]uint32{{}, {0}, {1, 1, 1}, {0, 127, 128, 16384, 4_000_000}} {
+		b, err := Encode(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := Decode(b)
+		if err != nil || len(got) != len(in) {
+			t.Fatalf("round trip of %v = %v, %v", in, got, err)
+		}
+	}
+	b, _ := Encode([]uint32{1, 300_000})
+	if _, err := Decode(b[:len(b)-1]); err == nil {
+		t.Error("a blob whose last varint is truncated decoded without error")
+	}
+}
+
+// One allocation is not enough if it is the wrong size. With deltas of two
+// bytes a count of bytes instead of varints doubles the capacity and still makes
+// a single allocation, so the capacity is checked as well.
+func TestDecodeSizesItsOutputExactly(t *testing.T) {
+	samples := make([]uint32, 3000)
+	for i := range samples {
+		samples[i] = uint32(1000 + i*200) // every delta needs two varint bytes
+	}
+	blob, err := Encode(samples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Decode(blob)
+	if err != nil || len(got) != len(samples) {
+		t.Fatalf("decode = %d samples, %v", len(got), err)
+	}
+	if cap(got) != len(got) {
+		t.Errorf("Decode returned capacity %d for %d samples", cap(got), len(got))
+	}
+	signed := make([]int32, 3000)
+	for i := range signed {
+		signed[i] = int32(-5000 + i*200)
+	}
+	sblob, err := EncodeSigned(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sgot, err := DecodeSigned(sblob)
+	if err != nil || len(sgot) != len(signed) {
+		t.Fatalf("decode signed = %d samples, %v", len(sgot), err)
+	}
+	if cap(sgot) != len(sgot) {
+		t.Errorf("DecodeSigned returned capacity %d for %d samples", cap(sgot), len(sgot))
+	}
+}

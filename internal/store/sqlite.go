@@ -548,12 +548,18 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 	}
 	defer rows.Close()
 	var out []Measurement
+	var samples int
 	for rows.Next() {
 		m := Measurement{TargetID: targetID, AgentID: agentID}
 		var blob []byte
 		var icmpErr, sendErr sql.NullInt64
 		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &icmpErr, &sendErr); err != nil {
 			return nil, err
+		}
+		// Counted from the column, before the blob is decoded, so the row that
+		// would cross the limit is never allocated.
+		if samples += m.Received; samples > maxSamplesPerRead {
+			return nil, tooLarge("samples", maxSamplesPerRead)
 		}
 		if icmpErr.Valid {
 			v := uint16(icmpErr.Int64)
@@ -651,6 +657,9 @@ func (s *SQLite) AvailabilitySeries(ctx context.Context, targetID, agentID, from
 		var p report.Point
 		if err := rows.Scan(&p.TS, &p.Sent, &p.Received); err != nil {
 			return nil, err
+		}
+		if len(out) == maxAvailabilityRows {
+			return nil, tooLarge("intervals", maxAvailabilityRows)
 		}
 		out = append(out, p)
 	}

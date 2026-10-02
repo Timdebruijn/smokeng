@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/timdebruijn/smokeng/internal/auth"
+	"github.com/timdebruijn/smokeng/internal/report"
 	"github.com/timdebruijn/smokeng/internal/store"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
@@ -347,5 +350,49 @@ func TestTheGatedServerAnswersAnEditorNormally(t *testing.T) {
 	close(g.gate)
 	if code := <-done; code != http.StatusOK {
 		t.Errorf("an edit within their grant, through the gated store = %d, want 200", code)
+	}
+}
+
+// rangeStore answers every bounded read as the store does when a range holds
+// too much, or fails it some other way. It embeds the concrete store so New still
+// finds the grant and agent methods it looks for by type assertion.
+type rangeStore struct {
+	*store.SQLite
+	err error
+}
+
+func (r rangeStore) QueryRange(context.Context, int64, int64, int64, int64) ([]store.Measurement, error) {
+	return nil, r.err
+}
+func (r rangeStore) AvailabilitySeries(context.Context, int64, int64, int64, int64) ([]report.Point, error) {
+	return nil, r.err
+}
+func (r rangeStore) PathChanges(context.Context, int64, int64, int64, int64) ([]store.PathChange, error) {
+	return nil, r.err
+}
+
+// A read whose range holds more than one read returns is the caller's request,
+// so it is a 400 that says what to change, on every route that reads a range. Any
+// other failure stays a 500 that says nothing about its cause.
+func TestARangeThatIsTooLargeIsA400OnEveryReadRoute(t *testing.T) {
+	f := tenants(t)
+	routes := []string{
+		"/api/v1/measurements?target_id=" + num(f.hostA) + "&agent_id=0",
+		"/api/v1/availability?target_id=" + num(f.hostA),
+		"/api/v1/paths?target_id=" + num(f.hostA),
+		"/api/v1/shape-reference?rule_id=" + num(f.ruleA) + "&target_id=" + num(f.hostA) + "&agent_id=0",
+	}
+	tooBig := fmt.Errorf("%w: more than 5 samples", store.ErrRangeTooLarge)
+	big := New(rangeStore{f.st, tooBig}, Options{Alerts: f.mgr}, fstest.MapFS{})
+	other := New(rangeStore{f.st, errors.New("disk on fire")}, Options{Alerts: f.mgr}, fstest.MapFS{})
+	for _, route := range routes {
+		code, body := call(t, big, "GET", route, nil)
+		if code != http.StatusBadRequest || !strings.Contains(body, "shorter window") || strings.Contains(body, "store:") {
+			t.Errorf("%s: too large = %d %.200s, want 400 asking for a shorter window", route, code, body)
+		}
+		code, body = call(t, other, "GET", route, nil)
+		if code != http.StatusInternalServerError || strings.Contains(body, "disk") {
+			t.Errorf("%s: another failure = %d %.200s, want a 500 that says nothing about the cause", route, code, body)
+		}
 	}
 }

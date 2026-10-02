@@ -408,6 +408,9 @@ func (s *SQLite) PathChanges(ctx context.Context, targetID, agentID, from, to in
 		if err := rows.Scan(&c.TS, &c.Hops); err != nil {
 			return nil, err
 		}
+		if len(out) == maxPathRows {
+			return nil, tooLarge("route changes", maxPathRows)
+		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
