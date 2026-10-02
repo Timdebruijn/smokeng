@@ -263,4 +263,26 @@ func TestPoolIsBounded(t *testing.T) {
 			t.Fatalf("pool grew to %d connections, limit is %d", got, limit)
 		}
 	}
+
+	// The idle half of the limit, separately: hold the full limit at once, then
+	// release it. Without SetMaxIdleConns the pool keeps database/sql's default
+	// of two and closes the other six, so every reader after a burst pays to
+	// reopen a connection that was just thrown away.
+	ctx := context.Background()
+	conns := make([]*sql.Conn, 0, limit)
+	for range limit {
+		c, err := s.db.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conns = append(conns, c)
+	}
+	for _, c := range conns {
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := s.db.Stats().Idle; got != limit {
+		t.Fatalf("after releasing %d connections, Idle = %d, want %d", limit, got, limit)
+	}
 }
