@@ -63,7 +63,7 @@ func CanonicalString(method, path string, agentID, timestamp int64, nonce string
 
 // Sign attaches the agent's credentials to an outgoing request.
 func Sign(r *http.Request, agentID int64, key ed25519.PrivateKey, body []byte, now time.Time) error {
-	var raw [16]byte
+	var raw [nonceBytes]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return err
 	}
@@ -88,6 +88,12 @@ type Signed struct {
 	Body         []byte
 }
 
+// nonceBytes is the size of the random value an agent signs into each request.
+// The master holds a nonce for NonceTTL, so its size is also what a held nonce
+// costs: left to the sender, a nonce could be as long as the header limit
+// allows and a request would be a way to park a megabyte in memory.
+const nonceBytes = 16
+
 // Parse pulls the credentials and body off a request. It does not verify
 // anything: the body is attacker-controlled until Verifier.Check says
 // otherwise.
@@ -106,6 +112,9 @@ func Parse(r *http.Request, maxBody int64) (Signed, error) {
 	s.Nonce = r.Header.Get(HeaderNonce)
 	if s.Nonce == "" {
 		return s, fmt.Errorf("missing %s", HeaderNonce)
+	}
+	if raw, err := base64.StdEncoding.DecodeString(s.Nonce); err != nil || len(raw) != nonceBytes {
+		return s, fmt.Errorf("bad %s", HeaderNonce)
 	}
 	if s.Signature, err = base64.StdEncoding.DecodeString(r.Header.Get(HeaderSig)); err != nil {
 		return s, fmt.Errorf("bad %s", HeaderSig)
@@ -197,10 +206,10 @@ func (v *Verifier) check(s Signed, now time.Time) (Agent, error) {
 	// request verifies too, then finds its nonce already remembered), and the
 	// bucket still caps how fast a genuine agent may submit — but neither can be
 	// exhausted by anyone who cannot sign as this agent.
-	if !v.nonces.remember(s.Nonce, now) {
+	switch v.nonces.admit(s.Nonce, now, func() bool { return v.limits.allow(s.AgentID, now) }) {
+	case admitReplay:
 		return agent, fmt.Errorf("%w: agent %q reused a nonce", ErrRejected, agent.Name)
-	}
-	if !v.limits.allow(s.AgentID, now) {
+	case admitLimited:
 		return agent, fmt.Errorf("%w: agent %q is over its rate limit", ErrRejected, agent.Name)
 	}
 	return agent, nil
@@ -211,30 +220,58 @@ func (v *Verifier) check(s Signed, now time.Time) (Agent, error) {
 // being idempotent, not on this. What it buys is cheap rejection and quiet
 // logs.
 type nonceCache struct {
-	mu   sync.Mutex
-	seen map[string]time.Time
+	mu    sync.Mutex
+	seen  map[string]time.Time
+	swept time.Time
 }
 
-// remember records a nonce, reporting false if it has been seen already.
-func (c *nonceCache) remember(nonce string, now time.Time) bool {
+type admission int
+
+const (
+	admitOK admission = iota
+	admitReplay
+	admitLimited
+)
+
+// nonceSweepEvery is how often expired nonces are dropped. A sweep walks the
+// whole map under the lock, so it must not run on every insert: with a map
+// that stays large because nothing in it has expired yet, "sweep when it is
+// big" is a full walk per request.
+const nonceSweepEvery = time.Minute
+
+// admit decides whether a request whose signature has already verified may
+// proceed, and spends its nonce only if it does.
+//
+// Order matters in both directions. A replay — a captured request, which
+// verifies a second time — must be refused before it touches the rate budget,
+// or anyone who has seen one valid request could drain that agent's bucket by
+// repeating it. And a nonce must be stored only for a request that was
+// admitted: storing it first meant a rate-limited agent still filled the cache
+// with every nonce it sent, at up to a header's worth of bytes each, without
+// limit. allow runs under the cache's lock so a nonce cannot be admitted twice
+// by two requests racing; nothing takes the limiter's lock and then this one.
+func (c *nonceCache) admit(nonce string, now time.Time, allow func() bool) admission {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.seen == nil {
 		c.seen = map[string]time.Time{}
 	}
-	// Sweep opportunistically; the map only ever holds one window's worth.
-	if len(c.seen) > 4096 {
+	if now.Sub(c.swept) >= nonceSweepEvery {
 		for n, at := range c.seen {
 			if now.Sub(at) > NonceTTL {
 				delete(c.seen, n)
 			}
 		}
+		c.swept = now
 	}
 	if at, ok := c.seen[nonce]; ok && now.Sub(at) <= NonceTTL {
-		return false
+		return admitReplay
+	}
+	if !allow() {
+		return admitLimited
 	}
 	c.seen[nonce] = now
-	return true
+	return admitOK
 }
 
 // rateLimiters caps how often one agent may submit: a token bucket per agent
