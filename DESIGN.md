@@ -496,6 +496,15 @@ Full kernel timestamping on Linux, both directions, from v0.1 — not the half v
 
 ## 6. Storage engine
 
+**Target and agent ids are never reused.** History, traceroute hops, alert state and
+baselines are deliberately kept when a target or agent is deleted, so an id that came back
+would hand the next target or agent the previous one's history. Both id spaces come from
+an AUTOINCREMENT counter table (`target_ids`, `agent_ids`) rather than from the rowid of
+the table itself, which SQLite reuses; rebuilding `targets` to add AUTOINCREMENT would mean
+copying it while other tables hold foreign keys into it, inside the migration's
+transaction. The counter starts above every id found anywhere in the database, deleted or
+not.
+
 **SQLite, and it is genuinely sufficient — with numbers.** The write load is hundreds of
 rows *per minute* single-host, and even the hundreds-of-agents scenario is ~250 rows/s,
 which batched transactions handle with an order of magnitude of headroom. The concern
@@ -647,7 +656,15 @@ Two consequences fall out of it:
   the names and liveness of the agents that measure targets inside their scope, because
   otherwise "from ams-01" on their own graph is unreadable. They see no public keys, no
   enrolment tokens, and cannot enrol, rename, disable or remove anything. Those are
-  global-admin actions.
+  global-admin actions. An editor may assign a target only to agents in that same set,
+  since an agent inside another customer's network is a vantage point into it; the API
+  accepts what the picker offers.
+- **An id is never an oracle.** For every scoped route that takes an id, one that belongs
+  to someone else is answered exactly as one that does not exist. This is enforced by a
+  table test over the routes rather than by each handler remembering to, because the
+  handlers that forgot (rules, silences, baselines) were the ones that leaked.
+- **A golden reference belongs to the series it was captured from**, and is shown only to
+  callers who can see that series, however many other series the rule reaches.
 
 **What stays global admin only:** agents and enrolment tokens, the root defaults,
 `/metrics` (it counts and names things across the whole installation), and `config
