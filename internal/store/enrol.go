@@ -48,8 +48,8 @@ func hashToken(tok string) []byte {
 // taken. The plaintext is returned once and never stored.
 func (s *SQLite) MintEnrolmentToken(ctx context.Context, name string, ttl time.Duration, now time.Time) (EnrolmentToken, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || name == LocalAgentName {
-		return EnrolmentToken{}, fmt.Errorf("store: %q is not a usable agent name", name)
+	if err := validAgentName(name); err != nil {
+		return EnrolmentToken{}, err
 	}
 	if ttl <= 0 {
 		return EnrolmentToken{}, fmt.Errorf("store: enrolment token lifetime must be positive")
@@ -202,8 +202,8 @@ func (s *SQLite) RevokeEnrolmentToken(ctx context.Context, id int64) error {
 // to reintroduce it.
 func (s *SQLite) RenameAgent(ctx context.Context, id int64, name string) (int, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || name == LocalAgentName {
-		return 0, fmt.Errorf("store: %q is not a usable agent name", name)
+	if err := validAgentName(name); err != nil {
+		return 0, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

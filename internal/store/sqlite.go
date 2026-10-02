@@ -78,6 +78,10 @@ INSERT INTO agents (id, name) VALUES (0, 'local');
 // SQLite implements Store on a single SQLite database file.
 type SQLite struct {
 	db *sql.DB
+	// treeWrites admits one ChangeTargets at a time before it takes a connection.
+	// Its callback reads through the pool while its transaction holds one, so
+	// with as many waiting writers as connections none could finish.
+	treeWrites chan struct{}
 }
 
 var _ Store = (*SQLite)(nil)
@@ -86,7 +90,10 @@ var _ Store = (*SQLite)(nil)
 func Open(path string) (*SQLite, error) {
 	// modernc.org/sqlite takes a URI DSN; percent-encode the characters that
 	// would otherwise break URI parsing of a filesystem path.
-	esc := strings.ReplaceAll(strings.ReplaceAll(path, "%", "%25"), " ", "%20")
+	// "?" and "#" as well: a path with either was cut there as a URI, so
+	// "a?b.db" opened a database called "a" with none of the pragmas, and
+	// "a#b.db" the same, silently, in rollback-journal mode.
+	esc := strings.NewReplacer("%", "%25", " ", "%20", "?", "%3F", "#", "%23").Replace(path)
 	dsn := "file:" + esc +
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=synchronous(NORMAL)" +
@@ -117,7 +124,7 @@ func Open(path string) (*SQLite, error) {
 	// own lock whatever it is, and readers wait out the busy_timeout above.
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(8)
-	s := &SQLite{db: db}
+	s := &SQLite{db: db, treeWrites: make(chan struct{}, 1)}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -548,12 +555,18 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 	}
 	defer rows.Close()
 	var out []Measurement
+	var samples int
 	for rows.Next() {
 		m := Measurement{TargetID: targetID, AgentID: agentID}
 		var blob []byte
 		var icmpErr, sendErr sql.NullInt64
 		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &icmpErr, &sendErr); err != nil {
 			return nil, err
+		}
+		// Counted from the column, before the blob is decoded, so the row that
+		// would cross the limit is never allocated.
+		if samples += m.Received; samples > maxSamplesPerRead {
+			return nil, tooLarge("samples", maxSamplesPerRead)
 		}
 		if icmpErr.Valid {
 			v := uint16(icmpErr.Int64)
@@ -652,6 +665,9 @@ func (s *SQLite) AvailabilitySeries(ctx context.Context, targetID, agentID, from
 		if err := rows.Scan(&p.TS, &p.Sent, &p.Received); err != nil {
 			return nil, err
 		}
+		if len(out) == maxAvailabilityRows {
+			return nil, tooLarge("intervals", maxAvailabilityRows)
+		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -662,7 +678,13 @@ const targetCols = `id, parent_id, name, host, address_family, title, notes,
 	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s, graph_series`
 
 func (s *SQLite) ListTargets(ctx context.Context) ([]tree.Target, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+targetCols+" FROM targets ORDER BY id")
+	return listTargets(ctx, s.db)
+}
+
+// listTargets reads the whole tree through anything that can query, so a write
+// can read it inside the transaction that then changes it.
+func listTargets(ctx context.Context, q queryer) ([]tree.Target, error) {
+	rows, err := q.QueryContext(ctx, "SELECT "+targetCols+" FROM targets ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -723,16 +745,20 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 }
 
 func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
+	return upsertTarget(ctx, s.db, t)
+}
+
+func upsertTarget(ctx context.Context, q idRunner, t *tree.Target) error {
 	// A new target gets an id from the counter, never the next free rowid: a
 	// deleted target's id must not come back (see ids.go).
 	if t.ID == 0 {
-		id, err := allocTargetID(ctx, s.db)
+		id, err := allocTargetID(ctx, q)
 		if err != nil {
 			return err
 		}
 		t.ID = id
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := q.ExecContext(ctx, `
 		INSERT INTO targets (id, parent_id, name, host, address_family, title, notes,
 			hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
 			burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s,
@@ -777,11 +803,6 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 		return err
 	}
 	return nil
-}
-
-func (s *SQLite) DeleteTarget(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM targets WHERE id = ?", id)
-	return err
 }
 
 // PruneMeasurements deletes one target's measurements older than cutoff (a Unix

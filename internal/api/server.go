@@ -4,9 +4,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/auth"
@@ -264,7 +266,19 @@ func notFound(w http.ResponseWriter) {
 }
 
 // internalError logs the detail and returns a generic message.
+//
+// One failure is not internal: a read whose range holds more than one read
+// returns (see store.ErrRangeTooLarge). That is the caller's request, so it is
+// a 400 that says what to change. Handling it here and not at each call means a
+// read route added later answers it correctly without remembering to.
 func internalError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrRangeTooLarge) {
+		detail := strings.TrimPrefix(err.Error(), "store: that range holds more than one read returns: ")
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "that range holds more than one request returns (" + detail + "); ask for a shorter window",
+		})
+		return
+	}
 	log.Printf("api: %v", err)
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 }
