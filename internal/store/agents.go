@@ -81,13 +81,12 @@ func (s *SQLite) AddAgent(ctx context.Context, name string, pub ed25519.PublicKe
 		return AgentRecord{}, fmt.Errorf("store: public key is %d bytes, want %d",
 			len(pub), ed25519.PublicKeySize)
 	}
-	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO agents (name, pubkey, enabled) VALUES (?, ?, 1)", name, []byte(pub))
+	id, err := allocAgentID(ctx, s.db)
 	if err != nil {
 		return AgentRecord{}, err
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
+	if _, err := s.db.ExecContext(ctx,
+		"INSERT INTO agents (id, name, pubkey, enabled) VALUES (?, ?, ?, 1)", id, name, []byte(pub)); err != nil {
 		return AgentRecord{}, err
 	}
 	return AgentRecord{ID: id, Name: name, PubKey: pub, Enabled: true}, nil
