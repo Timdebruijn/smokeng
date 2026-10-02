@@ -56,15 +56,24 @@ func oneRow(t *testing.T, seriesLen int, opts ...ipc.Option) []byte {
 	return buf.Bytes()
 }
 
-// A compressed batch is decoded through a bounded allocator. smokeng's own
-// encoder never compresses, and the Arrow reader allocates whatever
-// uncompressed size a message header claims — so without the bound a small
-// body can ask for tens of gigabytes and take the master with it.
+// Two layers stand between a hostile body and the Arrow reader's allocations.
+// The outer one refuses compression outright (frame_test.go): smokeng's own
+// encoder never compresses, and the zstd decoder sizes its window from the
+// frame header outside any allocator. The inner one is this bounded allocator,
+// which is what limits everything the reader does allocate through it. This
+// test is the inner layer, so it calls decodeFrames, past the screen; going
+// through DecodeBatch the same body is refused before it gets here.
 func TestDecodeBatchBoundsAllocation(t *testing.T) {
-	// A well-formed compressed batch still decodes: the bound is a ceiling,
-	// not a ban.
 	body := oneRow(t, 2, ipc.WithZstd())
-	out, err := DecodeBatch(body, 3)
+
+	// The public entry point refuses it.
+	if _, err := DecodeBatch(body, 3); err == nil {
+		t.Fatal("DecodeBatch accepted a compressed batch")
+	}
+
+	// Past the screen, a well-formed compressed batch within the budget still
+	// decodes: at this layer the bound is a ceiling, not a ban.
+	out, err := decodeFrames(body, 3, maxDecodeBytes)
 	if err != nil {
 		t.Fatalf("a compressed batch within the limit was refused: %v", err)
 	}
@@ -264,16 +273,22 @@ func TestDecodeBatchRefusesOversizedDecompression(t *testing.T) {
 	}
 	body := buf.Bytes()
 
-	// With a budget below what those buffers decompress to, it is refused.
-	if _, err := decodeBatch(body, 3, 1024); err == nil {
+	// The public path never gets this far: compression is refused outright.
+	if _, err := decodeBatch(body, 3, maxDecodeBytes); err == nil {
+		t.Fatal("a compressed batch got through the framing screen")
+	}
+
+	// Past the screen, with a budget below what those buffers decompress to,
+	// the allocator refuses it.
+	if _, err := decodeFrames(body, 3, 1024); err == nil {
 		t.Fatal("a batch whose buffers exceed the allocation budget was decoded")
 	} else if !strings.Contains(err.Error(), "refusing it rather than allocating") {
 		t.Errorf("the error does not explain the refusal: %v", err)
 	}
 
 	// And with the production budget the same batch is perfectly ordinary, so
-	// the limit is a ceiling rather than a ban on compression.
-	out, err := decodeBatch(body, 3, maxDecodeBytes)
+	// at this layer the limit is a ceiling rather than a ban on compression.
+	out, err := decodeFrames(body, 3, maxDecodeBytes)
 	if err != nil {
 		t.Fatalf("an honest compressed batch was refused: %v", err)
 	}
