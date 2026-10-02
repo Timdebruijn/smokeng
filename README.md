@@ -275,10 +275,11 @@ stops, the history stays. See [Remote agents](docs/agents.md) for the full proto
 Every request carries an Ed25519 signature over a canonical string that binds the method,
 path, agent, timestamp, nonce and a hash of the body — so a captured signature cannot be
 replayed against another endpoint or with another payload. The master holds only public
-keys, so compromising its database does not let an attacker impersonate an agent. A
-submission is refused unless every target in it is assigned to that agent, and writes
-keep what is already stored for `(target, agent, interval)`, so a replayed batch is a
-no-op and an agent cannot rewrite an interval it has already reported. The nonce cache is
+keys, so compromising its database does not let an attacker impersonate an agent. Rows
+for a target that is not assigned to the agent are dropped and the rest of the submission
+accepted, and writes keep what is already stored for `(target, agent, interval)`, so a
+replayed batch is a no-op and an agent cannot rewrite an interval it has already
+reported. The nonce cache is
 in-memory and empty after a restart; a replay is harmless regardless, because it changes
 nothing.
 

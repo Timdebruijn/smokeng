@@ -15,6 +15,7 @@ import (
 // message is read into make([]byte, n) with n taken straight off the wire, and
 // that allocation never passes through the allocator decodeBatch hands the
 // reader, so a header that claims a large length costs that much however short
+// the body is. And a compressed record batch is expanded by a zstd decoder
 // built with its default options, which sizes its window from the frame header
 // before it has produced a byte, again outside the allocator: the cost is set
 // by what the frame claims, not by its size.

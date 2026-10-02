@@ -445,3 +445,39 @@ func TestFlatbufferReadsRefuseWrappingOffsets(t *testing.T) {
 		t.Error("le32 refused the last four bytes")
 	}
 }
+
+// The cap counts every row the stream carries, across all of its record
+// batches, and not only the rows that survive. Rows with more replies than
+// probes are dropped, so a count of what was kept let a stream of record
+// batches full of them past the cap.
+func TestDecodeBatchCapsRowsAcrossRecordBatches(t *testing.T) {
+	impossible := func(n int) []byte {
+		ms := make([]store.Measurement, n)
+		for i := range ms {
+			ms[i] = store.Measurement{TargetID: 1, TS: int64(i), Sent: 1, Received: 2, Samples: []uint32{1, 2}}
+		}
+		body, err := EncodeBatch(ms)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	// The same record batch, repeated: schema, then n copies of the batch.
+	repeat := func(body []byte, n int) []byte {
+		fs, eos := frames(t, body)
+		out := slices.Clone(body[:fs[1].start])
+		for range n {
+			out = append(out, body[fs[1].start:fs[1].end]...)
+		}
+		return append(out, body[eos:]...)
+	}
+
+	// Exactly the cap, split across two record batches, every row dropped: fine.
+	if out, err := DecodeBatch(repeat(impossible(MaxBatchRows/2), 2), 3); err != nil || len(out) != 0 {
+		t.Fatalf("two batches of %d dropped rows = %d kept, %v", MaxBatchRows/2, len(out), err)
+	}
+	// One row over, nothing of it kept.
+	if _, err := DecodeBatch(repeat(impossible(MaxBatchRows/2+1), 2), 3); err == nil {
+		t.Error("a stream carrying more than the cap in dropped rows was decoded")
+	}
+}
