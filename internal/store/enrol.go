@@ -132,13 +132,12 @@ func (s *SQLite) RedeemEnrolmentToken(ctx context.Context, tok string, pub ed255
 		return AgentRecord{}, ErrNameTaken
 	}
 
-	res, err := tx.ExecContext(ctx,
-		"INSERT INTO agents (name, pubkey, enabled) VALUES (?, ?, 1)", name, []byte(pub))
+	agentID, err := allocAgentID(ctx, tx)
 	if err != nil {
 		return AgentRecord{}, err
 	}
-	agentID, err := res.LastInsertId()
-	if err != nil {
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO agents (id, name, pubkey, enabled) VALUES (?, ?, ?, 1)", agentID, name, []byte(pub)); err != nil {
 		return AgentRecord{}, err
 	}
 	if _, err := tx.ExecContext(ctx,

@@ -381,6 +381,8 @@ UPDATE targets SET graph_series = 'all' WHERE parent_id IS NULL AND graph_series
 	// reported identically. Null for every interval that sent everything, and
 	// for every measurement taken before this column existed.
 	`ALTER TABLE measurements ADD COLUMN send_error INTEGER`,
+	// v22: target and agent ids stop being reused. See ids.go.
+	seedIDsMigration(),
 }
 
 func (s *SQLite) migrate() error {
@@ -715,11 +717,16 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 }
 
 func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
-	var id any // NULL lets SQLite assign the next INTEGER PRIMARY KEY
-	if t.ID != 0 {
-		id = t.ID
+	// A new target gets an id from the counter, never the next free rowid: a
+	// deleted target's id must not come back (see ids.go).
+	if t.ID == 0 {
+		id, err := allocTargetID(ctx, s.db)
+		if err != nil {
+			return err
+		}
+		t.ID = id
 	}
-	res, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO targets (id, parent_id, name, host, address_family, title, notes,
 			hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
 			burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s,
@@ -749,7 +756,7 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 			tls_skip_verify = excluded.tls_skip_verify,
 			retention_s = excluded.retention_s,
 			graph_series = excluded.graph_series`,
-		id, ptrOrNil(t.ParentID), t.Name, ptrOrNil(t.Host), ptrOrNil(t.AddressFamily),
+		t.ID, ptrOrNil(t.ParentID), t.Name, ptrOrNil(t.Host), ptrOrNil(t.AddressFamily),
 		ptrOrNil(t.Title), ptrOrNil(t.Notes), t.Hidden, t.Enabled, t.SortOrder,
 		ptrOrNil(t.Settings.IntervalS), ptrOrNil(t.Settings.PingsPerInterval),
 		ptrOrNil(t.Settings.ProbeMode), ptrOrNil(t.Settings.BurstGapMS),
@@ -762,13 +769,6 @@ func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
 		ptrOrNil(t.Settings.RetentionS), ptrOrNil(t.Settings.GraphSeries))
 	if err != nil {
 		return err
-	}
-	if t.ID == 0 {
-		newID, err := res.LastInsertId()
-		if err != nil {
-			return err
-		}
-		t.ID = newID
 	}
 	return nil
 }
