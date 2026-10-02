@@ -133,18 +133,22 @@ and in that order: a replay is refused before it touches the rate budget, and a 
 stored only for a request that was admitted, so a rate-limited agent cannot grow the
 cache.
 
-The nonce cache and the skew window stop replay in the short term; the real defence is
-that ingest is **first write wins**, keyed by (target, agent, interval start). Replaying a
-batch a week later finds every row already there and changes nothing. The same key with
-different values changes nothing either: an agent cannot rewrite an interval it has
-already reported. Rows timestamped later than the clock skew allows are dropped, and so
-are rows for targets not assigned to the agent; the rest of the batch is still accepted,
-because refusing all of it would leave the agent retrying the same rejected batch forever.
+A request older than the skew window is refused, and inside it the nonce cache refuses a
+second copy. The cache is in memory and empty after a restart, so for the rest of that
+window what stands between a captured request and the data is that a replay is
+byte-identical: ingest is **first write wins**, keyed by (target, agent, interval start),
+so storing it again changes nothing. The same rule goes further than a replay needs: a
+*different* signed submission for an interval the agent has already reported changes
+nothing either, so an agent cannot rewrite history it has reported. Rows timestamped later
+than the clock skew allows, rows for targets not assigned to the agent, and rows claiming
+more replies than probes are dropped, and the rest of the batch is still accepted:
+refusing it would make the agent discard the whole batch, which is a larger loss than the
+row.
 
-A submission is also refused outright when it is not the shape an agent sends: more than
-10,000 rows, more than a schema message followed by record batches, any compression, any
-declared length that does not fit in the payload, or more replies than probes in a row.
-smokeng's own encoder never produces any of these.
+A submission is refused outright (400, which makes an agent discard that batch) when it is
+not the shape an agent sends: more than 10,000 rows, more than a schema message followed
+by record batches, any compression, or any declared length that does not fit in the
+payload. smokeng's own encoder never produces any of these.
 
 ## Buffering and back-pressure
 
