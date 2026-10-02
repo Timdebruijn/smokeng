@@ -177,9 +177,14 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 
 	var out []store.Measurement
 	var resorted, impossible int
+	// Every row the stream carries counts, not only the ones that are kept: a
+	// row dropped below is still a row that was materialised, and counting what
+	// was kept let a stream of record batches full of dropped rows through at
+	// 31 times the cap.
+	var decoded int
 	for reader.Next() {
 		rec := reader.Record()
-		if len(out)+int(rec.NumRows()) > MaxBatchRows {
+		if decoded += int(rec.NumRows()); decoded > MaxBatchRows {
 			return nil, fmt.Errorf("ingest: batch holds more than %d rows", MaxBatchRows)
 		}
 		// Columns are resolved by name, not by position. The series columns
