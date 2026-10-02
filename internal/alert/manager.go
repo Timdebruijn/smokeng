@@ -182,20 +182,8 @@ func (m *Manager) Reload(ctx context.Context) error {
 			return err
 		}
 		app := applicable{intervalS: res.IntervalS.Effective, path: path, host: *n.Host}
-		// Walk up until a node defines rules; the first one wins outright.
-		for cur := n; ; {
-			if rs := byNode[cur.ID]; len(rs) > 0 {
-				app.rules = rs
-				break
-			}
-			if cur.ParentID == nil {
-				break
-			}
-			parent, ok := tr.Get(*cur.ParentID)
-			if !ok {
-				break
-			}
-			cur = parent
+		if node, ok := NearestRuleNode(tr, func(id int64) bool { return len(byNode[id]) > 0 }, n.ID); ok {
+			app.rules = byNode[node]
 		}
 		resolved[n.ID] = app
 	}
@@ -549,6 +537,65 @@ func (m *Manager) Baselines(context.Context) ([]Baselined, error) {
 		out = append(out, b)
 	}
 	return out, nil
+}
+
+// NearestRuleNode returns the node whose rules apply to a target: the target
+// itself or the nearest ancestor that defines any, which wins outright. Rules
+// replace rather than accumulate, so a node that defines any hides every rule
+// above it from everything beneath it. Reload applies this to evaluate, and the
+// API asks it which rules reach a target, because "is an ancestor of" is not the
+// same question: a rule on an ancestor that a nearer node overrides never fires
+// for the target, and saying otherwise would show a rule that does not apply.
+func NearestRuleNode(tr *tree.Tree, hasRules func(nodeID int64) bool, targetID int64) (int64, bool) {
+	cur, ok := tr.Get(targetID)
+	for ok {
+		if hasRules(cur.ID) {
+			return cur.ID, true
+		}
+		if cur.ParentID == nil {
+			break
+		}
+		cur, ok = tr.Get(*cur.ParentID)
+	}
+	return 0, false
+}
+
+// ShapeRef is a shape rule's reference together with where it came from, read
+// in one step. Two reads were two snapshots: a recapture or a clear between them
+// let the source of one reference be applied to the samples of another.
+type ShapeRef struct {
+	Samples []uint32
+	Kind    string
+	OK      bool
+	// Source is the series a golden reference was captured from; HasSource is
+	// false for a rolling reference, which is the target's own history.
+	Source    int64
+	HasSource bool
+}
+
+// ShapeReferenceDetail is ShapeReference with the provenance of a golden
+// reference, taken under the same lock so the two cannot disagree.
+func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64) ShapeRef {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, exists := m.rules[ruleID]
+	if !exists || r.Metric != MetricShape {
+		return ShapeRef{}
+	}
+	if r.Baseline == BaselineGolden {
+		s := m.golden[ruleID]
+		ref := ShapeRef{Samples: s, Kind: "golden", OK: len(s) > 0}
+		if meta, ok := m.goldenMeta[ruleID]; ok {
+			ref.Source, ref.HasSource = meta.TargetID, true
+		}
+		return ref
+	}
+	ss := m.shapes[stateKey{ruleID, targetID, agentID}]
+	if ss == nil {
+		return ShapeRef{Kind: "rolling"}
+	}
+	s := ss.pooled()
+	return ShapeRef{Samples: s, Kind: "rolling", OK: len(s) > 0}
 }
 
 // ShapeReference returns the distribution a shape rule is currently comparing

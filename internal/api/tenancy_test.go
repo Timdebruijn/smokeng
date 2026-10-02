@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -121,7 +120,37 @@ func tenants(t *testing.T) tenancy {
 	if err := st.WriteMeasurements(ctx, append(rows(f.hostA, 0, 100), rows(f.hostB, f.agentB, 99999)...)); err != nil {
 		t.Fatal(err)
 	}
+	// An alert event and a route for each, so that the routes which list them have
+	// something to say about both customers and filtering is what is being tested.
+	if err := st.RecordAlertEvents(ctx, []alert.Event{
+		{TS: f.now - 60, RuleID: f.ruleA, TargetID: f.hostA, AgentID: 0, Firing: true, RuleName: "event-of-A", Describes: "d", Value: 1},
+		{TS: f.now - 60, RuleID: f.ruleB, TargetID: f.hostB, AgentID: f.agentB, Firing: true, RuleName: "event-of-B", Describes: "d", Value: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordPath(ctx, f.hostA, 0, f.now-600, "10.99.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordPath(ctx, f.hostB, f.agentB, f.now-600, "10.99.0.2"); err != nil {
+		t.Fatal(err)
+	}
 	return f
+}
+
+// dropCustomerRules removes both customers' own rules. Rules replace rather than
+// accumulate, so while either customer defines any, a rule on /Klanten does not
+// reach their hosts at all; removing theirs is what lets a shared rule apply.
+func (f *tenancy) dropCustomerRules(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	for _, id := range []int64{f.ruleA, f.ruleB} {
+		if err := f.st.DeleteAlertRule(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.mgr.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // server signs the caller in as a member of group, holding role on node and
@@ -285,6 +314,7 @@ func TestCaptureAnswersUnknownAndForeignRulesAlike(t *testing.T) {
 // is. Here it came from the other customer.
 func TestSharedRulesReferenceIsOnlyShownWhereItsSourceIsVisible(t *testing.T) {
 	f := tenants(t)
+	f.dropCustomerRules(t)
 	ctx := context.Background()
 	shared := alert.Rule{TargetID: f.klanten, Name: "shared", Metric: alert.MetricShape, Op: alert.OpGreater,
 		Threshold: 3, For: 3, ClearFor: 3, Enabled: true, Mode: alert.ModeAuto, Baseline: alert.BaselineGolden}
@@ -411,26 +441,32 @@ func TestNoReadRouteNamesAnythingOutsideTheScope(t *testing.T) {
 		}
 	}
 
-	// One or more requests per route. Where a route takes an id that could name
-	// the other customer's agent, that is tried too.
-	requests := map[string][]string{
-		"GET /api/v1/targets": {"/api/v1/targets"},
+	// One or more requests per route, each with a marker that only a real answer
+	// about the caller's own part of the tree contains. An empty envelope such as
+	// {"rules":[]} is longer than any length check and passes every absence
+	// check, so a handler changed to return nothing would otherwise keep this
+	// green. A route that answers in binary has no text marker and is checked for
+	// size. Where a route takes an id that could name the other customer's agent,
+	// that is tried too.
+	type req struct{ path, marker string }
+	requests := map[string][]req{
+		"GET /api/v1/targets": {{"/api/v1/targets", "/GemeenteA/gw"}},
 		"GET /api/v1/availability": {
-			"/api/v1/availability?target_id=" + num(f.hostA),
-			"/api/v1/availability?target_id=" + num(f.hostA) + "&agent_id=" + num(f.agentB),
+			{"/api/v1/availability?target_id=" + num(f.hostA), "/GemeenteA/gw"},
+			{"/api/v1/availability?target_id=" + num(f.hostA) + "&agent_id=" + num(f.agentB), "agent " + num(f.agentB)},
 		},
 		"GET /api/v1/measurements": {
-			"/api/v1/measurements?target_id=" + num(f.hostA) + "&agent_id=0",
-			"/api/v1/measurements?target_id=" + num(f.hostA) + "&agent_id=" + num(f.agentB),
+			{"/api/v1/measurements?target_id=" + num(f.hostA) + "&agent_id=0", ""},
+			{"/api/v1/measurements?target_id=" + num(f.hostA) + "&agent_id=" + num(f.agentB), ""},
 		},
-		"GET /api/v1/alert-rules":     {"/api/v1/alert-rules"},
-		"GET /api/v1/alerts":          {"/api/v1/alerts"},
-		"GET /api/v1/alert-baselines": {"/api/v1/alert-baselines"},
-		"GET /api/v1/shape-reference": {"/api/v1/shape-reference?rule_id=" + num(f.ruleA) + "&target_id=" + num(f.hostA) + "&agent_id=0"},
-		"GET /api/v1/silences":        {"/api/v1/silences"},
-		"GET /api/v1/alert-events":    {"/api/v1/alert-events"},
-		"GET /api/v1/agents":          {"/api/v1/agents"},
-		"GET /api/v1/paths":           {"/api/v1/paths?target_id=" + num(f.hostA)},
+		"GET /api/v1/alert-rules":     {{"/api/v1/alert-rules", `"name":"shape"`}},
+		"GET /api/v1/alerts":          {{"/api/v1/alerts", "/GemeenteA/gw"}},
+		"GET /api/v1/alert-baselines": {{"/api/v1/alert-baselines", `"rule_id":` + num(f.ruleA)}},
+		"GET /api/v1/shape-reference": {{"/api/v1/shape-reference?rule_id=" + num(f.ruleA) + "&target_id=" + num(f.hostA) + "&agent_id=0", "777"}},
+		"GET /api/v1/silences":        {{"/api/v1/silences", "maintenance"}},
+		"GET /api/v1/alert-events":    {{"/api/v1/alert-events", "event-of-A"}},
+		"GET /api/v1/agents":          {{"/api/v1/agents", `"name":"local"`}},
+		"GET /api/v1/paths":           {{"/api/v1/paths?target_id=" + num(f.hostA), "10.99.0.1"}},
 	}
 
 	built := New(f.st, Options{Alerts: f.mgr}, fstest.MapFS{}).(*handler).srv.routes.classified()
@@ -445,7 +481,7 @@ func TestNoReadRouteNamesAnythingOutsideTheScope(t *testing.T) {
 		}
 	}
 
-	forbidden := []string{"Klanten", "GemeenteB", "ams-b", "198.51.100.2"}
+	forbidden := []string{"Klanten", "GemeenteB", "ams-b", "198.51.100.2", "event-of-B", "10.99.0.2"}
 	for _, role := range []string{"viewer", "editor"} {
 		g := store.Grant{Group: "team-a-" + role, TargetID: f.groupA, Role: role}
 		if err := f.st.UpsertGrant(ctx, &g); err != nil {
@@ -454,20 +490,23 @@ func TestNoReadRouteNamesAnythingOutsideTheScope(t *testing.T) {
 		sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{g.Group}, Expires: 1 << 40}
 		h := New(f.st, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone,
 			Alerts: firingOverride{Manager: f.mgr, fire: fire}}, fstest.MapFS{})
-		for pattern, routes := range requests {
-			for _, route := range routes {
-				code, body := call(t, h, "GET", route, nil)
+		for pattern, reqs := range requests {
+			for _, rq := range reqs {
+				code, body := call(t, h, "GET", rq.path, nil)
 				if code != http.StatusOK {
-					t.Errorf("%s %s: %d %.200s", role, route, code, body)
+					t.Errorf("%s %s: %d %.200s", role, rq.path, code, body)
 					continue
 				}
-				// A handler that answers 200 with nothing passes any absence check.
-				if len(body) < 8 {
-					t.Errorf("%s %s answered with %q, so nothing was checked", role, pattern, body)
+				if rq.marker != "" && !strings.Contains(body, rq.marker) {
+					t.Errorf("%s %s did not contain %q, so what it says about the caller's own tree was not checked:\n%.300s",
+						role, pattern, rq.marker, body)
+				}
+				if rq.marker == "" && len(body) < 100 {
+					t.Errorf("%s %s answered with %d bytes, so nothing was checked", role, rq.path, len(body))
 				}
 				for _, bad := range forbidden {
 					if strings.Contains(body, bad) {
-						t.Errorf("%s GET %s names %q, which is outside the scope:\n%.400s", role, route, bad, body)
+						t.Errorf("%s GET %s names %q, which is outside the scope:\n%.400s", role, rq.path, bad, body)
 					}
 				}
 			}
@@ -773,19 +812,71 @@ func TestMeasurementsRangeGuardSurvivesOverflow(t *testing.T) {
 	}
 }
 
-// failingBaselines is the real manager with a baseline lookup that errors.
-type failingBaselines struct{ *alert.Manager }
-
-func (failingBaselines) Baselines(context.Context) ([]alert.Baselined, error) {
-	return nil, errors.New("baselines unavailable")
+// staleProvenance is a manager whose separate provenance lookup disagrees with
+// the reference it just returned, which is what two reads allow when a recapture
+// lands between them. Only the reference's own source may be believed.
+type staleProvenance struct {
+	*alert.Manager
+	ref   alert.ShapeRef
+	stale []alert.Baselined
 }
 
-// A golden reference is shown only where its source series is visible. If the
-// source cannot be established, that is not "nothing to hide": the reference is
-// withheld. Treating a failed lookup as clear returned another customer's
-// samples exactly when the check could not run.
-func TestShapeReferenceDoesNotFailOpenWhenTheSourceCannotBeLookedUp(t *testing.T) {
+func (s staleProvenance) ShapeReferenceDetail(int64, int64, int64) alert.ShapeRef { return s.ref }
+func (s staleProvenance) Baselines(context.Context) ([]alert.Baselined, error)    { return s.stale, nil }
+
+// A golden reference and the series it came from are read together. The source
+// used to be looked up afterwards, and a recapture or a clear between the two
+// attached the visible source of one reference to the samples of another, which
+// withheld nothing.
+func TestShapeReferenceBelievesOnlyTheSourceItWasReadWith(t *testing.T) {
 	f := tenants(t)
+	f.dropCustomerRules(t)
+	ctx := context.Background()
+	shared := alert.Rule{TargetID: f.klanten, Name: "shared", Metric: alert.MetricShape, Op: alert.OpGreater,
+		Threshold: 3, For: 3, ClearFor: 3, Enabled: true, Mode: alert.ModeAuto, Baseline: alert.BaselineGolden}
+	if err := f.st.UpsertAlertRule(ctx, &shared); err != nil {
+		t.Fatal(err)
+	}
+	g := store.Grant{Group: "team-a", TargetID: f.groupA, Role: "viewer"}
+	if err := f.st.UpsertGrant(ctx, &g); err != nil {
+		t.Fatal(err)
+	}
+	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{"team-a"}, Expires: 1 << 40}
+	ask := func(view AlertView) (int, string) {
+		h := New(f.st, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone, Alerts: view}, fstest.MapFS{})
+		return call(t, h, "GET", "/api/v1/shape-reference?rule_id="+num(shared.ID)+"&target_id="+num(f.hostA)+"&agent_id=0", nil)
+	}
+	// The other customer's samples, and a stale second lookup that says they came
+	// from the caller's own host.
+	staleSaysMine := []alert.Baselined{{RuleID: shared.ID, TargetID: f.hostA}}
+	foreign := alert.ShapeRef{Samples: []uint32{424242}, Kind: "golden", OK: true, Source: f.hostB, HasSource: true}
+	if code, body := ask(staleProvenance{f.mgr, foreign, staleSaysMine}); code != http.StatusOK || strings.Contains(body, "424242") {
+		t.Errorf("a stale provenance lookup let another customer's reference through: %d %s", code, body)
+	}
+
+	// A golden reference that reports no source at all is not shown either: what
+	// it came from cannot be established, which is not "nothing to hide".
+	// Its Source field happens to hold a series the caller can see, which is what
+	// makes the missing HasSource the only thing that withholds it.
+	orphan := alert.ShapeRef{Samples: []uint32{424242}, Kind: "golden", OK: true, Source: f.hostA}
+	if code, body := ask(staleProvenance{f.mgr, orphan, staleSaysMine}); code != http.StatusOK || strings.Contains(body, "424242") {
+		t.Errorf("a reference with no known source was shown: %d %s", code, body)
+	}
+
+	// The control: a reference whose own source is visible is shown.
+	own := alert.ShapeRef{Samples: []uint32{777}, Kind: "golden", OK: true, Source: f.hostA, HasSource: true}
+	if code, body := ask(staleProvenance{f.mgr, own, nil}); code != http.StatusOK || !strings.Contains(body, "777") {
+		t.Errorf("a reference from their own series was withheld: %d %s", code, body)
+	}
+}
+
+// Rules replace rather than accumulate: the rules of the nearest node that
+// defines any are the whole set. A rule on an ancestor that a nearer node
+// overrides never fires for the target, so shape-reference must not show it. A
+// plain ancestry check said it applied, and exposed the existence and reference
+// of a rule that does nothing there.
+func TestARuleOverriddenByANearerNodeIsNotShown(t *testing.T) {
+	f := tenants(t) // both customers define their own rules
 	ctx := context.Background()
 	shared := alert.Rule{TargetID: f.klanten, Name: "shared", Metric: alert.MetricShape, Op: alert.OpGreater,
 		Threshold: 3, For: 3, ClearFor: 3, Enabled: true, Mode: alert.ModeAuto, Baseline: alert.BaselineGolden}
@@ -795,22 +886,69 @@ func TestShapeReferenceDoesNotFailOpenWhenTheSourceCannotBeLookedUp(t *testing.T
 	if err := f.mgr.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.mgr.CaptureBaseline(ctx, alert.Baselined{RuleID: shared.ID, TargetID: f.hostB, AgentID: f.agentB,
-		FromTS: f.now - 3600, ToTS: f.now, Intervals: 1, Samples: []uint32{424242}, CapturedAt: f.now}); err != nil {
+	if err := f.mgr.CaptureBaseline(ctx, alert.Baselined{RuleID: shared.ID, TargetID: f.hostA, AgentID: 0,
+		FromTS: f.now - 3600, ToTS: f.now, Intervals: 1, Samples: []uint32{515151}, CapturedAt: f.now}); err != nil {
 		t.Fatal(err)
 	}
-	g := store.Grant{Group: "team-a", TargetID: f.groupA, Role: "viewer"}
-	if err := f.st.UpsertGrant(ctx, &g); err != nil {
+	h := f.server(t, "team-a", f.groupA, "viewer")
+	ask := func(rule int64) (int, string) {
+		return call(t, h, "GET", "/api/v1/shape-reference?rule_id="+num(rule)+"&target_id="+num(f.hostA)+"&agent_id=0", nil)
+	}
+
+	// GemeenteA defines a rule, so the one on /Klanten is not part of its set.
+	codeShared, bodyShared := ask(shared.ID)
+	codeMissing, bodyMissing := ask(99999)
+	if codeShared != http.StatusNotFound || bodyShared != bodyMissing || codeShared != codeMissing || strings.Contains(bodyShared, "515151") {
+		t.Errorf("an overridden rule: %d %s; a missing one: %d %s", codeShared, bodyShared, codeMissing, bodyMissing)
+	}
+
+	// Remove their own rule and the one above applies.
+	if err := f.st.DeleteAlertRule(ctx, f.ruleA); err != nil {
 		t.Fatal(err)
 	}
-	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{"team-a"}, Expires: 1 << 40}
-	h := New(f.st, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone,
-		Alerts: failingBaselines{f.mgr}}, fstest.MapFS{})
-	code, body := call(t, h, "GET", "/api/v1/shape-reference?rule_id="+num(shared.ID)+"&target_id="+num(f.hostA)+"&agent_id=0", nil)
-	if strings.Contains(body, "424242") {
-		t.Fatalf("another customer's reference was served when its source could not be checked (%d): %s", code, body)
+	if err := f.mgr.Reload(ctx); err != nil {
+		t.Fatal(err)
 	}
-	if code != http.StatusInternalServerError {
-		t.Errorf("a failed lookup answered %d, want 500", code)
+	if code, body := ask(shared.ID); code != http.StatusOK || !strings.Contains(body, "515151") {
+		t.Errorf("once nothing overrides it, the rule above applies: %d %s", code, body)
+	}
+}
+
+// A capture window is bounded in intervals, but an interval is not a size: one
+// can hold up to 65,535 samples, so an allowed window could still decode to
+// tens of gigabytes. The volume is counted from sent/received before anything is
+// decoded, and a window over the limit is refused.
+func TestCaptureRefusesAWindowThatHoldsTooManySamples(t *testing.T) {
+	f := tenants(t)
+	ctx := context.Background()
+	fat := func(base int64, rows int) {
+		samples := make([]uint32, 65535)
+		for i := range samples {
+			samples[i] = 100
+		}
+		var ms []store.Measurement
+		for i := range rows {
+			ms = append(ms, store.Measurement{TargetID: f.hostA, AgentID: 0, TS: base + int64(i)*60,
+				Sent: 65535, Received: 65535, Samples: samples})
+		}
+		if err := f.st.WriteMeasurements(ctx, ms); err != nil {
+			t.Fatal(err)
+		}
+	}
+	over := f.now - 40_000 // 31 rows of 65,535 is just over two million samples
+	under := f.now - 20_000
+	fat(over, 31)
+	fat(under, 20) // 1.3 million: well inside
+	h := f.server(t, "team-a", f.groupA, "editor")
+	capture := func(base int64, rows int) (int, string) {
+		return call(t, h, "POST", "/api/v1/alert-rules/"+num(f.ruleA)+"/baseline",
+			map[string]any{"target_id": f.hostA, "agent_id": 0, "from": base, "to": base + int64(rows)*60})
+	}
+	if code, body := capture(over, 31); code != http.StatusBadRequest || !strings.Contains(body, "samples") {
+		t.Errorf("a window of %d samples = %d %.160s, want 400 naming the samples", 31*65535, code, body)
+	}
+	// The control: under the limit still captures.
+	if code, body := capture(under, 20); code != http.StatusOK {
+		t.Errorf("a window of %d samples = %d %.160s, want 200", 20*65535, code, body)
 	}
 }

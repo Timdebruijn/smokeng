@@ -14,6 +14,11 @@ import (
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
+// maxBaselineSamples bounds what one capture reads. A reference is one
+// distribution, sorted and held in memory and in the database, and a few
+// million samples describe a shape as well as a few billion would.
+const maxBaselineSamples = 2_000_000
+
 // handleListBaselines reports the captured reference distribution of every
 // golden-baseline shape rule the caller can see — what it was taken from, not
 // the samples, which are large and only meaningful drawn.
@@ -122,6 +127,26 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 	agentID, err := s.captureAgent(r, body.TargetID, body.AgentID)
 	if err != nil {
 		badRequest(w, err)
+		return
+	}
+
+	// The window is bounded in intervals above, but an interval is not a size:
+	// one can hold up to 65,535 samples, so an allowed window could still
+	// decode to tens of gigabytes before anything checked it. The count comes
+	// from sent/received alone, which AvailabilitySeries reads without
+	// decoding a sample, so this is cheap next to what it prevents.
+	pts, err := s.st.AvailabilitySeries(r.Context(), body.TargetID, agentID, body.From, body.To)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	var volume int64
+	for _, p := range pts {
+		volume += int64(p.Received)
+	}
+	if volume > maxBaselineSamples {
+		badRequest(w, fmt.Errorf("that window holds %d samples, more than the %d one capture reads; "+
+			"capture a shorter window", volume, maxBaselineSamples))
 		return
 	}
 
@@ -261,10 +286,21 @@ func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	var rule *alert.Rule
+	// The rule has to be one that applies to the target, by the inheritance the
+	// manager evaluates with: rules replace rather than accumulate, so the rules
+	// of the nearest node that defines any are the whole set. A rule on an
+	// ancestor that a nearer node overrides never fires for this target, and is
+	// answered as a rule that does not exist rather than shown.
+	hasRules := map[int64]bool{}
 	for i := range rules {
-		if rules[i].ID == ruleID && sc.Within(targetID, rules[i].TargetID) {
-			rule = &rules[i]
+		hasRules[rules[i].TargetID] = true
+	}
+	var rule *alert.Rule
+	if node, ok := alert.NearestRuleNode(sc.tr, func(id int64) bool { return hasRules[id] }, targetID); ok {
+		for i := range rules {
+			if rules[i].ID == ruleID && rules[i].TargetID == node {
+				rule = &rules[i]
+			}
 		}
 	}
 	if rule == nil {
@@ -288,26 +324,20 @@ func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	reference, kind, avail := s.alerts.ShapeReference(ruleID, targetID, agentID)
+	ref := s.alerts.ShapeReferenceDetail(ruleID, targetID, agentID)
+	reference, kind, avail := ref.Samples, ref.Kind, ref.OK
 	// A golden reference is the rule's, not the target's: one distribution
 	// captured from one series and compared against every series the rule
 	// reaches. So it is theirs to read only if the series it came from is. A
 	// caller who sees part of the rule's subtree is shown a reference captured
 	// from a part they cannot see as not available, which is the same thing
 	// they would see for a rule nothing has been captured for.
-	if kind == "golden" && avail {
-		// If what the reference came from cannot be established, it is not shown.
-		// Treating a failed lookup as "nothing to hide" fails open.
-		bs, err := s.alerts.Baselines(r.Context())
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-		for _, b := range bs {
-			if b.RuleID == ruleID && !sc.Visible(b.TargetID) {
-				reference, avail = nil, false
-			}
-		}
+	//
+	// The source comes with the samples, in one read. It used to be looked up
+	// afterwards, and a recapture or a clear between the two attached the source
+	// of one reference to the samples of another.
+	if kind == "golden" && avail && (!ref.HasSource || !sc.Visible(ref.Source)) {
+		reference, avail = nil, false
 	}
 	// The current side: the most recent interval measured for this series.
 	to := time.Now().Unix()

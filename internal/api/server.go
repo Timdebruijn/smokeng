@@ -42,7 +42,9 @@ type AlertView interface {
 	Baselines(ctx context.Context) ([]alert.Baselined, error)
 	CaptureBaseline(ctx context.Context, b alert.Baselined) error
 	ClearBaseline(ctx context.Context, ruleID int64) (bool, error)
-	ShapeReference(ruleID, targetID, agentID int64) (samples []uint32, kind string, ok bool)
+	// ShapeReferenceDetail returns the reference with the series a golden one was
+	// captured from, read together.
+	ShapeReferenceDetail(ruleID, targetID, agentID int64) alert.ShapeRef
 }
 
 // Store is everything the API persists through: the measurement store plus

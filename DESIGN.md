@@ -667,7 +667,13 @@ Two consequences fall out of it:
   baselines) were the ones that leaked. Agent ids are global; what one reveals is a name,
   and names are shown only for agents in the caller's scope.
 - **A golden reference belongs to the series it was captured from**, and is shown only to
-  callers who can see that series, however many other series the rule reaches.
+  callers who can see that series, however many other series the rule reaches. The
+  reference and its source are read together, since two reads let a recapture between
+  them attach one reference's source to another's samples. Asking for a reference also
+  requires that the rule applies to the target, by the inheritance rules are evaluated
+  with: rules replace rather than accumulate, so the rules of the nearest node that
+  defines any are the whole set, and a rule on an ancestor that a nearer node overrides is
+  answered as a rule that does not exist.
 
 **What stays global admin only:** agents and enrolment tokens, the root defaults,
 `/metrics` (it counts and names things across the whole installation), and `config

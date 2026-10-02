@@ -105,10 +105,11 @@ A `shape` rule compares against one of two things:
   triggering.
 
   The button captures the last hour. Through the API a window may be chosen, but not
-  wider than about 55 hours (200,000 seconds): every sample in it is read into memory,
-  sorted and stored as one blob, so it is bounded the way a measurements request is, at
-  the densest a series can be. A reference can only be captured from the node the rule is
-  defined on or one beneath it.
+  wider than about 55 hours (200,000 seconds), and not holding more than two million
+  samples: every sample in it is read into memory, sorted and stored as one blob. The
+  first bound is on intervals at the densest a series can be; the second counts the
+  samples themselves, since one interval can hold tens of thousands. A reference can only
+  be captured from the node the rule is defined on or one beneath it.
 
 ### Seeing what changed
 
