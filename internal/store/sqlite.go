@@ -97,13 +97,18 @@ func Open(path string) (*SQLite, error) {
 		return nil, err
 	}
 	// Bound the pool. database/sql opens connections without limit by default,
-	// so a query that takes longer than the interval that issues it leaves the
-	// next one to open its own, and a slow spell becomes an unbounded number of
-	// SQLite connections rather than a queue. The prober runs on a fixed period
-	// and cannot slow down to match, which is exactly the shape upstream warns
-	// about. The number matters far less than having one: writes serialise on
-	// SQLite's own lock whatever it is, and readers wait out the busy_timeout
-	// above.
+	// and every concurrent caller that finds none free gets a new one: a browser
+	// opening several graph requests at once, agents polling for assignments,
+	// alert evaluation and baselines all read through this handle. A slow spell
+	// then grows the pool instead of queueing on it, and each connection is a
+	// SQLite connection with its own page cache.
+	//
+	// Not the prober: its writer is a single goroutine flushing synchronously,
+	// so a slow write blocks that loop and the ticker drops the tick rather than
+	// starting a second writer.
+	//
+	// The number matters far less than having one: writes serialise on SQLite's
+	// own lock whatever it is, and readers wait out the busy_timeout above.
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(8)
 	s := &SQLite{db: db}
