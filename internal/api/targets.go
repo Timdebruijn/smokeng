@@ -154,6 +154,12 @@ func (s *server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
+	// After authorisation, so a refusal says nothing about what the caller may
+	// not see. A new node has no before, so every field is held to the limits.
+	if err := tree.CheckLimits(nil, &n); err != nil {
+		badRequest(w, err)
+		return
+	}
 	if n.ParentID == nil {
 		badRequest(w, errors.New("parent_id is required; there is exactly one root and it already exists"))
 		return
@@ -164,6 +170,10 @@ func (s *server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 	planned := append(append([]tree.Target(nil), targets...), n)
 	planned[len(planned)-1].ID = synthID(targets)
 	if _, err := tree.New(planned); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if err := tree.CheckTreeLimits(targets, planned); err != nil {
 		badRequest(w, err)
 		return
 	}
@@ -248,9 +258,19 @@ func (s *server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Only what this request changes is held to the limits: a node that predates
+	// one is not refused an unrelated edit for it.
+	if err := tree.CheckLimits(&targets[idx], &updated); err != nil {
+		badRequest(w, err)
+		return
+	}
 	planned := append([]tree.Target(nil), targets...)
 	planned[idx] = updated
 	if _, err := tree.New(planned); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if err := tree.CheckTreeLimits(targets, planned); err != nil {
 		badRequest(w, err)
 		return
 	}
