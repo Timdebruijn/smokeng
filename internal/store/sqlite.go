@@ -78,6 +78,10 @@ INSERT INTO agents (id, name) VALUES (0, 'local');
 // SQLite implements Store on a single SQLite database file.
 type SQLite struct {
 	db *sql.DB
+	// treeWrites admits one ChangeTargets at a time before it takes a connection.
+	// Its callback reads through the pool while its transaction holds one, so
+	// with as many waiting writers as connections none could finish.
+	treeWrites chan struct{}
 }
 
 var _ Store = (*SQLite)(nil)
@@ -120,7 +124,7 @@ func Open(path string) (*SQLite, error) {
 	// own lock whatever it is, and readers wait out the busy_timeout above.
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(8)
-	s := &SQLite{db: db}
+	s := &SQLite{db: db, treeWrites: make(chan struct{}, 1)}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err

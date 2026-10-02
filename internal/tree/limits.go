@@ -269,16 +269,19 @@ func CheckTreeLimits(before, after []Target) error {
 	for i := range before {
 		prior[before[i].ID] = &before[i]
 	}
+	// A node is deepened when it is new or sits lower than it did, which includes
+	// everything beneath a node that moved. Only a node that was deepened is held
+	// to the limit, so a tree already past it can still be edited and flattened.
 	for i := range after {
 		n := &after[i]
-		old, existed := prior[n.ID]
-		moved := !existed || (old.ParentID == nil) != (n.ParentID == nil) ||
-			(old.ParentID != nil && n.ParentID != nil && *old.ParentID != *n.ParentID)
-		if moved {
-			if d := depth(afterT, n); d > MaxDepth {
-				return fmt.Errorf("tree: %q would sit %d levels deep, more than the %d allowed", n.Name, d, MaxDepth)
-			}
+		d := depth(afterT, n)
+		if d <= MaxDepth {
+			continue
 		}
+		if old, existed := prior[n.ID]; existed && beforeT != nil && depth(beforeT, old) >= d {
+			continue
+		}
+		return fmt.Errorf("tree: %q would sit %d levels deep, more than the %d allowed", n.Name, d, MaxDepth)
 	}
 
 	var rateBefore, rateAfter float64
@@ -295,7 +298,9 @@ func CheckTreeLimits(before, after []Target) error {
 			rateAfter += probeRate(res)
 		}
 		if beforeT != nil {
-			if old, existed := prior[n.ID]; existed {
+			// A target that was not running (a group, or disabled) is started by
+			// this write, whatever its values did, so it is checked as new.
+			if old, existed := prior[n.ID]; existed && old.Host != nil && (old.Enabled || !n.Enabled) {
 				if rb, err := beforeT.Resolve(old.ID); err == nil && notWorse(rb, res) {
 					continue
 				}

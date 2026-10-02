@@ -12,8 +12,9 @@ import (
 // width, so a month-long availability report (a legitimate request, and a big
 // one) is not refused by a worst-case rule written for something else.
 const (
-	// MaxSamplesPerRead bounds the samples one QueryRange decodes: 80 MB of
-	// uint32 is far past any plot, and the day of 100-ping, one-second data that
+	// MaxSamplesPerRead bounds the primary samples one QueryRange decodes: 80 MB of
+	// uint32 is far past any plot (the extra per-packet series and the rows are
+	// not counted here; the handlers bound the rows by window), and the day of 100-ping, one-second data that
 	// would reach a tenth of it is not something a browser can draw either.
 	MaxSamplesPerRead = 20_000_000
 	// MaxAvailabilityRows bounds the intervals one availability read returns:

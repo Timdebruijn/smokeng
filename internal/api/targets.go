@@ -311,14 +311,6 @@ func (s *server) handleDeleteTarget(w http.ResponseWriter, r *http.Request) {
 		if !sc.CanWrite(id) {
 			return store.TargetChange{}, refuse(func() { sc.deny(w, id) })
 		}
-		// A recursive delete is a write to every node it removes, and a scope can
-		// end part-way down a subtree.
-		for i := range targets {
-			if !sc.CanWrite(targets[i].ID) && isDescendantOf(targets, targets[i].ID, id) {
-				victim := targets[i].ID
-				return store.TargetChange{}, refuse(func() { sc.deny(w, victim) })
-			}
-		}
 		byID := map[int64]*tree.Target{}
 		children := map[int64][]int64{}
 		for i := range targets {
@@ -346,6 +338,16 @@ func (s *server) handleDeleteTarget(w http.ResponseWriter, r *http.Request) {
 			order = append(order, cur)
 		}
 		walk(id)
+		// A recursive delete is a write to every node it removes. Roles only grow
+		// down the tree, so a writable node has writable descendants today and
+		// this cannot fire; it keeps the delete from outrunning the scope if that
+		// ever changes. It stays before the count below, which would say how many
+		// there are.
+		for _, victim := range order {
+			if !sc.CanWrite(victim) {
+				return store.TargetChange{}, refuse(func() { sc.deny(w, victim) })
+			}
+		}
 		if len(order) > 1 && r.URL.Query().Get("recursive") != "true" {
 			count := len(order) - 1
 			return store.TargetChange{}, refuse(func() {
@@ -662,22 +664,4 @@ func synthID(targets []tree.Target) int64 {
 		maxID = max(maxID, t.ID)
 	}
 	return maxID + 1
-}
-
-// isDescendantOf reports whether id sits under root.
-func isDescendantOf(targets []tree.Target, id, root int64) bool {
-	parent := map[int64]*int64{}
-	for i := range targets {
-		parent[targets[i].ID] = targets[i].ParentID
-	}
-	for cur := id; ; {
-		p, ok := parent[cur]
-		if !ok || p == nil {
-			return false
-		}
-		if *p == root {
-			return true
-		}
-		cur = *p
-	}
 }

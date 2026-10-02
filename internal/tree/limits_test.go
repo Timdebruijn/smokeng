@@ -173,16 +173,6 @@ func TestCheckTreeLimitsDepth(t *testing.T) {
 	if err := CheckTreeLimits(at, over); err == nil {
 		t.Errorf("a node at depth %d was accepted", MaxDepth+1)
 	}
-	// Moving a subtree deeper is a new depth too.
-	moved := append([]Target(nil), at...)
-	for i := range moved {
-		if moved[i].ID == 2 { // the first group, with the whole chain beneath it
-			moved[i].ParentID = ptr(int64(900))
-		}
-	}
-	if _, err := New(moved); err == nil {
-		t.Skip("moving a group under its own descendant is a cycle; New refuses it before depth matters")
-	}
 	// A tree already past the limit can still be edited where it is not deepened.
 	deep := chain(MaxDepth + 6)
 	edited := append([]Target(nil), deep...)
@@ -405,5 +395,77 @@ func TestCheckTreeLimitsOnlyRefusesALongerWait(t *testing.T) {
 	}
 	if err := CheckTreeLimits(legacy, with(2000)); err != nil {
 		t.Errorf("bringing a timeout down to its interval was refused: %v", err)
+	}
+}
+
+// branch returns a chain of n nodes under parent, ids from first.
+func branch(first int64, n int, parent int64) []Target {
+	var ts []Target
+	for i := 0; i < n; i++ {
+		ts = append(ts, Target{ID: first + int64(i), ParentID: ptr(parent), Name: fmt.Sprintf("b%d", first+int64(i)), Enabled: true})
+		parent = first + int64(i)
+	}
+	return ts
+}
+
+func reparent(ts []Target, id, parent int64) []Target {
+	out := append([]Target(nil), ts...)
+	for i := range out {
+		if out[i].ID == id {
+			out[i].ParentID = ptr(parent)
+		}
+	}
+	return out
+}
+
+// Moving a subtree deepens every node beneath it, not just the node that moved.
+func TestMovingASubtreeIsHeldToTheDepthOfItsDeepestNode(t *testing.T) {
+	ts := append(append(testTargets()[:1], branch(100, 10, 1)...), branch(200, 12, 1)...) // 109 is 10 deep; 211 is 12 deep
+	if err := CheckTreeLimits(ts, reparent(ts, 200, 109)); err == nil {
+		t.Errorf("a 12-level subtree moved under a 10-level node (22 deep) was accepted")
+	}
+	// Control: the same subtree moved somewhere it still fits is fine.
+	if err := CheckTreeLimits(ts, reparent(ts, 200, 100)); err != nil {
+		t.Errorf("a move that stays within %d levels was refused: %v", MaxDepth, err)
+	}
+	// A subtree already too deep may be moved shallower.
+	deep := append(append(testTargets()[:1], branch(100, 3, 1)...), branch(200, MaxDepth+4, 100)...)
+	if err := CheckTreeLimits(deep, reparent(deep, 200, 1)); err != nil {
+		t.Errorf("moving an over-deep subtree closer to the root was refused: %v", err)
+	}
+}
+
+// A group may hold settings that no probe uses. Giving it a host, or enabling
+// it, is the write that starts the load, and is held to the load limits.
+func TestStartingATargetIsHeldToTheLoadLimits(t *testing.T) {
+	hot := Settings{IntervalS: ptr(1), PingsPerInterval: ptr(1000), TimeoutMS: ptr(1000), ProbeMode: ptr("spread")}
+	group := func(enabled bool) []Target {
+		return append(testTargets()[:1], Target{ID: 2, ParentID: ptr(int64(1)), Name: "g", Enabled: enabled, Settings: hot})
+	}
+	before := group(true)
+	if err := CheckTreeLimits(nil, before); err != nil {
+		t.Fatalf("a group holding settings was refused: %v", err)
+	}
+	withHost := group(true)
+	withHost[1].Host, withHost[1].AddressFamily = ptr("192.0.2.1"), ptr("v4")
+	if err := CheckTreeLimits(before, withHost); err == nil {
+		t.Errorf("a group given a host started probing 1000 pings a second")
+	}
+	// Enabling a stored target that is over the limit starts it too.
+	off := group(false)
+	off[1].Host, off[1].AddressFamily = ptr("192.0.2.1"), ptr("v4")
+	on := group(true)
+	on[1].Host, on[1].AddressFamily = ptr("192.0.2.1"), ptr("v4")
+	if err := CheckTreeLimits(off, on); err == nil {
+		t.Errorf("enabling a target over the load limit was accepted")
+	}
+	// Control: disabling it, or editing it while it stays enabled and unchanged, is not refused.
+	if err := CheckTreeLimits(on, off); err != nil {
+		t.Errorf("disabling a target over the limit was refused: %v", err)
+	}
+	edited := group(true)
+	edited[1].Host, edited[1].AddressFamily, edited[1].Title = ptr("192.0.2.1"), ptr("v4"), ptr("retitled")
+	if err := CheckTreeLimits(on, edited); err != nil {
+		t.Errorf("a retitle of a running over-limit target was refused: %v", err)
 	}
 }

@@ -47,6 +47,12 @@ var ErrAbort = errors.New("store: change abandoned")
 // error is returned unchanged. The same goes for a failure anywhere in the
 // writes: nothing is applied.
 func (s *SQLite) ChangeTargets(ctx context.Context, fn func(current []tree.Target) (TargetChange, error)) error {
+	select {
+	case s.treeWrites <- struct{}{}:
+		defer func() { <-s.treeWrites }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	tx, err := s.db.BeginTx(ctx, nil) // the DSN makes this IMMEDIATE
 	if err != nil {
 		return err

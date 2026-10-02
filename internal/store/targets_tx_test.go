@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -158,5 +159,39 @@ func TestDeletingATargetTakesItsRulesAndTheirStateAlong(t *testing.T) {
 	got, err := s.QueryRange(ctx, target, 0, 0, 1<<40)
 	if err != nil || len(got) != 1 {
 		t.Errorf("the target's measurements went with it: %d rows, %v", len(got), err)
+	}
+}
+
+// The callback reads through the pool while the transaction holds a connection.
+// With more writers than connections, every connection used to be held by a
+// writer waiting for the write lock, and the one that held it could not get a
+// connection to read grants or agents with: they waited out the busy timeout
+// and failed with SQLITE_BUSY.
+func TestChangeTargetsDoesNotStarveItsOwnCallback(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	const writers = 12 // more than the pool holds
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	start := time.Now()
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- s.ChangeTargets(ctx, func([]tree.Target) (TargetChange, error) {
+				_, err := s.ListTargets(ctx) // as scopeFor and checkAgentNames do
+				return TargetChange{}, err
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("a writer failed: %v", err)
+		}
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Errorf("%d writers took %v; they waited on each other's connections", writers, d)
 	}
 }

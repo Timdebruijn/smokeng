@@ -68,8 +68,8 @@ local or inherited and which node it came from.
 
 ## Limits
 
-Every write — TOML import, the UI, the API — is held to the same limits, so a typo or a
-compromised editor cannot take the prober, or the thing it probes, down with it.
+A write from the UI or the API, and `config import`, is held to the same limits, so a typo
+or a compromised editor cannot take the prober, or the thing it probes, down with it.
 
 | What | Limit |
 | --- | --- |
@@ -77,10 +77,11 @@ compromised editor cannot take the prober, or the thing it probes, down with it.
 | `name` / `title` / `notes` | 128 / 500 / 16 384 characters; a name has no surrounding whitespace |
 | `host`, DNS query | 253 characters; HTTP path 2048; agent list 1024 |
 | `interval_s` | at most 86 400 |
-| `pings` | at most 1000; `packet_size` at most 9000 |
+| `pings_per_interval` | at most 1000; `packet_size` 12 – 9000; `burst_gap_ms` at most 600 000 |
 | One target's load | 100 pings/s and 500 000 bytes/s on average |
 | All targets together | 5000 pings/s |
-| `trace_s` | 30 – 604 800 (a week) |
+| `timeout_ms` | no longer than the interval |
+| `trace_interval_s` | 0 (off) or 30 – 604 800 (a week) |
 | `retention_s` | 0 (keep everything) or 3600 – 315 360 000 (ten years) |
 
 The limits are applied to what a write **changes**, and a load limit only to a change that
@@ -451,6 +452,7 @@ for_intervals = 2
 
 Everything above is also editable in the web UI under **Targets**, by a user with the
 admin role. Changes made there are picked up by the prober without a restart, and
-`config export` will include them. A tree edit is one transaction from the read to the
-commit, so two edits that would together make a cycle cannot both succeed. Deleting a node
+`config export` will include them. An edit from the UI or the API is one transaction from the read to the
+commit, so two edits that would together make a cycle cannot both succeed. `config import`
+is not: it reads the tree, then writes node by node, so run it when nobody else is editing. Deleting a node
 deletes its alert rules and their state with it.
