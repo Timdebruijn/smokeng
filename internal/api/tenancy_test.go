@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -378,15 +380,17 @@ type firingOverride struct {
 
 func (o firingOverride) Firing() []alert.Alert { return o.fire }
 
-// The requirement of DESIGN.md §7.4 stated once for every read route rather
-// than once per handler: nothing above the grant root, beside it, or measuring
-// something elsewhere may appear in any response a scoped caller can get. That
-// includes the name of an ancestor, which is not a node they have a grant on
-// and so is exactly what a per-handler visibility check does not think to
-// check.
+// The requirement of DESIGN.md §7.4 stated once for every scoped read route
+// rather than once per handler: nothing above the grant root, beside it, or
+// measuring something elsewhere may appear in any response a scoped caller can
+// get. That includes the name of an ancestor, which is not a node they have a
+// grant on and so is exactly what a per-handler visibility check does not think
+// to check.
 //
-// The route-coverage test checks that every route is classified. This checks
-// that the classification is true.
+// The routes come from the router's own table, not from a list kept here: every
+// GET route classified as scoped-read must have a request below, so adding one
+// fails this test until it is covered. The route-coverage test checks that
+// routes are classified; this checks that the classification is true.
 func TestNoReadRouteNamesAnythingOutsideTheScope(t *testing.T) {
 	f := tenants(t)
 	ctx := context.Background()
@@ -407,20 +411,41 @@ func TestNoReadRouteNamesAnythingOutsideTheScope(t *testing.T) {
 		}
 	}
 
-	forbidden := []string{"Klanten", "GemeenteB", "ams-b", "198.51.100.2"}
-	routes := []string{
-		"/api/v1/targets",
-		"/api/v1/availability?target_id=" + num(f.hostA),
-		"/api/v1/availability?target_id=" + num(f.hostA) + "&agent_id=" + num(f.agentB),
-		"/api/v1/alert-rules",
-		"/api/v1/alerts",
-		"/api/v1/alert-baselines",
-		"/api/v1/shape-reference?rule_id=" + num(f.ruleA) + "&target_id=" + num(f.hostA) + "&agent_id=0",
-		"/api/v1/silences",
-		"/api/v1/alert-events",
-		"/api/v1/agents",
-		"/api/v1/paths?target_id=" + num(f.hostA),
+	// One or more requests per route. Where a route takes an id that could name
+	// the other customer's agent, that is tried too.
+	requests := map[string][]string{
+		"GET /api/v1/targets": {"/api/v1/targets"},
+		"GET /api/v1/availability": {
+			"/api/v1/availability?target_id=" + num(f.hostA),
+			"/api/v1/availability?target_id=" + num(f.hostA) + "&agent_id=" + num(f.agentB),
+		},
+		"GET /api/v1/measurements": {
+			"/api/v1/measurements?target_id=" + num(f.hostA) + "&agent_id=0",
+			"/api/v1/measurements?target_id=" + num(f.hostA) + "&agent_id=" + num(f.agentB),
+		},
+		"GET /api/v1/alert-rules":     {"/api/v1/alert-rules"},
+		"GET /api/v1/alerts":          {"/api/v1/alerts"},
+		"GET /api/v1/alert-baselines": {"/api/v1/alert-baselines"},
+		"GET /api/v1/shape-reference": {"/api/v1/shape-reference?rule_id=" + num(f.ruleA) + "&target_id=" + num(f.hostA) + "&agent_id=0"},
+		"GET /api/v1/silences":        {"/api/v1/silences"},
+		"GET /api/v1/alert-events":    {"/api/v1/alert-events"},
+		"GET /api/v1/agents":          {"/api/v1/agents"},
+		"GET /api/v1/paths":           {"/api/v1/paths?target_id=" + num(f.hostA)},
 	}
+
+	built := New(f.st, Options{Alerts: f.mgr}, fstest.MapFS{}).(*handler).srv.routes.classified()
+	for pattern, class := range built {
+		if class == classScopedRead && strings.HasPrefix(pattern, "GET ") && requests[pattern] == nil {
+			t.Errorf("%s is a scoped read route with no request in this test: add it, so that what it says is checked", pattern)
+		}
+	}
+	for pattern := range requests {
+		if built[pattern] != classScopedRead {
+			t.Errorf("%s is listed here but is no longer a scoped read route", pattern)
+		}
+	}
+
+	forbidden := []string{"Klanten", "GemeenteB", "ams-b", "198.51.100.2"}
 	for _, role := range []string{"viewer", "editor"} {
 		g := store.Grant{Group: "team-a-" + role, TargetID: f.groupA, Role: role}
 		if err := f.st.UpsertGrant(ctx, &g); err != nil {
@@ -429,15 +454,21 @@ func TestNoReadRouteNamesAnythingOutsideTheScope(t *testing.T) {
 		sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{g.Group}, Expires: 1 << 40}
 		h := New(f.st, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone,
 			Alerts: firingOverride{Manager: f.mgr, fire: fire}}, fstest.MapFS{})
-		for _, route := range routes {
-			code, body := call(t, h, "GET", route, nil)
-			if code != http.StatusOK {
-				t.Errorf("%s %s: %d %s", role, route, code, body)
-				continue
-			}
-			for _, bad := range forbidden {
-				if strings.Contains(body, bad) {
-					t.Errorf("%s GET %s names %q, which is outside the scope:\n%s", role, route, bad, body)
+		for pattern, routes := range requests {
+			for _, route := range routes {
+				code, body := call(t, h, "GET", route, nil)
+				if code != http.StatusOK {
+					t.Errorf("%s %s: %d %.200s", role, route, code, body)
+					continue
+				}
+				// A handler that answers 200 with nothing passes any absence check.
+				if len(body) < 8 {
+					t.Errorf("%s %s answered with %q, so nothing was checked", role, pattern, body)
+				}
+				for _, bad := range forbidden {
+					if strings.Contains(body, bad) {
+						t.Errorf("%s GET %s names %q, which is outside the scope:\n%.400s", role, route, bad, body)
+					}
 				}
 			}
 		}
@@ -488,10 +519,41 @@ func TestEditorMayOnlyNameAgentsInTheirScope(t *testing.T) {
 	}
 }
 
-// The check applies to what a request changes. A node can carry an agent its
-// editor is not offered, because an admin gave it one that no visible target
-// uses; changing the title of that node must not be refused for it.
-func TestEditorCanEditANodeWhoseAgentIsNotTheirs(t *testing.T) {
+// An agent an admin gave to the customer's grant root is one their editor may
+// name for the first target they create there. The agents offered used to be
+// those of visible hosts only, so an empty subtree could name nothing until an
+// admin had put the agent on a host target.
+func TestEditorMayNameAnAgentGivenToTheirGrantRoot(t *testing.T) {
+	f := tenants(t)
+	ctx := context.Background()
+	// A customer with nothing in their subtree yet, and an agent the admin gave
+	// to their grant root. No host exists for the agent to be effective on, which
+	// is the case the old computation could not see.
+	empty := tree.Target{ParentID: &f.klanten, Name: "GemeenteC", Enabled: true,
+		Settings: tree.Settings{Agents: ptr("ams-b")}}
+	if err := f.st.UpsertTarget(ctx, &empty); err != nil {
+		t.Fatal(err)
+	}
+	h := f.server(t, "team-c", empty.ID, "editor")
+	create := func(agents string) int {
+		code, _ := call(t, h, "POST", "/api/v1/targets", map[string]any{
+			"parent_id": empty.ID, "name": "first-" + agents, "host": "198.51.100.9", "address_family": "v4",
+			"settings": map[string]any{"agents": agents},
+		})
+		return code
+	}
+	if code := create("ams-b"); code != http.StatusCreated {
+		t.Errorf("naming the agent given to their grant root = %d, want 201", code)
+	}
+	if code := create("some-other-agent"); code != http.StatusBadRequest {
+		t.Errorf("naming an agent nobody gave them = %d, want 400", code)
+	}
+}
+
+// The check applies to what a request changes. An admin retitling a node whose
+// agent has since been removed must not be refused for the agent: the list is
+// not what they are changing.
+func TestARequestThatDoesNotSetAgentsIsNotRefusedForThem(t *testing.T) {
 	f := tenants(t)
 	ctx := context.Background()
 	all, err := f.st.ListTargets(ctx)
@@ -499,25 +561,21 @@ func TestEditorCanEditANodeWhoseAgentIsNotTheirs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range all {
-		switch all[i].ID {
-		case f.groupA:
-			all[i].Settings.Agents = ptr("ams-b") // set by an admin, used by no visible target
-		case f.hostA:
-			all[i].Settings.Agents = ptr("local")
-		default:
-			continue
-		}
-		if err := f.st.UpsertTarget(ctx, &all[i]); err != nil {
-			t.Fatal(err)
+		if all[i].ID == f.hostA {
+			all[i].Settings.Agents = ptr("removed-long-ago") // set when that agent still existed
+			if err := f.st.UpsertTarget(ctx, &all[i]); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
-	h := f.server(t, "team-a", f.groupA, "editor")
-	if code, body := call(t, h, "PATCH", "/api/v1/targets/"+num(f.groupA), map[string]any{"title": "Gemeente A"}); code != http.StatusOK {
-		t.Errorf("changing a title was refused because of an agent it did not touch: %d %s", code, body)
+	admin := New(f.st, Options{}, fstest.MapFS{})
+	if code, body := call(t, admin, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"title": "retitled"}); code != http.StatusOK {
+		t.Errorf("retitling a node whose agent was removed = %d %s", code, body)
 	}
-	// Touching the agents field is a different matter.
-	if code, _ := call(t, h, "PATCH", "/api/v1/targets/"+num(f.groupA), map[string]any{"settings": map[string]any{"agents": "ams-b"}}); code != http.StatusBadRequest {
-		t.Errorf("naming an agent that is not theirs, on a node that happens to carry it, = %d, want 400", code)
+	// Setting the list is a different matter.
+	if code, _ := call(t, admin, "PATCH", "/api/v1/targets/"+num(f.hostA),
+		map[string]any{"settings": map[string]any{"agents": "removed-long-ago"}}); code != http.StatusBadRequest {
+		t.Errorf("setting the agents list to an agent that is gone = %d, want 400", code)
 	}
 }
 
@@ -688,5 +746,71 @@ func TestAGlobalSilenceIsRefusedNotHidden(t *testing.T) {
 	}
 	if code, body := call(t, h, "DELETE", "/api/v1/silences/"+num(global.ID), nil); code != http.StatusForbidden {
 		t.Errorf("deleting a global silence = %d %s, want 403", code, body)
+	}
+}
+
+// The guard on a measurements request compared (to-from)/n against the limit in
+// int64. For a window from a very negative from to a large to, the difference
+// wraps to -1, which read as an empty window and let the widest one there is
+// through to a query over the whole history. Any caller who can see one target
+// could send it.
+func TestMeasurementsRangeGuardSurvivesOverflow(t *testing.T) {
+	f := tenants(t)
+	h := f.server(t, "team-a", f.groupA, "viewer")
+	for name, w := range map[string][2]string{
+		"int64 extremes":      {"-9223372036854775808", "9223372036854775807"},
+		"negative to maximum": {"-1", "9223372036854775807"},
+		"from the epoch":      {"1", strconv.FormatInt(f.now, 10)},
+	} {
+		code, body := call(t, h, "GET", "/api/v1/measurements?target_id="+num(f.hostA)+"&agent_id=0&from="+w[0]+"&to="+w[1], nil)
+		if code != http.StatusBadRequest {
+			t.Errorf("%s: %d %.120s, want 400", name, code, body)
+		}
+	}
+	// The control: the default window still answers.
+	if code, _ := call(t, h, "GET", "/api/v1/measurements?target_id="+num(f.hostA)+"&agent_id=0", nil); code != http.StatusOK {
+		t.Errorf("the default window = %d", code)
+	}
+}
+
+// failingBaselines is the real manager with a baseline lookup that errors.
+type failingBaselines struct{ *alert.Manager }
+
+func (failingBaselines) Baselines(context.Context) ([]alert.Baselined, error) {
+	return nil, errors.New("baselines unavailable")
+}
+
+// A golden reference is shown only where its source series is visible. If the
+// source cannot be established, that is not "nothing to hide": the reference is
+// withheld. Treating a failed lookup as clear returned another customer's
+// samples exactly when the check could not run.
+func TestShapeReferenceDoesNotFailOpenWhenTheSourceCannotBeLookedUp(t *testing.T) {
+	f := tenants(t)
+	ctx := context.Background()
+	shared := alert.Rule{TargetID: f.klanten, Name: "shared", Metric: alert.MetricShape, Op: alert.OpGreater,
+		Threshold: 3, For: 3, ClearFor: 3, Enabled: true, Mode: alert.ModeAuto, Baseline: alert.BaselineGolden}
+	if err := f.st.UpsertAlertRule(ctx, &shared); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mgr.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mgr.CaptureBaseline(ctx, alert.Baselined{RuleID: shared.ID, TargetID: f.hostB, AgentID: f.agentB,
+		FromTS: f.now - 3600, ToTS: f.now, Intervals: 1, Samples: []uint32{424242}, CapturedAt: f.now}); err != nil {
+		t.Fatal(err)
+	}
+	g := store.Grant{Group: "team-a", TargetID: f.groupA, Role: "viewer"}
+	if err := f.st.UpsertGrant(ctx, &g); err != nil {
+		t.Fatal(err)
+	}
+	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{"team-a"}, Expires: 1 << 40}
+	h := New(f.st, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone,
+		Alerts: failingBaselines{f.mgr}}, fstest.MapFS{})
+	code, body := call(t, h, "GET", "/api/v1/shape-reference?rule_id="+num(shared.ID)+"&target_id="+num(f.hostA)+"&agent_id=0", nil)
+	if strings.Contains(body, "424242") {
+		t.Fatalf("another customer's reference was served when its source could not be checked (%d): %s", code, body)
+	}
+	if code != http.StatusInternalServerError {
+		t.Errorf("a failed lookup answered %d, want 500", code)
 	}
 }

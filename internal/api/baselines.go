@@ -296,11 +296,16 @@ func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
 	// from a part they cannot see as not available, which is the same thing
 	// they would see for a rule nothing has been captured for.
 	if kind == "golden" && avail {
-		if bs, err := s.alerts.Baselines(r.Context()); err == nil {
-			for _, b := range bs {
-				if b.RuleID == ruleID && !sc.Visible(b.TargetID) {
-					reference, avail = nil, false
-				}
+		// If what the reference came from cannot be established, it is not shown.
+		// Treating a failed lookup as "nothing to hide" fails open.
+		bs, err := s.alerts.Baselines(r.Context())
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		for _, b := range bs {
+			if b.RuleID == ruleID && !sc.Visible(b.TargetID) {
+				reference, avail = nil, false
 			}
 		}
 	}

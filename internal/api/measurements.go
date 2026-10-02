@@ -83,7 +83,7 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	// written. The range comes from the caller, so without a bound one request
 	// for a year of a 10-second series is hundreds of megabytes and an OOM
 	// kill takes the prober with it. Refuse the range rather than die trying.
-	if rows := (to - from) / int64(minIntervalS); rows > maxRowsPerRequest {
+	if rows := rangeRows(from, to); rows > maxRowsPerRequest {
 		badRequestMsg(w, fmt.Sprintf(
 			"that range could hold about %d intervals, more than the %d one request returns; ask for a shorter window",
 			rows, maxRowsPerRequest))
