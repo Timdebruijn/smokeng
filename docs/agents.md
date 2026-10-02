@@ -123,11 +123,28 @@ timestamp, nonce, and the SHA-256 of the body. Signing the body hash means a bat
 be altered in flight; including the domain string means a signature cannot be replayed
 against a future protocol version.
 
-The master verifies in order: agent exists, agent is enabled, rate limit, timestamp within
-±5 minutes, nonce not seen before, signature valid. The nonce cache and the skew window
-stop replay in the short term; the real defence is that ingest is an **idempotent upsert**
-keyed by (target, agent, interval start), so replaying a batch a week later overwrites
-identical rows with identical values and changes nothing.
+The nonce must be exactly 16 bytes of standard base64, which is what the agent has always
+sent; the master keeps an accepted nonce for ten minutes, and its size is what that costs.
+
+The master verifies in order: agent exists, agent is enabled, timestamp within ±5 minutes,
+signature valid, nonce not seen before, rate limit. The two checks that keep state come
+after the signature, so a stranger who only knows an agent's id cannot spend its budget,
+and in that order: a replay is refused before it touches the rate budget, and a nonce is
+stored only for a request that was admitted, so a rate-limited agent cannot grow the
+cache.
+
+The nonce cache and the skew window stop replay in the short term; the real defence is
+that ingest is **first write wins**, keyed by (target, agent, interval start). Replaying a
+batch a week later finds every row already there and changes nothing. The same key with
+different values changes nothing either: an agent cannot rewrite an interval it has
+already reported. Rows timestamped later than the clock skew allows are dropped, and so
+are rows for targets not assigned to the agent; the rest of the batch is still accepted,
+because refusing all of it would leave the agent retrying the same rejected batch forever.
+
+A submission is also refused outright when it is not the shape an agent sends: more than
+10,000 rows, more than a schema message followed by record batches, any compression, any
+declared length that does not fit in the payload, or more replies than probes in a row.
+smokeng's own encoder never produces any of these.
 
 ## Buffering and back-pressure
 

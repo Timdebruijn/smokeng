@@ -277,9 +277,9 @@ path, agent, timestamp, nonce and a hash of the body — so a captured signature
 replayed against another endpoint or with another payload. The master holds only public
 keys, so compromising its database does not let an attacker impersonate an agent. A
 submission is refused unless every target in it is assigned to that agent, and writes
-upsert on `(target, agent, interval)`, which makes a replayed batch a byte-identical
-no-op. That idempotency, not the nonce cache, is the real replay defense: the cache is
-in-memory and empty after a restart.
+are first-write-wins on `(target, agent, interval)`, so a replayed batch is a no-op and an
+agent cannot rewrite an interval it has already reported. That, not the nonce cache, is
+the real replay defense: the cache is in-memory and empty after a restart.
 
 Agents pull their assignments from `GET /api/v1/agent/targets` — resolved settings and
 nothing else. Pure data, pull-only, never code. (SmokePing's equivalent has slaves

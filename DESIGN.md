@@ -520,8 +520,10 @@ Concrete SQLite setup:
 
 - WAL mode; `synchronous=NORMAL`; single dedicated writer goroutine; inserts batched in
   one transaction per flush tick (~1 s) — readers are never blocked (WAL).
-- Ingest is idempotent: `INSERT OR REPLACE` keyed on the PK, so replayed agent batches
-  (§9) and prober restarts are no-ops.
+- The local prober's writes are idempotent: `INSERT OR REPLACE` keyed on the PK, so a
+  prober restart is a no-op. Remote agent batches (§9) are the opposite on purpose:
+  `INSERT … ON CONFLICT DO NOTHING`, first write wins, so a replay is a no-op and an agent
+  cannot rewrite history it has already reported.
 - Driver: `modernc.org/sqlite` (pure Go) so the single static binary cross-compiles
   without CGO. Escape hatch: if batch-insert or range-scan throughput measures >2× worse
   than mattn/go-sqlite3 in a real benchmark, swap drivers behind `database/sql` — no
@@ -770,14 +772,24 @@ different future endpoint. Headers: `X-Agent-Id`, `X-Timestamp` (unix seconds),
 `X-Nonce` (16 random bytes, base64), `X-Signature` (base64).
 
 **Validation order** (reject with one generic error, log the real reason + agent id):
-agent exists and enabled → `|now − ts| ≤ 300 s` → nonce unseen (in-memory, TTL 600 s)
-→ signature over the canonical string rebuilt from received headers + actual body hash
-→ every measurement in the batch belongs to a target assigned to this agent.
+agent exists and enabled → `|now − ts| ≤ 300 s` → signature over the canonical string
+rebuilt from received headers + actual body hash → nonce unseen (in-memory, TTL 600 s)
+→ rate limit. The two stateful checks run only after the signature, and the nonce is
+checked before the rate budget is spent and stored only if the request is admitted: a
+replay must not drain the bucket, and a rate-limited request must not fill the cache.
+Then the body: the IPC framing is screened against the payload (every declared length
+must fit in the bytes that are there; nothing compressed; a schema then record batches;
+at most 10,000 rows), then decoded, and then every measurement in the batch must belong
+to a target assigned to this agent and not be timestamped later than the skew allows.
+A row that fails those last two is dropped and the rest accepted — one stale row must not
+wedge the agent's outbox.
 
-**Idempotency is the real replay defense.** The nonce cache is in-memory and empties on
-master restart; the timestamp window alone would then admit replays. Because ingest
-upserts on `(target_id, agent_id, ts)` (§6), a replayed batch is a byte-identical no-op.
-The nonce cache stays (cheap, blocks log spam), but correctness does not depend on it.
+**First write wins is the real replay defense.** The nonce cache is in-memory and empties
+on master restart; the timestamp window alone would then admit replays. Because ingest
+inserts on `(target_id, agent_id, ts)` and keeps what is already there (§6), a replayed
+batch is a no-op. The nonce cache stays (cheap, blocks log spam), but correctness does not
+depend on it. An earlier design replaced on conflict, which made a replay harmless only
+when the bytes were identical: the same key with different values rewrote stored history.
 
 Body: the same Arrow IPC schema as §7.2 plus a `target_id` column — one serializer,
 one decoder, no second wire format. TLS required; `--insecure-allow-http` for local dev
