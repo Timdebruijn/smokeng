@@ -52,8 +52,14 @@ func TestWritingATargetIsHeldToTheLimits(t *testing.T) {
 	} {
 		for who, h := range map[string]http.Handler{"editor": editor, "admin": admin} {
 			code, body := create(h, "t-"+strings.ReplaceAll(name, " ", "-"), c.extra)
-			if code != http.StatusBadRequest || !strings.Contains(body, c.want) {
-				t.Errorf("%s, %s: %d %.200s, want 400 naming %q", who, name, code, body, c.want)
+			want, wantText := http.StatusBadRequest, c.want
+			// retention_s is not the editor's to set at all, so the limit is never
+			// reached for them: the refusal is of the setting, and it names it.
+			if who == "editor" && strings.Contains(name, "retention") {
+				want, wantText = http.StatusForbidden, "retention_s"
+			}
+			if code != want || !strings.Contains(body, wantText) {
+				t.Errorf("%s, %s: %d %.200s, want %d naming %q", who, name, code, body, want, wantText)
 			}
 		}
 	}
@@ -394,5 +400,63 @@ func TestARangeThatIsTooLargeIsA400OnEveryReadRoute(t *testing.T) {
 		if code != http.StatusInternalServerError || strings.Contains(body, "disk") {
 			t.Errorf("%s: another failure = %d %.200s, want a 500 that says nothing about the cause", route, code, body)
 		}
+	}
+}
+
+// A grant on a subtree does not confer settings whose effect leaves it. dscp
+// marks the prober's traffic on the operator's network, and a positive
+// retention_s deletes history, the one thing a request must not be able to do to
+// what smokeng exists to keep. They stay with a global admin, create and update
+// alike, and an admin is not asked for more than the limits.
+func TestOnlyAGlobalAdminMaySetDSCPAndRetention(t *testing.T) {
+	f := tenants(t)
+	editor := f.server(t, "team-a", f.groupA, "editor")
+	admin := New(f.st, Options{}, fstest.MapFS{})
+	for setting, value := range map[string]int{"dscp": 46, "retention_s": 604800} {
+		// Update.
+		code, body := call(t, editor, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"settings": map[string]any{setting: value}})
+		if code != http.StatusForbidden || !strings.Contains(body, setting) {
+			t.Errorf("an editor setting %s on update = %d %.200s, want 403 naming it", setting, code, body)
+		}
+		// Create.
+		code, body = call(t, editor, "POST", "/api/v1/targets", map[string]any{
+			"parent_id": f.groupA, "name": "c-" + setting, "host": "198.51.100.9", "address_family": "v4",
+			"settings": map[string]any{setting: value},
+		})
+		if code != http.StatusForbidden || !strings.Contains(body, setting) {
+			t.Errorf("an editor setting %s on create = %d %.200s, want 403 naming it", setting, code, body)
+		}
+		// An admin may.
+		if code, body := call(t, admin, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"settings": map[string]any{setting: value}}); code != http.StatusOK {
+			t.Errorf("an admin setting %s = %d %.200s, want 200", setting, code, body)
+		}
+	}
+	// What the editor may still change is unaffected.
+	if code, body := call(t, editor, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"title": "x", "settings": map[string]any{"pings_per_interval": 30}}); code != http.StatusOK {
+		t.Errorf("an editor changing ordinary settings = %d %.200s", code, body)
+	}
+	// And the refusal is not a way to learn about a target outside the grant.
+	codeIn, bodyIn := call(t, editor, "PATCH", "/api/v1/targets/"+num(f.hostB), map[string]any{"settings": map[string]any{"dscp": 46}})
+	codeGone, bodyGone := call(t, editor, "PATCH", "/api/v1/targets/99999", map[string]any{"settings": map[string]any{"dscp": 46}})
+	if codeIn != codeGone || bodyIn != bodyGone {
+		t.Errorf("another customer's target answers %d %s, a missing one %d %s", codeIn, bodyIn, codeGone, bodyGone)
+	}
+	// Absent, not forbidden, as everywhere else: the right to the node is asked
+	// before anything about the request is said.
+	if codeIn != http.StatusNotFound {
+		t.Errorf("another customer's target answers %d %s to an admin-only setting, want 404", codeIn, bodyIn)
+	}
+	// The same for creating under another customer's node.
+	mk := func(parent int64) (int, string) {
+		return call(t, editor, "POST", "/api/v1/targets", map[string]any{
+			"parent_id": parent, "name": "x", "host": "198.51.100.9", "address_family": "v4",
+			"settings": map[string]any{"dscp": 46},
+		})
+	}
+	codeIn, bodyIn = mk(f.groupB)
+	codeGone, bodyGone = mk(99999)
+	if codeIn != codeGone || bodyIn != bodyGone || codeIn != http.StatusNotFound {
+		t.Errorf("creating under another customer's node answers %d %s, under a missing one %d %s, want the same 404",
+			codeIn, bodyIn, codeGone, bodyGone)
 	}
 }

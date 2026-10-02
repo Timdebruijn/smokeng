@@ -181,6 +181,9 @@ func (s *server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		if !sc.CanWrite(parent) {
 			return store.TargetChange{}, refuse(func() { sc.deny(w, parent) })
 		}
+		if respond := refuseAdminOnly(w, sc, body); respond != nil {
+			return store.TargetChange{}, refuse(respond)
+		}
 		mayName, err := sc.agentsInScope(targets)
 		if err != nil {
 			return store.TargetChange{}, err
@@ -226,6 +229,9 @@ func (s *server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 	if !s.changeTargets(w, r, func(targets []tree.Target, sc *Scope, refuse func(func()) error) (store.TargetChange, error) {
 		if !sc.CanWrite(id) {
 			return store.TargetChange{}, refuse(func() { sc.deny(w, id) })
+		}
+		if respond := refuseAdminOnly(w, sc, body); respond != nil {
+			return store.TargetChange{}, refuse(respond)
 		}
 		// A move is checked at both ends. Checking only the node would make
 		// "change your parent" a way to carry a target across a boundary, in
@@ -428,10 +434,10 @@ func (s *server) checkAgentNames(ctx context.Context, set agentSet, agents *stri
 	return nil
 }
 
-// touchesAgents reports whether a patch sets the agents list. Settings are
+// touchesSetting reports whether a patch sets the named setting. Settings are
 // nested under "settings" in the payload, so this looks there; a check on a
-// top-level "agents" key would never match and the list would go unchecked.
-func touchesAgents(body map[string]json.RawMessage) bool {
+// top-level key would never match and the setting would go unchecked.
+func touchesSetting(body map[string]json.RawMessage, name string) bool {
 	raw, ok := body["settings"]
 	if !ok {
 		return false
@@ -440,8 +446,38 @@ func touchesAgents(body map[string]json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &settings); err != nil {
 		return false // applyPatch reports the malformed payload
 	}
-	_, touched := settings["agents"]
+	_, touched := settings[name]
 	return touched
+}
+
+func touchesAgents(body map[string]json.RawMessage) bool { return touchesSetting(body, "agents") }
+
+// adminOnlySettings are what a grant on a subtree does not confer, because their
+// effect leaves the subtree. dscp marks the prober's traffic on the network it
+// runs on, which is the operator's network and not a customer's: an editor could
+// mark a flood as network control. retention_s deletes history, and the
+// measurements are the product; a positive value is the one setting that makes a
+// request able to destroy what smokeng exists to keep. Both stay with a global
+// admin, as agents, tokens and grants do.
+var adminOnlySettings = []string{"dscp", "retention_s"}
+
+// refuseAdminOnly answers 403 if the request sets one of adminOnlySettings and
+// the caller is not a global admin, and reports whether it did. It names the
+// setting, which is theirs to know: it is on the node they are editing.
+func refuseAdminOnly(w http.ResponseWriter, sc *Scope, body map[string]json.RawMessage) func() {
+	if sc.IsGlobalAdmin() {
+		return nil
+	}
+	for _, name := range adminOnlySettings {
+		if touchesSetting(body, name) {
+			return func() {
+				writeJSON(w, http.StatusForbidden, map[string]string{
+					"error": name + " is a setting only a global administrator may change: its effect reaches beyond a subtree",
+				})
+			}
+		}
+	}
+	return nil
 }
 
 // applyPatch mutates n with the fields present in body. A key that is absent

@@ -86,7 +86,10 @@ var _ Store = (*SQLite)(nil)
 func Open(path string) (*SQLite, error) {
 	// modernc.org/sqlite takes a URI DSN; percent-encode the characters that
 	// would otherwise break URI parsing of a filesystem path.
-	esc := strings.ReplaceAll(strings.ReplaceAll(path, "%", "%25"), " ", "%20")
+	// "?" and "#" as well: a path with either was cut there as a URI, so
+	// "a?b.db" opened a database called "a" with none of the pragmas, and
+	// "a#b.db" the same, silently, in rollback-journal mode.
+	esc := strings.NewReplacer("%", "%25", " ", "%20", "?", "%3F", "#", "%23").Replace(path)
 	dsn := "file:" + esc +
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=synchronous(NORMAL)" +

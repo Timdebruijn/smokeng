@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/timdebruijn/smokeng/internal/store/enc"
 )
@@ -69,13 +71,33 @@ func (s *SQLite) AgentNames(ctx context.Context) (map[int64]string, error) {
 	return out, nil
 }
 
+// validAgentName refuses a name that cannot be told apart in the places it is
+// used. A target names its agents in one space-separated string, so a name with
+// a space is two names the moment it is written there: RenameAgent to "b c"
+// rewrote a target's list from "ams-01" into two agents, neither of which
+// exists. The same goes for the characters that are not text.
+func validAgentName(name string) error {
+	if name == "" || name == LocalAgentName {
+		return fmt.Errorf("store: %q is not a usable agent name", name)
+	}
+	if utf8.RuneCountInString(name) > 64 || !utf8.ValidString(name) {
+		return fmt.Errorf("store: an agent name is at most 64 characters of valid UTF-8")
+	}
+	for _, r := range name {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return fmt.Errorf("store: agent name %q contains whitespace or a control character (U+%04X)", name, r)
+		}
+	}
+	return nil
+}
+
 // AddAgent enrols an agent by name and public key directly. This is the
 // manual path used by `smokeng agent add`; the token flow
 // (RedeemEnrolmentToken, in enrol.go) inserts the agent itself, in the same
 // transaction as spending the token, rather than calling this.
 func (s *SQLite) AddAgent(ctx context.Context, name string, pub ed25519.PublicKey) (AgentRecord, error) {
-	if name == "" || name == LocalAgentName {
-		return AgentRecord{}, fmt.Errorf("store: %q is not a usable agent name", name)
+	if err := validAgentName(name); err != nil {
+		return AgentRecord{}, err
 	}
 	if len(pub) != ed25519.PublicKeySize {
 		return AgentRecord{}, fmt.Errorf("store: public key is %d bytes, want %d",

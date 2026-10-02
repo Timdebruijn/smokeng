@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -489,5 +490,88 @@ func TestConcurrentEnrolmentDoesNotFailWithBusy(t *testing.T) {
 			t.Fatalf("agent id %d was handed out twice", id)
 		}
 		seen[id] = true
+	}
+}
+
+// A target names its agents in one space-separated string, so an agent name with
+// a space is two names the moment it is written there. RenameAgent to "b c"
+// rewrote a target's list from "ams-01" into two agents, neither of which exists.
+func TestAgentNamesCannotContainWhatSplitsOrHidesThem(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	now := time.Unix(1_800_000_000, 0)
+	agent, err := s.AddAgent(ctx, "ams-01", testKey(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("n", 65)
+	for name, bad := range map[string]string{
+		"a space":              "b c",
+		"a tab":                "b\tc",
+		"a newline":            "b\nc",
+		"a bell":               "b\x07c",
+		"an escape":            "b\x1bc",
+		"a delete":             "b\x7fc",
+		"a non-breaking space": "b c",
+		"a line separator":     "b c",
+		"an override":          "b‮c",
+		"a zero-width joiner":  "b‍c",
+		"too long":             long,
+		"not UTF-8":            "b\xffc",
+		"local":                "local",
+		"nothing":              "",
+	} {
+		if _, err := s.AddAgent(ctx, bad, testKey(t)); err == nil {
+			t.Errorf("AddAgent accepted a name with %s", name)
+		}
+		if _, err := s.MintEnrolmentToken(ctx, bad, time.Hour, now); err == nil && name != "a space" {
+			// MintEnrolmentToken trims, so only the edges are removed: a name with
+			// whitespace in the middle must still be refused, which the loop covers.
+			t.Errorf("MintEnrolmentToken accepted a name with %s", name)
+		}
+		if _, err := s.RenameAgent(ctx, agent.ID, bad); err == nil {
+			t.Errorf("RenameAgent accepted a name with %s", name)
+		}
+	}
+	// Ordinary names, including ones real agents have.
+	for _, good := range []string{"ams-01", "site_b", "dc1.example.org", "Rotterdam-Zuid", strings.Repeat("n", 64)} {
+		if _, err := s.RenameAgent(ctx, agent.ID, good); err != nil {
+			t.Errorf("RenameAgent refused %q: %v", good, err)
+		}
+	}
+}
+
+// A path with a question mark or a hash was cut there as a URI. "a?b.db" opened
+// a database called "a", with none of the pragmas, and "a#b.db" the same: the
+// right data in the wrong file, without a word.
+func TestAPathWithQuestionMarkOrHashOpensThatFile(t *testing.T) {
+	for _, name := range []string{"what?.db", "tag#1.db", "both?#.db", "100%.db", "with space.db", "x%41y.db"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, name)
+			s, err := Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("the database is not at %q: %v", path, err)
+			}
+			entries, _ := os.ReadDir(dir)
+			for _, e := range entries {
+				if !strings.HasPrefix(e.Name(), name) {
+					t.Errorf("a stray file %q was created instead", e.Name())
+				}
+			}
+			var mode string
+			if err := s.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
+				t.Errorf("journal_mode = %q (%v): the pragmas in the DSN did not apply", mode, err)
+			}
+			var fk int
+			s.db.QueryRow("PRAGMA foreign_keys").Scan(&fk)
+			if fk != 1 {
+				t.Errorf("foreign_keys = %d: the pragmas in the DSN did not apply", fk)
+			}
+		})
 	}
 }
