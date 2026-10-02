@@ -208,10 +208,16 @@ const LocalAgentName = "local"
 // migration seam to a different backend; keep it exactly as small as its
 // callers require.
 type Store interface {
-	// WriteMeasurements writes a batch in one transaction. Writes are
-	// idempotent: rewriting an existing (target, agent, ts) row is a no-op
-	// replacement, which is the real replay defense for ingest (DESIGN.md §9).
+	// WriteMeasurements writes a batch in one transaction, replacing any row at
+	// an existing (target, agent, ts). It is for a writer of its own rows: the
+	// prober recording what it measured.
 	WriteMeasurements(ctx context.Context, ms []Measurement) error
+	// IngestMeasurements writes what a remote agent submitted and never
+	// overwrites: a row at an existing key is kept and counted as a duplicate.
+	// That makes a replayed or retried batch a true no-op, which is the real
+	// replay defense for ingest (DESIGN.md §9), and stops an agent rewriting
+	// intervals it has already reported.
+	IngestMeasurements(ctx context.Context, ms []Measurement) (duplicates int, err error)
 	// QueryRange returns one series over [from, to), ordered by ts.
 	QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error)
 	// AvailabilitySeries returns just sent/received per interval over [from, to),
