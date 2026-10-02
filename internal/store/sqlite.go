@@ -91,7 +91,13 @@ func Open(path string) (*SQLite, error) {
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=synchronous(NORMAL)" +
 		"&_pragma=foreign_keys(1)" +
-		"&_pragma=busy_timeout(10000)"
+		"&_pragma=busy_timeout(10000)" +
+		// Every transaction here writes. A deferred one reads first and takes
+		// the write lock only at its first write, and in WAL mode that upgrade
+		// fails at once with BUSY_SNAPSHOT when another writer committed in
+		// between: the busy timeout does not apply to it. Taking the lock at
+		// BEGIN makes the transaction wait its turn instead.
+		"&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err

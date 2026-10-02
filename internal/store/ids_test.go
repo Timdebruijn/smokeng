@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
@@ -221,6 +222,13 @@ func TestFreshDatabaseAllocatesAfterTheBuiltIns(t *testing.T) {
 // table as SEARCH ... USING PRIMARY KEY, the same words as a seek. So this
 // measures it, as a ratio against the naive query on the same rows, which holds
 // on a slow machine and a fast one alike.
+//
+// What it shows is the seed scaling with the rows per target rather than with
+// the rows: a few targets with many rows each, which is what a long-running
+// installation looks like. It says nothing about many targets, where the seed
+// does a seek per target and the advantage shrinks. The timed seed includes its
+// own autocommit INSERT and DELETE, so a very slow disk could fail it with a
+// message about reading the history; best-of-three makes that unlikely.
 func TestAgentIDSeedReadsFarLessThanTheHistory(t *testing.T) {
 	s := openTemp(t)
 	if _, err := s.db.Exec(`
@@ -342,5 +350,144 @@ func TestMigrationSeedReadsEveryPlaceAnIdIsKept(t *testing.T) {
 				t.Errorf("first agent id = %d, %v: an id of 800 is kept in %s", id, err, name)
 			}
 		})
+	}
+
+	ruleSources := map[string]string{
+		"alert_rules":     `INSERT INTO alert_rules (id, target_id, name, metric, op, threshold) VALUES (900, 1, 'n', 'loss', '>', 1)`,
+		"alert_state":     `INSERT INTO alert_state (rule_id, target_id, agent_id) VALUES (900, 1, 0)`,
+		"alert_events":    `INSERT INTO alert_events (ts, rule_id, target_id, agent_id, firing, rule_name, describes, value) VALUES (1, 900, 1, 0, 1, 'r', 'd', 0)`,
+		"alert_baselines": `INSERT INTO alert_baselines (rule_id, target_id, agent_id, from_ts, to_ts, intervals, samples, captured_at) VALUES (900, 1, 0, 1, 2, 1, X'', 1)`,
+		"silences":        `INSERT INTO silences (rule_id, starts_at, ends_at, created_at) VALUES (900, 1, 2, 1)`,
+	}
+	for name, stmt := range ruleSources {
+		t.Run("rule id in "+name, func(t *testing.T) {
+			s := v21DB(t, stmt)
+			if id, err := allocRuleID(t.Context(), s.db); err != nil || id <= 900 {
+				t.Errorf("first rule id = %d, %v: an id of 900 is kept in %s", id, err, name)
+			}
+		})
+	}
+}
+
+// A silence names a rule by id and has no foreign key to it. With ids reused, a
+// silence made for a rule that was then deleted muted whichever rule was created
+// next, which may be another customer's.
+func TestRuleIDsAreNeverReused(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	mk := func(name string) int64 {
+		r := alert.Rule{TargetID: 1, Name: name, Metric: alert.MetricLoss, Op: alert.OpGreater,
+			Threshold: 20, For: 3, ClearFor: 3, Enabled: true}
+		if err := s.UpsertAlertRule(ctx, &r); err != nil {
+			t.Fatal(err)
+		}
+		return r.ID
+	}
+	first, second := mk("a"), mk("b")
+	if err := s.DeleteAlertRule(ctx, second); err != nil { // the highest id
+		t.Fatal(err)
+	}
+	third := mk("c")
+	if third <= second {
+		t.Fatalf("a new rule got id %d after id %d was deleted", third, second)
+	}
+	if err := s.DeleteAlertRule(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteAlertRule(ctx, third); err != nil {
+		t.Fatal(err)
+	}
+	if fourth := mk("d"); fourth <= third {
+		t.Fatalf("after deleting every rule, the next got id %d (highest ever was %d)", fourth, third)
+	}
+}
+
+// An id inserted explicitly above the counter is skipped, not overwritten.
+func TestRuleAllocationSkipsAnIdThatIsTaken(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	next, err := allocRuleID(ctx, s.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	squatter := alert.Rule{ID: next + 1, TargetID: 1, Name: "squatter", Metric: alert.MetricLoss, Op: alert.OpGreater,
+		Threshold: 20, For: 3, ClearFor: 3, Enabled: true}
+	if err := s.UpsertAlertRule(ctx, &squatter); err != nil {
+		t.Fatal(err)
+	}
+	fresh := alert.Rule{TargetID: 1, Name: "fresh", Metric: alert.MetricLoss, Op: alert.OpGreater,
+		Threshold: 20, For: 3, ClearFor: 3, Enabled: true}
+	if err := s.UpsertAlertRule(ctx, &fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.ID == squatter.ID {
+		t.Fatalf("the new rule took id %d, which was already a rule", fresh.ID)
+	}
+	rules, err := s.ListAlertRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rules {
+		if r.ID == squatter.ID && r.Name != "squatter" {
+			t.Fatalf("rule %d was overwritten and is now %q", r.ID, r.Name)
+		}
+	}
+}
+
+// Enrolling agents concurrently must not fail with SQLITE_BUSY. A transaction
+// that reads first and writes later, begun the default deferred way, cannot
+// upgrade its read lock in WAL mode when another writer has committed in
+// between, and the busy timeout does not apply to that: the statement fails at
+// once with BUSY_SNAPSHOT. RedeemEnrolmentToken reads the token and then
+// allocates and inserts, which is exactly that shape, and an enrolment that
+// fails this way loses a single-use token's only chance.
+func TestConcurrentEnrolmentDoesNotFailWithBusy(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	const n = 64
+	now := time.Unix(1_800_000_000, 0)
+	toks := make([]string, n)
+	for i := range n {
+		tok, err := s.MintEnrolmentToken(ctx, "agent-"+strings.Repeat("x", i%5)+string(rune('a'+i%26))+time.Duration(i).String(), time.Hour, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		toks[i] = tok.Plaintext
+	}
+	errs := make(chan error, n)
+	ids := make(chan int64, n)
+	start := make(chan struct{})
+	for i := range n {
+		go func() {
+			<-start
+			a, err := s.RedeemEnrolmentToken(ctx, toks[i], testKey(t), now)
+			if err != nil {
+				errs <- err
+				return
+			}
+			ids <- a.ID
+			errs <- nil
+		}()
+	}
+	close(start)
+	failed := 0
+	for range n {
+		if err := <-errs; err != nil {
+			failed++
+			if failed <= 3 {
+				t.Errorf("enrolment failed: %v", err)
+			}
+		}
+	}
+	if failed > 0 {
+		t.Fatalf("%d of %d concurrent enrolments failed", failed, n)
+	}
+	close(ids)
+	seen := map[int64]bool{}
+	for id := range ids {
+		if seen[id] {
+			t.Fatalf("agent id %d was handed out twice", id)
+		}
+		seen[id] = true
 	}
 }
