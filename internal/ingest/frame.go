@@ -15,11 +15,9 @@ import (
 // message is read into make([]byte, n) with n taken straight off the wire, and
 // that allocation never passes through the allocator decodeBatch hands the
 // reader, so a header that claims a large length costs that much however short
-// the body is. And a compressed record batch is expanded by a zstd decoder
 // built with its default options, which sizes its window from the frame header
 // before it has produced a byte, again outside the allocator: the cost is set
-// by what the frame claims, not by its size, and it is paid once per record
-// batch.
+// by what the frame claims, not by its size.
 //
 // Neither is reachable by an honest agent. The body is in memory already, so
 // every length the stream declares can be checked against the bytes that are
@@ -28,8 +26,10 @@ import (
 // deliberately blunt: refuse what is not that, instead of trying to meter it.
 //
 // It reads the flatbuffer headers itself because arrow-go keeps them behind an
-// internal package. Every read is bounds-checked; a malformed header is an
-// error, never a panic.
+// internal package. Every read is bounds-checked, written so the check cannot
+// wrap on a 32-bit int, so a malformed header is an error and not a panic. What
+// it must also do is see the same fields the reader sees, and the test that
+// guards that compares it with the reader rather than with the format.
 func screenFrames(body []byte) error {
 	off, messages := 0, 0
 	for off < len(body) {
@@ -177,8 +177,14 @@ func (t fbTable) field(vt int) (pos int, present bool, err error) {
 	if !ok || size < 4 {
 		return 0, false, errFrameShort
 	}
-	if vt+2 > int(size) {
-		return 0, false, nil // vtable too short to hold this field
+	// Present when the offset is below the vtable's declared size, which is the
+	// rule flatbuffers (and so arrow-go's reader) applies. Not "when both bytes
+	// of the slot fit": for an odd size the two disagree on the last slot, the
+	// reader finds a field the screen thinks is absent, and that is how a
+	// compressed batch used to get past it. le16 below checks the slice, so
+	// reading the slot's second byte past the declared size is safe.
+	if vt >= int(size) {
+		return 0, false, nil
 	}
 	rel, ok := le16(t.b, vtable+vt)
 	if !ok {
@@ -211,15 +217,19 @@ func (t fbTable) table(vt int) (fbTable, bool, error) {
 	return fbTable{b: t.b, pos: pos}, true, nil
 }
 
+// The bounds are written as off > len(b)-n rather than off+n > len(b): on a
+// 32-bit target (linux/386 and linux/arm are release builds) an offset near
+// MaxInt32 makes off+n wrap negative, the comparison passes, and the slice
+// expression panics. The offsets come from a header the sender wrote.
 func le16(b []byte, off int) (uint16, bool) {
-	if off < 0 || off+2 > len(b) {
+	if off < 0 || off > len(b)-2 {
 		return 0, false
 	}
 	return binary.LittleEndian.Uint16(b[off:]), true
 }
 
 func le32(b []byte, off int) (uint32, bool) {
-	if off < 0 || off+4 > len(b) {
+	if off < 0 || off > len(b)-4 {
 		return 0, false
 	}
 	return binary.LittleEndian.Uint32(b[off:]), true
