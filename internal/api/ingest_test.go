@@ -286,9 +286,14 @@ func TestIngestDropsFutureRowsButKeepsTheRest(t *testing.T) {
 	now := time.Now()
 	inSkew := now.Add(ingest.MaxSkew - time.Minute).Unix()
 	future := now.Add(ingest.MaxSkew + time.Hour).Unix()
+	// Just past the allowance, by enough that the handler reading the clock a
+	// few milliseconds later cannot round it back inside: a horizon of twice the
+	// skew would keep this row, and one an hour out would not tell the two apart.
+	justPast := now.Add(ingest.MaxSkew + 2*time.Second).Unix()
 
 	rec := submit(t, h, agentID, key, []store.Measurement{
 		measurement(mine, future),
+		measurement(mine, justPast),
 		measurement(mine, inSkew),
 		measurement(mine, 1_756_400_000),
 	}, now)
