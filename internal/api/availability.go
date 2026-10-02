@@ -66,11 +66,6 @@ func (s *server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	mayName, err := sc.agentsInScope(targets)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
 	idByName := map[string]int64{}
 	nameByID := map[int64]string{}
 	for _, a := range agentRecords {
@@ -91,7 +86,13 @@ func (s *server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 		}
 		// Whose name this is, is only the caller's to know if the agent is in
 		// their scope. An id that is not, and one that is not an agent at all,
-		// read the same.
+		// read the same. Worked out here and not for every request: it walks
+		// every visible node, and only an explicit agent_id needs it.
+		mayName, err := sc.agentsInScope(targets)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
 		name := nameByID[id]
 		if !mayName.has(name) {
 			name = fmt.Sprintf("agent %d", id)

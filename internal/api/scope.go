@@ -173,7 +173,12 @@ func (sc *Scope) agentsInScope(targets []tree.Target) (agentSet, error) {
 	}
 	set := agentSet{names: map[string]bool{}}
 	for i := range targets {
-		if targets[i].Host == nil || !sc.Visible(targets[i].ID) {
+		// Every visible node, not only the ones that probe. A group's effective
+		// agents are what an admin decided for that part of the tree, so an
+		// agent given to a customer's grant root is one their editor may name
+		// for the first target they create there: otherwise an empty subtree
+		// could name nothing until an admin had put the agent on a host target.
+		if !sc.Visible(targets[i].ID) {
 			continue
 		}
 		res, err := sc.tr.Resolve(targets[i].ID)
