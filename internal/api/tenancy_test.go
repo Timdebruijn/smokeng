@@ -367,3 +367,326 @@ func TestCaptureDoesNotSayWhatKindOfRuleItIsBeforeAuthorising(t *testing.T) {
 		t.Errorf("a missing rule answers %d %s, another customer's rule of the wrong kind %d %s", c1, b1, c2, b2)
 	}
 }
+
+// firingOverride makes the real manager report a chosen set of firing alerts,
+// which is the only way to put one in a test without driving a rule through
+// its evaluation.
+type firingOverride struct {
+	*alert.Manager
+	fire []alert.Alert
+}
+
+func (o firingOverride) Firing() []alert.Alert { return o.fire }
+
+// The requirement of DESIGN.md §7.4 stated once for every read route rather
+// than once per handler: nothing above the grant root, beside it, or measuring
+// something elsewhere may appear in any response a scoped caller can get. That
+// includes the name of an ancestor, which is not a node they have a grant on
+// and so is exactly what a per-handler visibility check does not think to
+// check.
+//
+// The route-coverage test checks that every route is classified. This checks
+// that the classification is true.
+func TestNoReadRouteNamesAnythingOutsideTheScope(t *testing.T) {
+	f := tenants(t)
+	ctx := context.Background()
+
+	// Firing alerts for both customers, with the full path the manager records.
+	ruleA, ruleB := alert.Rule{ID: f.ruleA, TargetID: f.groupA, Name: "shape"}, alert.Rule{ID: f.ruleB, TargetID: f.groupB, Name: "shape"}
+	fire := []alert.Alert{
+		{Rule: &ruleA, TargetID: f.hostA, TargetPath: "/Klanten/GemeenteA/gw", TargetHost: "198.51.100.1", AgentName: "local", Firing: true, Since: time.Now()},
+		{Rule: &ruleB, TargetID: f.hostB, TargetPath: "/Klanten/GemeenteB/gw", TargetHost: "198.51.100.2", AgentID: f.agentB, AgentName: "ams-b", Firing: true, Since: time.Now()},
+	}
+	// A silence on each customer.
+	for _, node := range []int64{f.groupA, f.groupB} {
+		node := node
+		now := time.Now().Unix()
+		if _, err := f.mgr.AddSilence(ctx, alert.Silence{TargetID: &node, StartsAt: now, EndsAt: now + 3600,
+			Reason: "maintenance", CreatedBy: "ops", CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	forbidden := []string{"Klanten", "GemeenteB", "ams-b", "198.51.100.2"}
+	routes := []string{
+		"/api/v1/targets",
+		"/api/v1/availability?target_id=" + num(f.hostA),
+		"/api/v1/availability?target_id=" + num(f.hostA) + "&agent_id=" + num(f.agentB),
+		"/api/v1/alert-rules",
+		"/api/v1/alerts",
+		"/api/v1/alert-baselines",
+		"/api/v1/shape-reference?rule_id=" + num(f.ruleA) + "&target_id=" + num(f.hostA) + "&agent_id=0",
+		"/api/v1/silences",
+		"/api/v1/alert-events",
+		"/api/v1/agents",
+		"/api/v1/paths?target_id=" + num(f.hostA),
+	}
+	for _, role := range []string{"viewer", "editor"} {
+		g := store.Grant{Group: "team-a-" + role, TargetID: f.groupA, Role: role}
+		if err := f.st.UpsertGrant(ctx, &g); err != nil {
+			t.Fatal(err)
+		}
+		sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{g.Group}, Expires: 1 << 40}
+		h := New(f.st, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone,
+			Alerts: firingOverride{Manager: f.mgr, fire: fire}}, fstest.MapFS{})
+		for _, route := range routes {
+			code, body := call(t, h, "GET", route, nil)
+			if code != http.StatusOK {
+				t.Errorf("%s %s: %d %s", role, route, code, body)
+				continue
+			}
+			for _, bad := range forbidden {
+				if strings.Contains(body, bad) {
+					t.Errorf("%s GET %s names %q, which is outside the scope:\n%s", role, route, bad, body)
+				}
+			}
+		}
+	}
+}
+
+// An editor may name only the agents in their scope, the same set the picker
+// offers. Anything else is the same answer whether the agent exists or not, and
+// never a list: the old error named every enrolled agent to whoever got one
+// wrong, and accepted any that was right, which pointed a target at another
+// customer's vantage point.
+func TestEditorMayOnlyNameAgentsInTheirScope(t *testing.T) {
+	f := tenants(t)
+	h := f.server(t, "team-a", f.groupA, "editor")
+	patch := func(agents string) (int, string) {
+		return call(t, h, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"settings": map[string]any{"agents": agents}})
+	}
+
+	codeUnknown, bodyUnknown := patch("no-such-agent")
+	codeForeign, bodyForeign := patch("ams-b")
+	if codeUnknown != http.StatusBadRequest || codeForeign != http.StatusBadRequest {
+		t.Fatalf("unknown agent: %d %s; another customer's agent: %d %s", codeUnknown, bodyUnknown, codeForeign, bodyForeign)
+	}
+	for _, body := range []string{bodyUnknown, bodyForeign} {
+		if strings.Contains(body, "enrolled agents are") || (strings.Contains(body, "local") && strings.Contains(body, "ams-b")) {
+			t.Errorf("the refusal lists agents: %s", body)
+		}
+	}
+	// An agent that exists and one that does not read the same except for the
+	// name the caller typed themselves.
+	if strings.Replace(bodyForeign, "ams-b", "X", 1) != strings.Replace(bodyUnknown, "no-such-agent", "X", 1) {
+		t.Errorf("an existing agent is refused differently from a missing one:\n%s\n%s", bodyForeign, bodyUnknown)
+	}
+
+	// The control: an agent that already measures something they can see.
+	if code, body := patch("local"); code != http.StatusOK {
+		t.Errorf("naming an agent in their scope = %d %s", code, body)
+	}
+
+	// And an admin is still told what exists when they get it wrong.
+	admin := New(f.st, Options{}, fstest.MapFS{})
+	code, body := call(t, admin, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"settings": map[string]any{"agents": "no-such-agent"}})
+	if code != http.StatusBadRequest || !strings.Contains(body, "enrolled agents are") {
+		t.Errorf("an admin's refusal no longer lists the enrolled agents: %d %s", code, body)
+	}
+	if code, body := call(t, admin, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"settings": map[string]any{"agents": "ams-b"}}); code != http.StatusOK {
+		t.Errorf("an admin naming any enrolled agent = %d %s", code, body)
+	}
+}
+
+// The check applies to what a request changes. A node can carry an agent its
+// editor is not offered, because an admin gave it one that no visible target
+// uses; changing the title of that node must not be refused for it.
+func TestEditorCanEditANodeWhoseAgentIsNotTheirs(t *testing.T) {
+	f := tenants(t)
+	ctx := context.Background()
+	all, err := f.st.ListTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range all {
+		switch all[i].ID {
+		case f.groupA:
+			all[i].Settings.Agents = ptr("ams-b") // set by an admin, used by no visible target
+		case f.hostA:
+			all[i].Settings.Agents = ptr("local")
+		default:
+			continue
+		}
+		if err := f.st.UpsertTarget(ctx, &all[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := f.server(t, "team-a", f.groupA, "editor")
+	if code, body := call(t, h, "PATCH", "/api/v1/targets/"+num(f.groupA), map[string]any{"title": "Gemeente A"}); code != http.StatusOK {
+		t.Errorf("changing a title was refused because of an agent it did not touch: %d %s", code, body)
+	}
+	// Touching the agents field is a different matter.
+	if code, _ := call(t, h, "PATCH", "/api/v1/targets/"+num(f.groupA), map[string]any{"settings": map[string]any{"agents": "ams-b"}}); code != http.StatusBadRequest {
+		t.Errorf("naming an agent that is not theirs, on a node that happens to carry it, = %d, want 400", code)
+	}
+}
+
+// Creating a target goes through the same check as changing one.
+func TestEditorCannotCreateATargetOnAnAgentOutsideTheirScope(t *testing.T) {
+	f := tenants(t)
+	h := f.server(t, "team-a", f.groupA, "editor")
+	create := func(agents string) int {
+		code, _ := call(t, h, "POST", "/api/v1/targets", map[string]any{
+			"parent_id": f.groupA, "name": "new-" + agents, "host": "198.51.100.9", "address_family": "v4",
+			"settings": map[string]any{"agents": agents},
+		})
+		return code
+	}
+	if code := create("ams-b"); code != http.StatusBadRequest {
+		t.Errorf("creating a target on another customer's agent = %d, want 400", code)
+	}
+	if code := create("local"); code != http.StatusCreated {
+		t.Errorf("creating a target on an agent in their scope = %d, want 201", code)
+	}
+}
+
+// A firing alert can outlive its target: the manager keeps the state until the
+// next reload. With the target gone there is no path to render as the caller
+// sees it, and the path the manager recorded runs from the real root. Falling
+// back to it would put /Klanten in the answer exactly when nothing else could.
+func TestFiringAlertForAVanishedTargetDoesNotFallBackToTheRecordedPath(t *testing.T) {
+	f := tenants(t)
+	rule := alert.Rule{ID: f.ruleA, TargetID: f.groupA, Name: "shape"}
+	gone := alert.Alert{Rule: &rule, TargetID: 99999, TargetPath: "/Klanten/GemeenteA/gone", Firing: true, Since: time.Now()}
+	g := store.Grant{Group: "team-a", TargetID: f.groupA, Role: "viewer"}
+	if err := f.st.UpsertGrant(context.Background(), &g); err != nil {
+		t.Fatal(err)
+	}
+	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{"team-a"}, Expires: 1 << 40}
+	h := New(f.st, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone,
+		Alerts: firingOverride{Manager: f.mgr, fire: []alert.Alert{gone}}}, fstest.MapFS{})
+	code, body := call(t, h, "GET", "/api/v1/alerts", nil)
+	if code != http.StatusOK || strings.Contains(body, "Klanten") {
+		t.Errorf("%d %s", code, body)
+	}
+
+	// An admin may see all of it, so for them the recorded path is a fine fallback.
+	admin := New(f.st, Options{Alerts: firingOverride{Manager: f.mgr, fire: []alert.Alert{gone}}}, fstest.MapFS{})
+	if _, body := call(t, admin, "GET", "/api/v1/alerts", nil); !strings.Contains(body, "/Klanten/GemeenteA/gone") {
+		t.Errorf("an admin lost the recorded path of an alert whose target is gone: %s", body)
+	}
+}
+
+// The strongest statement of "no oracle" there is: for every route that takes
+// an id, a foreign id has to be answered exactly as an id that does not exist,
+// status and body. A caller can then learn nothing about the other tenant by
+// trying numbers, which is how the rule endpoints leaked: a missing rule said
+// "not found" and another customer's said something else.
+//
+// The route-coverage test checks that routes are classified, not that they
+// enforce anything, and a per-handler test only covers the handlers someone
+// remembered. This puts a foreign id into every id-bearing field of every
+// scoped route that has one, in the path, the query and the body.
+func TestAForeignIdIsAnsweredExactlyLikeAMissingOne(t *testing.T) {
+	f := tenants(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+	sB, err := f.mgr.AddSilence(ctx, alert.Silence{TargetID: &f.groupB, StartsAt: now, EndsAt: now + 3600, CreatedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const missing = int64(99999)
+
+	type route struct {
+		name           string
+		method, path   string
+		body           func(id int64) any
+		foreign, other int64 // the other tenant's id, and a nonexistent one
+		// ownObject marks a route whose subject is the caller's own object and
+		// whose foreign id is only where it is being moved to. A viewer is
+		// refused for the first, before the second is looked at, and that is
+		// 403: it is about something they can see.
+		ownObject bool
+	}
+	targetPath := func(format string) func(int64) string {
+		return func(id int64) string { return strings.Replace(format, "%d", num(id), 1) }
+	}
+	_ = targetPath
+	routes := []route{
+		{"measurements", "GET", "/api/v1/measurements?target_id=%d&agent_id=0&from=0&to=100", nil, f.hostB, missing, false},
+		{"paths", "GET", "/api/v1/paths?target_id=%d", nil, f.hostB, missing, false},
+		{"availability", "GET", "/api/v1/availability?target_id=%d", nil, f.hostB, missing, false},
+		{"shape-reference target", "GET", "/api/v1/shape-reference?rule_id=" + num(f.ruleA) + "&target_id=%d", nil, f.hostB, missing, false},
+		{"patch target", "PATCH", "/api/v1/targets/%d", func(int64) any { return map[string]any{"title": "x"} }, f.hostB, missing, false},
+		{"delete target", "DELETE", "/api/v1/targets/%d", nil, f.hostB, missing, false},
+		{"create under", "POST", "/api/v1/targets", func(id int64) any {
+			return map[string]any{"parent_id": id, "name": "n", "host": "198.51.100.9", "address_family": "v4"}
+		}, f.groupB, missing, false},
+		{"move into", "PATCH", "/api/v1/targets/" + num(f.hostA), func(id int64) any { return map[string]any{"parent_id": id} }, f.groupB, missing, true},
+		{"rule on", "POST", "/api/v1/alert-rules", func(id int64) any {
+			return map[string]any{"target_id": id, "name": "r", "metric": "loss", "op": ">", "threshold": 1}
+		}, f.groupB, missing, false},
+		{"move rule to", "PATCH", "/api/v1/alert-rules/" + num(f.ruleA), func(id int64) any { return map[string]any{"target_id": id} }, f.groupB, missing, true},
+		{"patch rule", "PATCH", "/api/v1/alert-rules/%d", func(int64) any { return map[string]any{"threshold": 5} }, f.ruleB, missing, false},
+		{"delete rule", "DELETE", "/api/v1/alert-rules/%d", nil, f.ruleB, missing, false},
+		{"capture", "POST", "/api/v1/alert-rules/%d/baseline", func(int64) any { return map[string]any{"target_id": f.hostA, "agent_id": 0} }, f.ruleB, missing, false},
+		{"clear baseline", "DELETE", "/api/v1/alert-rules/%d/baseline", nil, f.ruleB, missing, false},
+		{"ack", "POST", "/api/v1/alerts/ack", func(id int64) any { return map[string]any{"rule_id": f.ruleA, "target_id": id, "agent_id": 0} }, f.hostB, missing, false},
+		{"silence on", "POST", "/api/v1/silences", func(id int64) any { return map[string]any{"target_id": id, "duration_s": 60} }, f.groupB, missing, false},
+		{"delete silence", "DELETE", "/api/v1/silences/%d", nil, sB.ID, missing, false},
+	}
+	for _, role := range []string{"viewer", "editor"} {
+		h := f.server(t, "team-a-"+role, f.groupA, role)
+		for _, rt := range routes {
+			ask := func(id int64) (int, string) {
+				var body any
+				if rt.body != nil {
+					body = rt.body(id)
+				}
+				return call(t, h, rt.method, strings.Replace(rt.path, "%d", num(id), 1), body)
+			}
+			cf, bf := ask(rt.foreign)
+			cm, bm := ask(rt.other)
+			if cf != cm || bf != bm {
+				t.Errorf("%s %s: a foreign id answers %d %s, a missing one %d %s", role, rt.name, cf, bf, cm, bm)
+			}
+			// Absent, not forbidden. Equal to a missing id's answer is not enough on
+			// its own: a status that is wrong for both (a 403 for each) says the
+			// same thing about each, and confirms that something is there to forbid.
+			want := http.StatusNotFound
+			if rt.ownObject && role == "viewer" {
+				want = http.StatusForbidden
+			}
+			if cf != want {
+				t.Errorf("%s %s: a foreign id answered %d %s, want %d", role, rt.name, cf, bf, want)
+			}
+		}
+	}
+
+	// Nothing of the other customer's changed in all that.
+	all, err := f.st.ListTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seenB bool
+	for _, n := range all {
+		if n.ID == f.hostB {
+			seenB = true
+			if n.Title != nil {
+				t.Errorf("the other customer's target was retitled to %q", *n.Title)
+			}
+		}
+	}
+	if !seenB {
+		t.Error("the other customer's target is gone")
+	}
+}
+
+// Every scoped caller is shown the silences that cover the whole tree, by
+// design, so one they try to delete is refused rather than answered as absent:
+// "no such silence" would be untrue of something on their own screen.
+func TestAGlobalSilenceIsRefusedNotHidden(t *testing.T) {
+	f := tenants(t)
+	now := time.Now().Unix()
+	global, err := f.mgr.AddSilence(context.Background(), alert.Silence{StartsAt: now, EndsAt: now + 3600, CreatedAt: now, Reason: "all hands"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := f.server(t, "team-a", f.groupA, "editor")
+	if _, body := call(t, h, "GET", "/api/v1/silences", nil); !strings.Contains(body, "all hands") {
+		t.Fatalf("a scoped caller is no longer shown the global silence: %s", body)
+	}
+	if code, body := call(t, h, "DELETE", "/api/v1/silences/"+num(global.ID), nil); code != http.StatusForbidden {
+		t.Errorf("deleting a global silence = %d %s, want 403", code, body)
+	}
+}

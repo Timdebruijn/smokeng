@@ -2,12 +2,12 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/timdebruijn/smokeng/internal/report"
-	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // handleAvailability computes uptime over a window for one target, per vantage
@@ -23,7 +23,12 @@ func (s *server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A node outside the caller's scope is answered as absent, like everywhere.
-	if !s.requireVisible(w, r, targetID) {
+	sc, targets, ok := s.withScope(w, r)
+	if !ok {
+		return
+	}
+	if !sc.Visible(targetID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such target"})
 		return
 	}
 	from, to, err := timeRange(q.Get("from"), q.Get("to"))
@@ -43,28 +48,25 @@ func (s *server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 		threshold = t
 	}
 
-	targets, err := s.st.ListTargets(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	tr, err := tree.New(targets)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	res, err := tr.Resolve(targetID)
+	res, err := sc.tr.Resolve(targetID)
 	if err != nil {
 		notFound(w)
 		return
 	}
 	intervalS := res.IntervalS.Effective
-	path, _ := tr.Path(targetID)
+	// As the caller sees it: the full path runs through every node above their
+	// grant, whose names are not theirs to know.
+	path, _ := sc.PathIn(targetID)
 
 	// Which vantage points to report. Default is every agent the target is
 	// assigned to, so an assigned-but-silent one shows as coverage 0 rather than
 	// vanishing; a single agent_id narrows it to one.
 	agentRecords, err := s.agents.ListAgents(r.Context())
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	mayName, err := sc.agentsInScope(targets)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -87,7 +89,14 @@ func (s *server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 			badRequest(w, errors.New("bad agent_id"))
 			return
 		}
-		wants = append(wants, vantage{id, nameByID[id]})
+		// Whose name this is, is only the caller's to know if the agent is in
+		// their scope. An id that is not, and one that is not an agent at all,
+		// read the same.
+		name := nameByID[id]
+		if !mayName.has(name) {
+			name = fmt.Sprintf("agent %d", id)
+		}
+		wants = append(wants, vantage{id, name})
 	} else {
 		for _, n := range strings.Fields(res.Agents.Effective) {
 			if id, ok := idByName[n]; ok {

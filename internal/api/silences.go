@@ -159,19 +159,35 @@ func (s *server) handleDeleteSilence(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if found == nil {
-		notFound(w)
-		return
-	}
 	sc, targets, ok := s.withScope(w, r)
 	if !ok {
 		return
 	}
-	scopeID := rootTargetID(targets)
-	if found.TargetID != nil {
-		scopeID = *found.TargetID
+	var scopeID int64
+	if found != nil {
+		scopeID = rootTargetID(targets)
+		if found.TargetID != nil {
+			scopeID = *found.TargetID
+		}
+	}
+	// A silence on a node the caller cannot see is answered as one that does
+	// not exist: the missing case used to say "not found" and the invisible one
+	// "no such target", so trying ids told them which were real. A global
+	// silence is the exception, since every scoped caller is shown those by
+	// design (see handleListSilences), and is refused rather than denied.
+	visible := found != nil && (found.TargetID == nil || sc.Visible(scopeID))
+	if !visible {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such silence"})
+		return
 	}
 	if !sc.CanWrite(scopeID) {
+		if found.TargetID == nil {
+			// They are shown it, so "no such target" would be untrue.
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "a silence on the whole tree needs write access to the whole tree",
+			})
+			return
+		}
 		sc.deny(w, scopeID)
 		return
 	}

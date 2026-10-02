@@ -259,25 +259,14 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	admin := sc.IsGlobalAdmin()
-	relevant := map[string]bool{}
-	if !admin {
-		for i := range targets {
-			if targets[i].Host == nil || !sc.Visible(targets[i].ID) {
-				continue
-			}
-			res, err := sc.tr.Resolve(targets[i].ID)
-			if err != nil {
-				internalError(w, err)
-				return
-			}
-			for _, name := range strings.Fields(res.Agents.Effective) {
-				relevant[name] = true
-			}
-		}
+	relevant, err := sc.agentsInScope(targets)
+	if err != nil {
+		internalError(w, err)
+		return
 	}
 	out := make([]map[string]any, 0, len(agents))
 	for _, a := range agents {
-		if !admin && !relevant[a.Name] {
+		if !relevant.has(a.Name) {
 			continue
 		}
 		item := map[string]any{

@@ -236,10 +236,21 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 		if !sc.Visible(a.Rule.TargetID) {
 			continue
 		}
+		// The path the manager recorded runs from the real root. Rendered as
+		// this caller sees it; a target that no longer exists has no path to
+		// render, and the recorded one is not a fallback for anyone but an
+		// admin, who is allowed to see all of it.
+		path, err := sc.PathIn(a.TargetID)
+		if err != nil {
+			path = ""
+			if sc.IsGlobalAdmin() {
+				path = a.TargetPath
+			}
+		}
 		item := map[string]any{
 			"rule":      a.Rule.Name,
 			"metric":    string(a.Rule.Metric),
-			"target":    a.TargetPath,
+			"target":    path,
 			"host":      a.TargetHost,
 			"agent":     a.AgentName,
 			"value":     a.Value,

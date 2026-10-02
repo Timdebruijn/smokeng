@@ -104,7 +104,14 @@ func settingJSON[T any](sc *Scope, nodeID int64, v tree.Value[T]) map[string]any
 	case !sc.Visible(v.Source.ID):
 		src = "outside"
 	default:
-		src = v.Source
+		// The source's own path runs from the real root, through every node
+		// above the caller's grant. Rendered as the caller sees it, like every
+		// other path in a response.
+		path, err := sc.PathIn(v.Source.ID)
+		if err != nil {
+			path = ""
+		}
+		src = tree.Source{ID: v.Source.ID, Name: v.Source.Name, Path: path}
 	}
 	return map[string]any{"local": v.Local, "effective": v.Effective, "source": src}
 }
@@ -134,10 +141,16 @@ func (s *server) handleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		badRequestMsg(w, "a new target needs a parent")
 		return
 	}
-	if _, ok := s.requireWrite(w, r, *n.ParentID); !ok {
+	sc, ok := s.requireWrite(w, r, *n.ParentID)
+	if !ok {
 		return
 	}
-	if err := s.checkAgentNames(r.Context(), n.Settings.Agents); err != nil {
+	mayName, err := sc.agentsInScope(targets)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if err := s.checkAgentNames(r.Context(), mayName, n.Settings.Agents); err != nil {
 		badRequest(w, err)
 		return
 	}
@@ -221,9 +234,19 @@ func (s *server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
-	if err := s.checkAgentNames(r.Context(), updated.Settings.Agents); err != nil {
-		badRequest(w, err)
-		return
+	// Only when the request touches it. Re-checking an unchanged list would
+	// refuse an editor changing a title because an admin once gave the node an
+	// agent that is not among the ones they are offered.
+	if touchesAgents(body) {
+		mayName, err := sc.agentsInScope(targets)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		if err := s.checkAgentNames(r.Context(), mayName, updated.Settings.Agents); err != nil {
+			badRequest(w, err)
+			return
+		}
 	}
 	planned := append([]tree.Target(nil), targets...)
 	planned[idx] = updated
@@ -325,11 +348,32 @@ func (s *server) respondTarget(w http.ResponseWriter, r *http.Request, id int64,
 	internalError(w, fmt.Errorf("api: target %d vanished after write", id))
 }
 
-// checkAgentNames refuses an `agents` list that names an agent nobody enrolled.
-// The UI offers a picker so it cannot happen there, but the API is the API, and
-// the failure it prevents is a target measured by nobody (DESIGN.md §4.4).
-func (s *server) checkAgentNames(ctx context.Context, agents *string) error {
+// checkAgentNames refuses an `agents` list that names an agent the caller may
+// not use. The UI offers a picker so it cannot happen there, but the API is the
+// API, and the failure it prevents is a target measured by nobody (DESIGN.md
+// §4.4).
+//
+// A global admin may name any enrolled agent, and is told which ones exist when
+// they get one wrong. Anyone else may name only the agents in their scope (see
+// agentsInScope), and is told only that a name is not available: not whether it
+// exists, not what else does. The two failures read the same on purpose, since
+// an agent that exists and one that does not are indistinguishable to someone
+// who has no business knowing.
+func (s *server) checkAgentNames(ctx context.Context, set agentSet, agents *string) error {
 	if agents == nil {
+		return nil
+	}
+	if !set.all {
+		var unavailable []string
+		for _, want := range strings.Fields(*agents) {
+			if !set.has(want) {
+				unavailable = append(unavailable, strconv.Quote(want))
+			}
+		}
+		if len(unavailable) > 0 {
+			return fmt.Errorf("agent %s is not available for targets in your part of the tree",
+				strings.Join(unavailable, ", "))
+		}
 		return nil
 	}
 	records, err := s.agents.ListAgents(ctx)
@@ -358,6 +402,22 @@ func (s *server) checkAgentNames(ctx context.Context, agents *string) error {
 			strings.Join(unknown, ", "), strings.Join(names, ", "))
 	}
 	return nil
+}
+
+// touchesAgents reports whether a patch sets the agents list. Settings are
+// nested under "settings" in the payload, so this looks there; a check on a
+// top-level "agents" key would never match and the list would go unchecked.
+func touchesAgents(body map[string]json.RawMessage) bool {
+	raw, ok := body["settings"]
+	if !ok {
+		return false
+	}
+	var settings map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return false // applyPatch reports the malformed payload
+	}
+	_, touched := settings["agents"]
+	return touched
 }
 
 // applyPatch mutates n with the fields present in body. A key that is absent
