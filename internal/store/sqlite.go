@@ -420,13 +420,11 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 // it is, and counted in the duplicates it returns.
 //
 // WriteMeasurements replaces instead, and for the local prober that is right —
-// it is the writer of its own rows. For an agent it let a replay stand for
-// "changes nothing" only when the bytes were identical; a submission with the
-// same key and different values silently rewrote history, and one with a
-// timestamp nobody had measured yet planted rows that survive the agent being
-// disabled. First write wins, so a stored interval is the interval the agent
-// reported at the time, and a retry of a batch whose response was lost is a
-// true no-op.
+// it is the writer of its own rows. For an agent it meant that a second signed
+// submission for an interval it had already reported, with different values,
+// silently rewrote stored history. First write wins, so a stored interval is
+// the interval the agent reported at the time. A replay changes nothing either
+// way, being byte-identical; what this changes is a submission that is not.
 func (s *SQLite) IngestMeasurements(ctx context.Context, ms []Measurement) (duplicates int, err error) {
 	inserted, err := s.writeMeasurements(ctx, ms, false)
 	return len(ms) - inserted, err

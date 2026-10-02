@@ -781,15 +781,18 @@ Then the body: the IPC framing is screened against the payload (every declared l
 must fit in the bytes that are there; nothing compressed; a schema then record batches;
 at most 10,000 rows), then decoded, and then every measurement in the batch must belong
 to a target assigned to this agent and not be timestamped later than the skew allows.
-A row that fails those last two is dropped and the rest accepted — one stale row must not
-wedge the agent's outbox.
+A row that fails those last two, or that claims more replies than probes, is dropped and
+the rest accepted — a 400 makes the agent discard its whole batch, so one bad row must not
+cost the rest.
 
-**First write wins is the real replay defense.** The nonce cache is in-memory and empties
-on master restart; the timestamp window alone would then admit replays. Because ingest
-inserts on `(target_id, agent_id, ts)` and keeps what is already there (§6), a replayed
-batch is a no-op. The nonce cache stays (cheap, blocks log spam), but correctness does not
-depend on it. An earlier design replaced on conflict, which made a replay harmless only
-when the bytes were identical: the same key with different values rewrote stored history.
+**Replay is harmless because ingest keeps what is stored.** The nonce cache is in-memory
+and empties on master restart; the timestamp window alone would then admit a captured
+request for up to 300 s. A replay is byte-identical, and ingest inserts on
+`(target_id, agent_id, ts)` and keeps what is already there (§6), so storing it again
+changes nothing. The nonce cache stays (cheap, blocks log spam), but correctness does not
+depend on it. The same rule means a *different* signed submission for an interval already
+reported changes nothing either; an earlier design replaced on conflict, which let an
+agent rewrite history it had reported.
 
 Body: the same Arrow IPC schema as §7.2 plus a `target_id` column — one serializer,
 one decoder, no second wire format. TLS required; `--insecure-allow-http` for local dev

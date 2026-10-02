@@ -290,7 +290,9 @@ func TestRateLimitedRequestsDoNotFillTheNonceCache(t *testing.T) {
 	}
 }
 
-// The other direction: a replay verifies a second time, because it is a
+// Guards against putting the limiter before the replay check. (The code before
+// this change already refused a replay first; this is not a regression test of
+// it.) A replay verifies a second time, because it is a
 // genuine signed request, so it has to be refused before it touches the rate
 // budget. Otherwise anyone who has seen one valid request can drain that
 // agent's bucket by repeating it.
