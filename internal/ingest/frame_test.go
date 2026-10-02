@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"encoding/binary"
+	"math"
 	"runtime"
 	"slices"
 	"strings"
@@ -335,14 +336,14 @@ func TestDecodeBatchCapsRows(t *testing.T) {
 		}
 		return ms
 	}
-	body, err := EncodeBatch(rows(maxBatchRows))
+	body, err := EncodeBatch(rows(MaxBatchRows))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := DecodeBatch(body, 3); err != nil || len(out) != maxBatchRows {
+	if out, err := DecodeBatch(body, 3); err != nil || len(out) != MaxBatchRows {
 		t.Fatalf("a batch of exactly the limit = %d rows, %v", len(out), err)
 	}
-	body, err = EncodeBatch(rows(maxBatchRows + 1))
+	body, err = EncodeBatch(rows(MaxBatchRows + 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,39 +352,96 @@ func TestDecodeBatchCapsRows(t *testing.T) {
 	}
 }
 
-// A reply needs a probe. More received than sent reads as negative loss.
-func TestDecodeBatchRefusesMoreRepliesThanProbes(t *testing.T) {
+// A reply needs a probe, and more received than sent reads as negative loss.
+// Only that row goes: the rest of the batch is kept, because a 400 would make
+// the agent discard all of it.
+func TestDecodeBatchDropsARowWithMoreRepliesThanProbes(t *testing.T) {
 	body, err := EncodeBatch([]store.Measurement{
-		{TargetID: 1, TS: 100, Sent: 2, Received: 3, Samples: []uint32{1, 2, 3}},
+		{TargetID: 1, TS: 100, Sent: 2, Received: 2, Samples: []uint32{1, 2}},
+		{TargetID: 1, TS: 160, Sent: 2, Received: 3, Samples: []uint32{1, 2, 3}},
+		{TargetID: 1, TS: 220, Sent: 2, Received: 1, Samples: []uint32{1}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := DecodeBatch(body, 3); err == nil || !strings.Contains(err.Error(), "replies to") {
-		t.Fatalf("received > sent: err = %v", err)
+	out, err := DecodeBatch(body, 3)
+	if err != nil {
+		t.Fatalf("a batch with one impossible row was refused: %v", err)
+	}
+	if len(out) != 2 || out[0].TS != 100 || out[1].TS != 220 {
+		t.Errorf("kept %d rows %+v, want the two possible ones", len(out), out)
 	}
 }
 
-// checkValidity has to count the array's offset: a slice of a larger array
-// reads its bits from offset+i. Arrays that come off the wire always have
-// offset 0, so only a direct test can see this term.
-func TestCheckValidityCountsTheOffset(t *testing.T) {
-	data := func(bitmap []byte, offset int) arrow.Array {
-		d := array.NewData(arrow.PrimitiveTypes.Uint16, 8,
-			[]*memory.Buffer{memory.NewBufferBytes(bitmap), memory.NewBufferBytes(make([]byte, 64))},
-			nil, 1, offset)
-		defer d.Release()
-		return array.NewUint16Data(d)
+// The screen and arrow-go have to agree on whether a flatbuffer field is
+// present, or a compressed batch can be dressed so the screen sees none. A
+// flatbuffer vtable says how many bytes it has, and arrow treats a field as
+// present when its offset is below that size, reading the 16-bit slot even when
+// its second byte lies past it; the first version of the screen required both
+// bytes to fit, and an odd vtable size made the two disagree on the last slot.
+//
+// So this does not test the screen against a description of the format. It
+// tests it against the reader: every byte of every message's metadata in a
+// zstd stream is replaced by a spread of values, and nothing the screen lets
+// through may then be decoded back into the honest row, which is only possible
+// by decompressing it.
+func TestScreenFramesAgreesWithTheReaderAboutCompression(t *testing.T) {
+	for name, opt := range map[string]ipc.Option{"zstd": ipc.WithZstd(), "lz4": ipc.WithLZ4()} {
+		t.Run(name, func(t *testing.T) { agreeAboutCompression(t, oneRow(t, 2, opt)) })
 	}
-	// Eight rows starting at bit 8 need two bytes of bitmap.
-	if err := checkValidity("x", data([]byte{0xFF}, 8)); err == nil {
-		t.Error("a one-byte bitmap for rows 8..15 passed")
+}
+
+func agreeAboutCompression(t *testing.T, good []byte) {
+	t.Helper()
+	want := []uint32{10, 20}
+	if out, err := decodeFrames(good, 3, maxDecodeBytes); err != nil || len(out) != 1 || !slices.Equal(out[0].Samples, want) {
+		t.Fatalf("the reader does not decode the unmodified stream (%v), so this test would prove nothing", err)
 	}
-	if err := checkValidity("x", data([]byte{0xFF, 0xFF}, 8)); err != nil {
-		t.Errorf("a two-byte bitmap for rows 8..15 was refused: %v", err)
+
+	var values []byte
+	for v := 0; v <= 40; v++ {
+		values = append(values, byte(v))
 	}
-	// No bitmap at all is how Arrow says nothing is null.
-	if err := checkValidity("x", data(nil, 0)); err != nil {
-		t.Errorf("an array without a bitmap was refused: %v", err)
+	values = append(values, 0x7F, 0x80, 0xFE, 0xFF)
+
+	fs, _ := frames(t, good)
+	for fi, f := range fs {
+		for i := f.metaOff; i < f.metaOff+f.metaLen; i++ {
+			for _, v := range values {
+				b := slices.Clone(good)
+				b[i] = v
+				if screenFrames(b) != nil {
+					continue
+				}
+				out, err := decodeFrames(b, 3, maxDecodeBytes)
+				if err == nil && len(out) == 1 && slices.Equal(out[0].Samples, want) {
+					t.Fatalf("message %d, metadata byte %d set to %#x: the screen passes a compressed batch "+
+						"that the reader decompresses", fi, i-f.metaOff, v)
+				}
+			}
+		}
+	}
+}
+
+// le16 and le32 must refuse an offset near the top of the int range rather than
+// let off+n wrap. On a 32-bit target that is an offset near MaxInt32, which a
+// header can carry; on this one the same wrap happens at MaxInt, so the helper
+// can be tested here.
+func TestFlatbufferReadsRefuseWrappingOffsets(t *testing.T) {
+	b := make([]byte, 16)
+	for _, off := range []int{math.MaxInt, math.MaxInt - 1, math.MaxInt - 2, math.MaxInt - 3, len(b) - 1, len(b)} {
+		if _, ok := le16(b, off); ok && off > len(b)-2 {
+			t.Errorf("le16 accepted offset %d in a %d-byte slice", off, len(b))
+		}
+		if _, ok := le32(b, off); ok && off > len(b)-4 {
+			t.Errorf("le32 accepted offset %d in a %d-byte slice", off, len(b))
+		}
+	}
+	// And the last readable position is still readable: this is a bound, not a ban.
+	if _, ok := le16(b, len(b)-2); !ok {
+		t.Error("le16 refused the last two bytes")
+	}
+	if _, ok := le32(b, len(b)-4); !ok {
+		t.Error("le32 refused the last four bytes")
 	}
 }
