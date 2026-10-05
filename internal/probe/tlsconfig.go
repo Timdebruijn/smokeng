@@ -49,6 +49,9 @@ func TrustCAFiles(paths []string) error {
 		if err != nil {
 			return fmt.Errorf("probe: read CA file: %w", err)
 		}
+		if err := certificatesOnly(data); err != nil {
+			return fmt.Errorf("probe: %s: %w", p, err)
+		}
 		if !x509.NewCertPool().AppendCertsFromPEM(data) {
 			return fmt.Errorf("probe: %s contains no PEM certificates", p)
 		}
@@ -58,6 +61,23 @@ func TrustCAFiles(paths []string) error {
 	defer caMu.Unlock()
 	localCAs = pems
 	return rebuildLocked()
+}
+
+// certificatesOnly refuses PEM that holds anything but certificates. A CA file
+// is handed, whole, to every agent the master has, so a private key appended to
+// a bundle would be published to all of them. The error names the block type
+// and never its contents.
+func certificatesOnly(data []byte) error {
+	for {
+		var block *pem.Block
+		block, data = pem.Decode(data)
+		if block == nil {
+			return nil
+		}
+		if block.Type != "CERTIFICATE" {
+			return fmt.Errorf("contains a %q block; a CA file may hold only certificates", block.Type)
+		}
+	}
 }
 
 // LocalCAPEMs returns the PEM blocks this instance was given on the command
@@ -82,6 +102,11 @@ func LocalCAPEMs() [][]byte {
 // being told what to trust is a thing an operator must be able to audit after
 // the fact, so it is never silent.
 func TrustRemoteCAPEMs(pems [][]byte) error {
+	for _, p := range pems {
+		if err := certificatesOnly(p); err != nil {
+			return fmt.Errorf("probe: from the master: %w", err)
+		}
+	}
 	caMu.Lock()
 	defer caMu.Unlock()
 	if samePEMs(remoteCAs, pems) {
