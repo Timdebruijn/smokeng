@@ -89,12 +89,14 @@ neither, smokeng cannot know the browser is on https, and with authentication en
   host of `--external-url`; anything else gets 403. A page on any site can otherwise
   point a name of its own at `127.0.0.1` and read the API from the user's browser. If you
   put a proxy that does its own login in front of an unauthenticated smokeng, set
-  `--external-url` to the name the proxy serves.
+  `--external-url` to the name the proxy serves. The same setting covers a proxy that
+  rewrites the `Host` header over plain http, where the browser sends only `Origin`.
 - **Timeouts.** 10 s to send headers, 2 min for the whole request, 5 min to write a response,
   2 min idle.
 - **Ingest memory.** At most four agent batches are decoded at once; a fifth gets `503`
   with `Retry-After`, which an agent treats as "keep it buffered", not as a bad batch. A
-  schema declaring more than 64 columns is refused.
+  schema that expands to more than 256 fields (counting nested ones and metadata
+  entries) or nests more than 4 deep is refused.
 
 ## Running the prober as its own process
 

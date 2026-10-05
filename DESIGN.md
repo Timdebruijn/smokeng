@@ -697,8 +697,8 @@ not by how wide the window is.
 **The browser's side of the boundary.** A state change is refused when the browser says it
 came from another site (`Sec-Fetch-Site`, else `Origin`): `SameSite=Lax` leaves sibling
 subdomains in. Agents and command-line clients send neither header and are not affected;
-they hold no cookie to ride. A server with no authentication answers only loopback names
-and its external URL, since otherwise a page that points its own name at 127.0.0.1 can read
+they hold no cookie to ride. A server with no authentication that listens on loopback answers only loopback
+names and its external URL, since otherwise a page that points its own name at 127.0.0.1 can read
 the API through the user's browser. These, the security headers and the connection
 timeouts are applied to the whole mux, not per route, so a route added later has them.
 

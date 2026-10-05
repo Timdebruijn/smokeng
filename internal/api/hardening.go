@@ -36,7 +36,8 @@ func (s *server) protect(next http.Handler) http.Handler {
 		}
 		if !s.sameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{
-				"error": "a change must be made from this site, not from another",
+				"error": "a change must be made from this site, not from another; if this is the site and " +
+					"a proxy rewrites the Host header, set --external-url to the address people use",
 			})
 			return
 		}
@@ -78,8 +79,11 @@ func (s *server) knownHost(hostport string) bool {
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		host = h
 	}
-	host = strings.Trim(strings.ToLower(host), "[]")
-	if host == "localhost" {
+	host = strings.TrimSuffix(strings.ToLower(host), "]")
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), ".")
+	// Browsers resolve localhost and its subdomains to loopback themselves, so a
+	// page cannot point one of them anywhere else.
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return true
 	}
 	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {

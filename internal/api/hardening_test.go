@@ -141,12 +141,12 @@ func TestAnUnauthenticatedLoopbackServerAnswersOnlyItsOwnNames(t *testing.T) {
 		h.ServeHTTP(rec, req)
 		return rec.Code
 	}
-	for _, host := range []string{"localhost:8080", "LOCALHOST", "127.0.0.1:8080", "127.0.0.2", "[::1]:8080", "smokeng.example.org"} {
+	for _, host := range []string{"localhost:8080", "LOCALHOST", "localhost.", "app.localhost:8080", "127.0.0.1:8080", "127.0.0.2", "[::1]:8080", "[::1]", "smokeng.example.org"} {
 		if code := get(host); code != http.StatusOK {
 			t.Errorf("Host %q = %d, want 200", host, code)
 		}
 	}
-	for _, host := range []string{"attacker.example", "attacker.example:8080", "localhost.attacker.example", "127.0.0.1.attacker.example", "10.0.0.1:8080", ""} {
+	for _, host := range []string{"attacker.example", "attacker.example:8080", "localhost.attacker.example", "127.0.0.1.attacker.example", "[[::1]]", "notlocalhost", "10.0.0.1:8080", ""} {
 		if code := get(host); code != http.StatusForbidden {
 			t.Errorf("Host %q = %d, want 403", host, code)
 		}

@@ -15,7 +15,9 @@ import (
 // message is read into make([]byte, n) with n taken straight off the wire, and
 // that allocation never passes through the allocator decodeBatch hands the
 // reader, so a header that claims a large length costs that much however short
-// the body is. And a compressed record batch is expanded by a zstd decoder
+// the body is. The schema is a tree the reader expands reference by reference,
+// and a flatbuffer may name one table many times, so it is counted by what it
+// expands to (see maxSchemaFields). And a compressed record batch is expanded by a zstd decoder
 // built with its default options, which sizes its window from the frame header
 // before it has produced a byte, again outside the allocator: the cost is set
 // by what the frame claims, not by its size.
@@ -66,9 +68,6 @@ func screenFrames(body []byte) error {
 			if messages != 1 {
 				return errFrame("schema message is not first")
 			}
-			if hdr.schemaFields > maxSchemaFields {
-				return errFrame("schema declares %d fields, more than the %d allowed", hdr.schemaFields, maxSchemaFields)
-			}
 		case ipc.MessageRecordBatch:
 			if messages == 1 {
 				return errFrame("record batch before any schema")
@@ -94,15 +93,20 @@ func screenFrames(body []byte) error {
 // otherwise small.
 const maxMessages = 32
 
-// maxSchemaFields bounds the columns a schema may declare. The reader builds a
-// Go value per field before it reads a row, outside the allocator, so the cost
-// is set by the count the schema claims. The real schema has a dozen.
-const maxSchemaFields = 64
+// maxSchemaFields bounds the nodes of a schema: its fields, their children at
+// every depth, and their metadata entries. The reader builds a Go value for each
+// reference before it reads a row, outside the allocator, and a flatbuffer may
+// name one table many times, so a kilobyte can ask for a million nodes: the cost
+// is set by what the schema expands to, not by its size or by how many top-level
+// fields it has. The real schema has about thirty.
+const (
+	maxSchemaFields = 256
+	maxSchemaDepth  = 4
+)
 
 type msgHeader struct {
-	typ          ipc.MessageType
-	compressed   bool
-	schemaFields int
+	typ        ipc.MessageType
+	compressed bool
 }
 
 // Flatbuffer vtable offsets are 4 + 2*slot. These are the slots of the Arrow
@@ -114,6 +118,9 @@ const (
 	vtMessageBodyLength = 10 // Message.bodyLength, int64
 	vtBatchCompression  = 10 // RecordBatch.compression, table
 	vtSchemaFields      = 6  // Schema.fields, vector of Field
+	vtSchemaMetadata    = 8  // Schema.custom_metadata, vector of KeyValue
+	vtFieldChildren     = 14 // Field.children, vector of Field
+	vtFieldMetadata     = 16 // Field.custom_metadata, vector of KeyValue
 )
 
 var errFrameShort = errors.New("ingest: malformed message header")
@@ -150,7 +157,8 @@ func inspectMessage(meta []byte) (hdr msgHeader, bodyLen int64, err error) {
 			return hdr, 0, err
 		}
 		if ok {
-			if hdr.schemaFields, err = schema.vectorLen(vtSchemaFields); err != nil {
+			budget := maxSchemaFields
+			if err := schema.countNodes(&budget, 0); err != nil {
 				return hdr, 0, err
 			}
 		}
@@ -239,22 +247,77 @@ func (t fbTable) table(vt int) (fbTable, bool, error) {
 	return fbTable{b: t.b, pos: pos}, true, nil
 }
 
-// vectorLen follows an offset field to a vector and reports how many elements it
-// declares, or 0 when the field is absent.
-func (t fbTable) vectorLen(vt int) (int, error) {
+// vector follows an offset field to a vector of four-byte elements and returns
+// the position of the first and how many there are, or none when the field is
+// absent. The elements are known to lie inside the slice.
+func (t fbTable) vector(vt int) (first, n int, err error) {
 	p, present, err := t.field(vt)
 	if err != nil || !present {
-		return 0, err
+		return 0, 0, err
 	}
 	rel, ok := le32(t.b, p)
 	if !ok || uint64(rel) > uint64(len(t.b)-p) {
-		return 0, errFrameShort
+		return 0, 0, errFrameShort
 	}
-	n, ok := le32(t.b, p+int(rel))
-	if !ok || uint64(n) > uint64(len(t.b)) { // an element is at least a byte, so more than the slice holds is a lie
-		return 0, errFrameShort
+	vec := p + int(rel)
+	count, ok := le32(t.b, vec)
+	if !ok || uint64(count) > uint64(len(t.b)-vec-4)/4 {
+		return 0, 0, errFrameShort
 	}
-	return int(n), nil
+	return vec + 4, int(count), nil
+}
+
+// element follows the i'th offset of a vector of tables, as vector located it.
+func (t fbTable) element(first, i int) (fbTable, error) {
+	at := first + 4*i
+	rel, ok := le32(t.b, at)
+	if !ok || uint64(rel) > uint64(len(t.b)-at-1) {
+		return fbTable{}, errFrameShort
+	}
+	return fbTable{b: t.b, pos: at + int(rel)}, nil
+}
+
+// countNodes walks a schema, or a field, and spends one unit of budget for every
+// field and metadata entry it names, each time it names it. A reference is
+// counted before it is followed, so the walk does no more work than the budget,
+// whatever the buffer says: sharing a child among a million parents costs a
+// million units, the same as the reader's cost.
+func (t fbTable) countNodes(budget *int, depth int) error {
+	if depth > maxSchemaDepth {
+		return errFrame("schema nests fields more than %d deep", maxSchemaDepth)
+	}
+	spend := func(n int) error {
+		if *budget -= n; *budget < 0 {
+			return errFrame("schema has more than %d fields, counting nested ones and metadata entries", maxSchemaFields)
+		}
+		return nil
+	}
+	metaVT, listVT := vtFieldMetadata, vtFieldChildren
+	if depth == 0 {
+		metaVT, listVT = vtSchemaMetadata, vtSchemaFields
+	}
+	if _, n, err := t.vector(metaVT); err != nil {
+		return err
+	} else if err := spend(n); err != nil {
+		return err
+	}
+	first, n, err := t.vector(listVT)
+	if err != nil {
+		return err
+	}
+	if err := spend(n); err != nil {
+		return err
+	}
+	for i := 0; i < n; i++ {
+		child, err := t.element(first, i)
+		if err != nil {
+			return err
+		}
+		if err := child.countNodes(budget, depth+1); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // The bounds are written as off > len(b)-n rather than off+n > len(b): on a

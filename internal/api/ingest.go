@@ -71,6 +71,7 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	case s.decodeSlots <- struct{}{}:
 		defer func() { <-s.decodeSlots }()
 	default:
+		log.Printf("ingest: agent %q turned away, %d batches are already being decoded", agent.Name, cap(s.decodeSlots))
 		w.Header().Set("Retry-After", "5")
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "busy, try again"})
 		return
