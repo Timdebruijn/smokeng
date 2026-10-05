@@ -82,7 +82,7 @@ user may reach; it does not decide who may sign in.
 ## Sessions
 
 After a successful callback, smokeng sets a `smokeng_session` cookie: HMAC-signed,
-`HttpOnly`, `SameSite=Lax`, `Secure` unless you are on plain HTTP, valid for 12 hours. It
+`HttpOnly`, `SameSite=Lax`, `Secure` unless you are on plain HTTP (see [Behind a proxy](operations.md#behind-a-proxy)), valid for 12 hours. It
 holds the subject, email, display name, role and expiry — no provider tokens, and no
 server-side session store to keep or to lose.
 

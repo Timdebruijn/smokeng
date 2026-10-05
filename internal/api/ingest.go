@@ -18,6 +18,12 @@ import (
 // measurement, so this is orders of magnitude above any honest agent.
 const maxIngestBody = 8 << 20
 
+// maxConcurrentDecodes bounds the batches being decoded at once. A decode can
+// hold tens of megabytes beyond the body, only an enrolled agent reaches it, and
+// there are as many agents as an operator enrols, so without a bound the memory
+// is the number of agents sending together times that.
+const maxConcurrentDecodes = 4
+
 // PathStore reads the route change log.
 type PathStore interface {
 	PathChanges(ctx context.Context, targetID, agentID, from, to int64) ([]store.PathChange, error)
@@ -57,6 +63,17 @@ func (s *server) agentAuth(w http.ResponseWriter, r *http.Request) (ingest.Agent
 func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	agent, body, ok := s.agentAuth(w, r)
 	if !ok {
+		return
+	}
+	// Past the bound the answer is 503, which an agent reads as "keep it
+	// buffered and try again" (anything but 400 is), not as a bad batch.
+	select {
+	case s.decodeSlots <- struct{}{}:
+		defer func() { <-s.decodeSlots }()
+	default:
+		log.Printf("ingest: agent %q turned away, %d batches are already being decoded", agent.Name, cap(s.decodeSlots))
+		w.Header().Set("Retry-After", "5")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "busy, try again"})
 		return
 	}
 	measurements, err := ingest.DecodeBatch(body, agent.ID)

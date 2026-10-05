@@ -694,6 +694,14 @@ planned, only for fields it changes and, for load, only when it makes it worse â
 Deleting a node deletes its rules and their state. Reads are bounded by what they read,
 not by how wide the window is.
 
+**The browser's side of the boundary.** A state change is refused when the browser says it
+came from another site (`Sec-Fetch-Site`, else `Origin`): `SameSite=Lax` leaves sibling
+subdomains in. Agents and command-line clients send neither header and are not affected;
+they hold no cookie to ride. A server with no authentication that listens on loopback answers only loopback
+names and its external URL, since otherwise a page that points its own name at 127.0.0.1 can read
+the API through the user's browser. These, the security headers and the connection
+timeouts are applied to the whole mux, not per route, so a route added later has them.
+
 **Enforcement is at the API boundary**, not in the store. Sessions exist there and nowhere
 else, and threading a scope through every query would spread the check across every layer
 that can read a row. The risk this accepts is the obvious one â€” a new endpoint that

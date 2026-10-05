@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -130,6 +132,37 @@ func TestRoleFromClaims(t *testing.T) {
 	for name, c := range cases {
 		if got := roleFromClaims(c.claims, c.claimName, c.adminValue); got != c.want {
 			t.Errorf("%s: role = %q, want %q", name, got, c.want)
+		}
+	}
+}
+
+// Behind a proxy that terminates TLS, on loopback, with no --external-url, the
+// server cannot tell from its own address that browsers arrive over https. The
+// proxy can say so, and then the cookie is Secure.
+func TestCookieIsSecureWhenAProxyVouchesForTLS(t *testing.T) {
+	forwarded := func(r *http.Request) bool { return r.Header.Get("X-Forwarded-Proto") == "https" }
+	req := func(proto string) *http.Request {
+		r := httptest.NewRequest("GET", "/auth/login", nil)
+		if proto != "" {
+			r.Header.Set("X-Forwarded-Proto", proto)
+		}
+		return r
+	}
+	for _, c := range []struct {
+		name   string
+		cfg    Config
+		proto  string
+		secure bool
+	}{
+		{"insecure, direct", Config{Insecure: true, HTTPS: forwarded}, "", false},
+		{"insecure, proxy says http", Config{Insecure: true, HTTPS: forwarded}, "http", false},
+		{"insecure, proxy says https", Config{Insecure: true, HTTPS: forwarded}, "https", true},
+		{"insecure, nothing configured to believe", Config{Insecure: true}, "https", false},
+		{"secure stays secure", Config{HTTPS: forwarded}, "", true},
+	} {
+		a := &Authenticator{cfg: c.cfg}
+		if got := a.cookie(req(c.proto), "s", "v", time.Minute).Secure; got != c.secure {
+			t.Errorf("%s: Secure = %v, want %v", c.name, got, c.secure)
 		}
 	}
 }

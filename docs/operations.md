@@ -66,6 +66,38 @@ affects logging and nothing else: smokeng authorises agents by signature and bro
 session cookie, never by address, so a forged header cannot get past anything. It can
 only put a lie in your logs, which is precisely what this stops.
 
+When `--external-url` is not set but the proxy is on `--trusted-proxies`, a request that
+arrives with `X-Forwarded-Proto: https` from one of them also gets a `Secure` cookie. With
+neither, smokeng cannot know the browser is on https, and with authentication enabled it says so at startup.
+
+### What the web server does for itself
+
+- **Cross-site changes are refused.** A request that changes something (anything but
+  GET, HEAD and OPTIONS) is refused with 403 when the browser says it came from another
+  site: `Sec-Fetch-Site` other than `same-origin` or `none`, or, from a browser that does not send that,
+  an `Origin` whose scheme, host and port are neither those of the `Host` it was sent to (an http origin is refused where the request is known to be https) nor those of `--external-url`.
+  A request that sends neither header is not from a browser (`curl`, an agent) and is
+  let through: it carries no session cookie to ride on. `SameSite=Lax` alone does not stop
+  a page on a sibling subdomain.
+- **Security headers** on every response: a Content-Security-Policy that allows only the
+  UI's own scripts, styles, fonts and workers and forbids framing, `nosniff`,
+  `Referrer-Policy: no-referrer`, and same-origin cross-origin policies. HSTS is left to the
+  proxy, which knows whether the name should be pinned to https. If you serve other content
+  on the same name through the proxy, it inherits these headers too.
+- **Without authentication, only its own names are answered.** A server started with no
+  `--oidc-issuer` on a loopback address answers only `localhost`, loopback addresses and the
+  host of `--external-url`; anything else gets 403. A page on any site can otherwise
+  point a name of its own at `127.0.0.1` and read the API from the user's browser. If you
+  put a proxy that does its own login in front of an unauthenticated smokeng, set
+  `--external-url` to the name the proxy serves. The same setting covers a proxy that
+  rewrites the `Host` header over plain http, where the browser sends only `Origin`.
+- **Timeouts.** 10 s to send headers, 2 min for the whole request, 5 min to write a response,
+  2 min idle.
+- **Ingest memory.** At most four agent batches are decoded at once; a fifth gets `503`
+  with `Retry-After`, which an agent treats as "keep it buffered", not as a bad batch. A
+  schema that expands to more than 256 fields (counting nested ones and metadata
+  entries) or nests more than 4 deep is refused.
+
 ## Running the prober as its own process
 
 By default one process does everything: scheduler, probing engine, database, API and web

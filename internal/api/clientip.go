@@ -89,3 +89,19 @@ func (s *server) clientIP(r *http.Request) string {
 	}
 	return host
 }
+
+// ForwardedHTTPS reports whether a trusted proxy says the browser connected over
+// TLS. Like the client address it is believed only from a trusted peer, and what
+// it decides is whether a cookie is marked Secure, never who may do what.
+func (t TrustedProxies) ForwardedHTTPS(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	if peer == nil || !t.has(peer) {
+		return false
+	}
+	proto, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
+}

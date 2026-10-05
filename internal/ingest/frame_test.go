@@ -13,6 +13,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/timdebruijn/smokeng/internal/store"
 )
@@ -479,5 +480,173 @@ func TestDecodeBatchCapsRowsAcrossRecordBatches(t *testing.T) {
 	// One row over, nothing of it kept.
 	if _, err := DecodeBatch(repeat(impossible(MaxBatchRows/2+1), 2), 3); err == nil {
 		t.Error("a stream carrying more than the cap in dropped rows was decoded")
+	}
+}
+
+// The reader builds a Go value for every field a schema declares, outside the
+// allocator and before any row is read, so a schema of 150,000 one-byte fields
+// in a 6 MiB body cost 54 MiB. An honest agent sends a dozen.
+func TestScreenFramesCapsTheFieldsOfASchema(t *testing.T) {
+	schemaOf := func(n int) []byte {
+		fields := make([]arrow.Field, n)
+		for i := range fields {
+			fields[i] = arrow.Field{Name: "c" + strings.Repeat("x", i%7) + string(rune('a'+i%26)) + string(rune('a'+i/26%26)) + string(rune('a'+i/676%26)), Type: arrow.PrimitiveTypes.Int8}
+		}
+		var buf bytes.Buffer
+		sc := arrow.NewSchema(fields, nil)
+		w := ipc.NewWriter(&buf, ipc.WithSchema(sc))
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+	if err := screenFrames(schemaOf(maxSchemaFields)); err != nil {
+		t.Errorf("a schema of %d fields was refused: %v", maxSchemaFields, err)
+	}
+	err := screenFrames(schemaOf(maxSchemaFields + 1))
+	if err == nil || !strings.Contains(err.Error(), "fields") {
+		t.Errorf("a schema of %d fields: err = %v", maxSchemaFields+1, err)
+	}
+	// The real schema is well inside it.
+	if n := len(BatchSchema.Fields()); n > maxSchemaFields/2 {
+		t.Errorf("the real schema has %d fields; the cap of %d leaves no room to grow", n, maxSchemaFields)
+	}
+}
+
+// hostileSchema is a schema stream in which one leaf field is named by many
+// parents, which a flatbuffer allows and arrow-go's reader expands: it builds a
+// Go value per reference, so a kilobyte of metadata asks for gigabytes. fan is
+// the number of children per level and levels how deep it goes; the leaf is
+// shared, so the stream stays small while the tree the reader builds is
+// fan^levels nodes.
+func hostileSchema(fan, levels int, schemaMeta, fieldMeta int) []byte {
+	b := flatbuffers.NewBuilder(1024)
+	metaVec := func(n int) flatbuffers.UOffsetT {
+		if n == 0 {
+			return 0
+		}
+		k, v := b.CreateString("k"), b.CreateString("v")
+		b.StartObject(2)
+		b.PrependUOffsetTSlot(0, k, 0)
+		b.PrependUOffsetTSlot(1, v, 0)
+		kv := b.EndObject()
+		b.StartVector(4, n, 4)
+		for i := 0; i < n; i++ {
+			b.PrependUOffsetT(kv)
+		}
+		return b.EndVector(n)
+	}
+	nullType := func() flatbuffers.UOffsetT { b.StartObject(0); return b.EndObject() }()
+	field := func(name string, children []flatbuffers.UOffsetT, meta int) flatbuffers.UOffsetT {
+		n := b.CreateString(name)
+		mv := metaVec(meta)
+		var vec flatbuffers.UOffsetT
+		if len(children) > 0 {
+			b.StartVector(4, len(children), 4)
+			for i := len(children) - 1; i >= 0; i-- {
+				b.PrependUOffsetT(children[i])
+			}
+			vec = b.EndVector(len(children))
+		}
+		b.StartObject(7) // Field
+		b.PrependUOffsetTSlot(0, n, 0)
+		b.PrependByteSlot(2, 1, 0) // type_type: Null
+		b.PrependUOffsetTSlot(3, nullType, 0)
+		if vec != 0 {
+			b.PrependUOffsetTSlot(5, vec, 0) // children
+		}
+		if mv != 0 {
+			b.PrependUOffsetTSlot(6, mv, 0) // custom_metadata
+		}
+		return b.EndObject()
+	}
+	node := field("leaf", nil, fieldMeta)
+	for l := 0; l < levels; l++ {
+		kids := make([]flatbuffers.UOffsetT, fan)
+		for i := range kids {
+			kids[i] = node
+		}
+		node = field("p", kids, 0)
+	}
+	b.StartVector(4, 1, 4)
+	b.PrependUOffsetT(node)
+	fields := b.EndVector(1)
+	schemaMV := metaVec(schemaMeta)
+	b.StartObject(4) // Schema
+	b.PrependUOffsetTSlot(1, fields, 0)
+	if schemaMV != 0 {
+		b.PrependUOffsetTSlot(2, schemaMV, 0)
+	}
+	schema := b.EndObject()
+	b.StartObject(5)            // Message
+	b.PrependInt16Slot(0, 4, 0) // V5
+	b.PrependByteSlot(1, 1, 0)  // header_type: Schema
+	b.PrependUOffsetTSlot(2, schema, 0)
+	b.PrependInt64Slot(3, 0, 0) // bodyLength
+	b.Finish(b.EndObject())
+	meta := b.FinishedBytes()
+	for len(meta)%8 != 0 {
+		meta = append(meta, 0)
+	}
+	out := binary.LittleEndian.AppendUint32(nil, 0xFFFFFFFF)
+	out = binary.LittleEndian.AppendUint32(out, uint32(len(meta)))
+	out = append(out, meta...)
+	out = binary.LittleEndian.AppendUint32(out, 0xFFFFFFFF)
+	return binary.LittleEndian.AppendUint32(out, 0)
+}
+
+// A schema is a tree, and the reader walks every reference, so what bounds its
+// cost is the number of nodes it expands to, not the number of top-level fields.
+func TestScreenFramesCountsTheNodesTheReaderWillBuild(t *testing.T) {
+	// Control: the stream is a schema the reader accepts, so a refusal below is
+	// about size and not about a malformed hand-built buffer.
+	small := hostileSchema(3, 2, 0, 0) // 1 + 3 + 9 nodes, with sharing
+	if _, err := ipc.NewReader(bytes.NewReader(small), ipc.WithAllocator(memory.NewGoAllocator())); err != nil {
+		t.Fatalf("the reader refuses the control schema: %v", err)
+	}
+	if err := screenFrames(small); err != nil {
+		t.Errorf("a small nested schema was refused: %v", err)
+	}
+	for _, c := range []struct{ fan, levels int }{
+		{100, 1},  // one field with a hundred children is fine; ...
+		{300, 1},  // ... three hundred are not
+		{100, 3},  // 1e6 nodes from a kilobyte
+		{1000, 1}, // a wide one
+		{1, 3},    // nesting at the depth limit is fine; ...
+		{1, 4},    // ... one deeper is not, though it is a handful of nodes
+	} {
+		body := hostileSchema(c.fan, c.levels, 0, 0)
+		err := screenFrames(body)
+		want := c.fan > 255 || c.levels > 1
+		if c.fan == 1 {
+			want = c.levels > maxSchemaDepth-1
+		}
+		if (err != nil) != want {
+			t.Errorf("fan %d x %d levels (%d bytes): err = %v, refused = %v, want refused = %v",
+				c.fan, c.levels, len(body), err, err != nil, want)
+		}
+	}
+}
+
+// Metadata entries are built one by one as well.
+func TestScreenFramesCountsMetadataEntries(t *testing.T) {
+	for _, c := range []struct {
+		schema, field int
+		refused       bool
+	}{
+		{10, 10, false},
+		{maxSchemaFields, 0, true}, // plus the one field
+		{0, maxSchemaFields, true},
+		{100_000, 0, true},
+		{0, 100_000, true},
+	} {
+		body := hostileSchema(1, 0, c.schema, c.field)
+		if (screenFrames(body) != nil) != c.refused {
+			t.Errorf("schema metadata %d, field metadata %d (%d bytes): err = %v, want refused = %v",
+				c.schema, c.field, len(body), screenFrames(body), c.refused)
+		}
+	}
+	if _, err := ipc.NewReader(bytes.NewReader(hostileSchema(1, 0, 10, 10)), ipc.WithAllocator(memory.NewGoAllocator())); err != nil {
+		t.Errorf("the reader refuses the control schema with metadata: %v", err)
 	}
 }

@@ -36,6 +36,12 @@ type Config struct {
 	// Insecure allows the session cookie over plain HTTP, for local
 	// development only.
 	Insecure bool
+	// HTTPS reports whether a request reached the browser over TLS although it
+	// arrived here as plain HTTP, as it does behind a proxy that terminates it.
+	// When it says so the cookie is Secure whatever Insecure says, so a proxy on
+	// loopback in front of a server that was never told its public URL does not
+	// leave the session cookie free to travel over http. Nil means never.
+	HTTPS func(*http.Request) bool
 }
 
 // Authenticator handles the OIDC login flow and turns its result into a
@@ -94,7 +100,7 @@ func (a *Authenticator) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, a.cookie(stateCookie, base64.RawURLEncoding.EncodeToString(pending), 10*time.Minute))
+	http.SetCookie(w, a.cookie(r, stateCookie, base64.RawURLEncoding.EncodeToString(pending), 10*time.Minute))
 	http.Redirect(w, r, a.oauth.AuthCodeURL(state,
 		oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), http.StatusFound)
 }
@@ -116,7 +122,7 @@ func (a *Authenticator) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Clear it either way: the state is single-use.
-	http.SetCookie(w, a.cookie(stateCookie, "", -time.Hour))
+	http.SetCookie(w, a.cookie(r, stateCookie, "", -time.Hour))
 
 	if r.URL.Query().Get("state") != pending["state"] {
 		http.Error(w, "state mismatch", http.StatusBadRequest)
@@ -164,12 +170,12 @@ func (a *Authenticator) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, a.cookie(sessionCookie, value, sessionTTL))
+	http.SetCookie(w, a.cookie(r, sessionCookie, value, sessionTTL))
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (a *Authenticator) handleLogout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, a.cookie(sessionCookie, "", -time.Hour))
+	http.SetCookie(w, a.cookie(r, sessionCookie, "", -time.Hour))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -235,13 +241,13 @@ func roleFromClaims(claims map[string]any, claimName, adminValue string) Role {
 	return RoleViewer
 }
 
-func (a *Authenticator) cookie(name, value string, ttl time.Duration) *http.Cookie {
+func (a *Authenticator) cookie(r *http.Request, name, value string, ttl time.Duration) *http.Cookie {
 	return &http.Cookie{
 		Name:     name,
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   !a.cfg.Insecure,
+		Secure:   !a.cfg.Insecure || (a.cfg.HTTPS != nil && a.cfg.HTTPS(r)),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(ttl.Seconds()),
 	}
