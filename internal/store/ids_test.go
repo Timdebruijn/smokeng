@@ -575,3 +575,81 @@ func TestAPathWithQuestionMarkOrHashOpensThatFile(t *testing.T) {
 		})
 	}
 }
+
+func mode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.Mode().Perm()
+}
+
+// The database holds the key that signs session cookies, so a copy of it, or a
+// read of it by another local user, is a way to be any user. A new one is created
+// private whatever the umask is, and the sidecar files SQLite writes beside it
+// take its mode.
+func TestANewDatabaseIsPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.db.Exec(`INSERT INTO settings (key, value) VALUES ('x', 'y')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if m := mode(t, p); m&0o077 != 0 {
+			t.Errorf("%s is %v, readable beyond its owner", filepath.Base(p), m)
+		}
+	}
+}
+
+// One that exists is not made less accessible to the group an operator chose,
+// but is closed to everyone else, and the operator is told.
+func TestAnExistingDatabaseLosesWorldAccessAndNothingElse(t *testing.T) {
+	for _, c := range []struct{ from, want os.FileMode }{
+		{0o644, 0o640},
+		{0o666, 0o660},
+		{0o640, 0o640},
+		{0o600, 0o600},
+		{0o604, 0o600},
+		{0o602, 0o600},
+		{0o601, 0o600},
+	} {
+		path := filepath.Join(t.TempDir(), "old.db")
+		s, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+		// Leftovers of a crashed run: sidecars at the old mode, empty.
+		for _, p := range []string{path + "-wal", path + "-shm"} {
+			if err := os.WriteFile(p, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, p := range []string{path, path + "-wal", path + "-shm"} {
+			if err := os.Chmod(p, c.from); err != nil {
+				t.Fatal(err)
+			}
+		}
+		s, err = Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('x', 'y')`); err != nil {
+			t.Fatal(err)
+		}
+		if got := mode(t, path); got != c.want {
+			t.Errorf("a %v database became %v, want %v", c.from, got, c.want)
+		}
+		for _, p := range []string{path + "-wal", path + "-shm"} {
+			if _, err := os.Stat(p); err == nil && mode(t, p)&0o007 != 0 {
+				t.Errorf("a %v database left %s world-accessible: %v", c.from, filepath.Base(p), mode(t, p))
+			}
+		}
+		s.Close()
+	}
+}
