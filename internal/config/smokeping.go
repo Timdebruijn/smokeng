@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"html"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -58,8 +59,29 @@ func ParseSmokePing(data []byte, alsoIPv6 bool) (File, []string, error) {
 // directives, resolving each relative to the including file's directory. This
 // is what turns a multi-file SmokePing install — almost every real one — into a
 // single import rather than one per file.
-func ParseSmokePingFile(path string, alsoIPv6 bool) (File, []string, error) {
-	lines, warnings, err := readSmokePingLines(path, map[string]bool{}, 0)
+//
+// An include names a path the file chooses and what it names is read into the
+// import, so by default only what sits under the directory of the file being
+// imported is followed; roots names further directories to allow. Included
+// files must be regular, and the number and total size of what is read is
+// bounded, since a handful of lines can include one file a million times.
+func ParseSmokePingFile(path string, alsoIPv6 bool, roots ...string) (File, []string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return File{}, nil, err
+	}
+	r := &includeReader{seen: map[string]bool{}}
+	for _, dir := range append([]string{filepath.Dir(abs)}, roots...) {
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return File{}, nil, fmt.Errorf("smokeping: include root %s: %w", dir, err)
+		}
+		if real, err = filepath.Abs(real); err != nil {
+			return File{}, nil, err
+		}
+		r.roots = append(r.roots, real)
+	}
+	lines, warnings, err := r.read(path, 0, true)
 	if err != nil {
 		return File{}, warnings, err
 	}
@@ -67,14 +89,73 @@ func ParseSmokePingFile(path string, alsoIPv6 bool) (File, []string, error) {
 	return f, append(warnings, w2...), err
 }
 
-// readSmokePingLines reads one file into source lines, expanding @include in
-// place. seen guards against an include cycle; depth is a backstop.
-func readSmokePingLines(path string, seen map[string]bool, depth int) ([]srcLine, []string, error) {
+// What one import may read through @include, in files and bytes. A real install
+// is a few dozen files of a few kilobytes. Variables so a test can lower them.
+var (
+	maxIncludeFiles = 2000
+	maxIncludeBytes = 64 << 20
+)
+
+// includeReader expands @include in place. seen guards against an include
+// cycle; depth is a backstop; roots are the directories an include may live
+// under, with symlinks resolved; files and bytes are what has been read so far.
+type includeReader struct {
+	seen         map[string]bool
+	roots        []string
+	files, bytes int
+}
+
+func (r *includeReader) within(real string) bool {
+	for _, root := range r.roots {
+		if rel, err := filepath.Rel(root, real); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			return true
+		}
+	}
+	return false
+}
+
+// readFile reads one file, refusing what is outside the roots (the file the
+// operator named is always allowed), what is not a regular file, and what would
+// take the import past its budget.
+func (r *includeReader) readFile(abs string, top bool) ([]byte, error) {
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, err
+	}
+	if !top && !r.within(real) {
+		return nil, fmt.Errorf("%s is outside the directory of the file being imported; "+
+			"pass --include-root DIR to allow a directory", real)
+	}
+	f, err := os.Open(real)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil {
+		return nil, err
+	} else if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", real)
+	}
+	if r.files++; r.files > maxIncludeFiles {
+		return nil, fmt.Errorf("more than %d files read through @include", maxIncludeFiles)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, int64(maxIncludeBytes-r.bytes)+1))
+	if err != nil {
+		return nil, err
+	}
+	if r.bytes += len(data); r.bytes > maxIncludeBytes {
+		return nil, fmt.Errorf("more than %d bytes read through @include", maxIncludeBytes)
+	}
+	return data, nil
+}
+
+// read reads one file into source lines, expanding @include in place.
+func (r *includeReader) read(path string, depth int, top bool) ([]srcLine, []string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	if seen[abs] {
+	if r.seen[abs] {
 		// A cycle: the file includes itself directly or through others. Stop
 		// rather than loop, and say which file closed the loop.
 		return nil, []string{fmt.Sprintf("@include cycle at %s; not expanded again", path)}, nil
@@ -82,12 +163,12 @@ func readSmokePingLines(path string, seen map[string]bool, depth int) ([]srcLine
 	if depth > maxIncludeDepth {
 		return nil, nil, fmt.Errorf("smokeping: @include nested deeper than %d at %s", maxIncludeDepth, path)
 	}
-	data, err := os.ReadFile(abs)
+	data, err := r.readFile(abs, top)
 	if err != nil {
 		return nil, nil, err
 	}
-	seen[abs] = true
-	defer delete(seen, abs) // a file may be included by two siblings; only a true cycle is on the current stack
+	r.seen[abs] = true
+	defer delete(r.seen, abs) // a file may be included by two siblings; only a true cycle is on the current stack
 
 	var out []srcLine
 	var warnings []string
@@ -108,7 +189,7 @@ func readSmokePingLines(path string, seen map[string]bool, depth int) ([]srcLine
 			if !filepath.IsAbs(inc) {
 				inc = filepath.Join(filepath.Dir(abs), inc)
 			}
-			sub, subWarn, err := readSmokePingLines(inc, seen, depth+1)
+			sub, subWarn, err := r.read(inc, depth+1, false)
 			warnings = append(warnings, subWarn...)
 			if err != nil {
 				return nil, warnings, fmt.Errorf("smokeping: @include %q (from %s line %d): %w", inc, path, no, err)

@@ -94,6 +94,8 @@ func configCmd(args []string) error {
 		"accept `agents` entries that name no enrolled agent, reporting them as warnings")
 	alsoIPv6 := fs.Bool("also-ipv6", false,
 		"import-smokeping: also create a v6 target for every hostname (address families are separate targets)")
+	includeRoots := fs.String("include-root", "",
+		"import-smokeping: comma-separated directories, besides the file's own, that @include may read from")
 	dryRun := fs.Bool("dry-run", false, "import-smokeping: print the translated config instead of writing it")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -129,12 +131,12 @@ func configCmd(args []string) error {
 		return nil
 	case "import-smokeping":
 		if fs.NArg() != 1 {
-			return errors.New("usage: smokeng config import-smokeping [--db path] [--also-ipv6] [--dry-run] TARGETS-FILE")
+			return errors.New("usage: smokeng config import-smokeping [--db path] [--also-ipv6] [--include-root DIR] [--dry-run] TARGETS-FILE")
 		}
 		// The file form, not the byte form, so @include is followed relative to
 		// the file — a real SmokePing install is almost always split across
 		// included files.
-		f, warnings, err := config.ParseSmokePingFile(fs.Arg(0), *alsoIPv6)
+		f, warnings, err := config.ParseSmokePingFile(fs.Arg(0), *alsoIPv6, splitList(*includeRoots)...)
 		// Warnings name what SmokePing expressed that smokeng will not, so
 		// they go to stderr even when the import itself fails.
 		for _, w := range warnings {

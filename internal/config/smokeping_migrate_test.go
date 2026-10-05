@@ -151,3 +151,141 @@ host = 1.1.1.1
 	// probe_type is written.
 	check("svc/plainping", "", nil)
 }
+
+func writeFile(t *testing.T, p, s string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An @include is a path the file chooses, and what it names is read into the
+// import: a line shaped like "key = value" in any readable file becomes a note
+// on a target in the database. So a file may include what sits under its own
+// directory, which is how an install is split, and anything else is refused
+// until the operator says where else to look.
+func TestSmokePingIncludesStayUnderTheFilesDirectory(t *testing.T) {
+	base := t.TempDir()
+	conf := filepath.Join(base, "smokeping")
+	outside := filepath.Join(base, "elsewhere", "secret.cfg")
+	writeFile(t, outside, "++ leaked\nhost = 192.0.2.9\nnotes = hunter2\n")
+	main := func(inc string) string {
+		p := filepath.Join(conf, "Targets")
+		writeFile(t, p, "*** Targets ***\nprobe = FPing\n+ A\nhost = 1.1.1.1\n@include "+inc+"\n")
+		return p
+	}
+	for _, inc := range []string{outside, "../elsewhere/secret.cfg", "sub/../../elsewhere/secret.cfg"} {
+		_, _, err := ParseSmokePingFile(main(inc), false)
+		if err == nil || !strings.Contains(err.Error(), "--include-root") {
+			t.Errorf("@include %s: err = %v, want a refusal that names --include-root", inc, err)
+		}
+	}
+	// Control: the same file is read once it is allowed, so the refusal above was about where it is.
+	f, _, err := ParseSmokePingFile(main(outside), false, filepath.Join(base, "elsewhere"))
+	if err != nil {
+		t.Fatalf("with the directory allowed: %v", err)
+	}
+	if _, ok := f.Targets["A/leaked"]; !ok {
+		t.Errorf("the allowed include was not read; got %v", keys(f.Targets))
+	}
+	// And a file under the directory needs no flag.
+	writeFile(t, filepath.Join(conf, "config.d", "more.cfg"), "++ fine\nhost = 1.0.0.1\n")
+	f, _, err = ParseSmokePingFile(main("config.d/more.cfg"), false)
+	if err != nil || f.Targets["A/fine"].Host == nil {
+		t.Errorf("an include under the file's directory: %v", err)
+	}
+	// A sibling directory that merely shares a name prefix is not under it.
+	writeFile(t, filepath.Join(base, "smokeping-other", "x.cfg"), "++ y\nhost = 1.1.1.2\n")
+	if _, _, err := ParseSmokePingFile(main("../smokeping-other/x.cfg"), false); err == nil {
+		t.Error("a directory sharing the name prefix was treated as inside")
+	}
+}
+
+// A symlink inside the directory is a way out of it.
+func TestSmokePingIncludesDoNotFollowSymlinksOut(t *testing.T) {
+	base := t.TempDir()
+	conf := filepath.Join(base, "conf")
+	writeFile(t, filepath.Join(base, "outside.cfg"), "++ leaked\nhost = 192.0.2.9\n")
+	writeFile(t, filepath.Join(conf, "Targets"), "*** Targets ***\nprobe = FPing\n+ A\nhost = 1.1.1.1\n@include link.cfg\n")
+	if err := os.Symlink(filepath.Join(base, "outside.cfg"), filepath.Join(conf, "link.cfg")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ParseSmokePingFile(filepath.Join(conf, "Targets"), false); err == nil || !strings.Contains(err.Error(), "--include-root") {
+		t.Errorf("an include through a symlink out of the directory: err = %v", err)
+	}
+	// A symlink that stays inside is fine.
+	writeFile(t, filepath.Join(conf, "real.cfg"), "++ ok\nhost = 1.0.0.1\n")
+	if err := os.Symlink(filepath.Join(conf, "real.cfg"), filepath.Join(conf, "inside.cfg")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(conf, "Targets"), "*** Targets ***\nprobe = FPing\n+ A\nhost = 1.1.1.1\n@include inside.cfg\n")
+	if _, _, err := ParseSmokePingFile(filepath.Join(conf, "Targets"), false); err != nil {
+		t.Errorf("a symlink within the directory: %v", err)
+	}
+}
+
+// ReadFile on /dev/zero, or a FIFO nobody writes to, does not return.
+func TestSmokePingIncludesReadOnlyRegularFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "Targets"), "*** Targets ***\nprobe = FPing\n+ A\nhost = 1.1.1.1\n@include /dev/zero\n")
+	_, _, err := ParseSmokePingFile(filepath.Join(dir, "Targets"), false, "/dev")
+	if err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Errorf("@include /dev/zero: err = %v", err)
+	}
+}
+
+// Two includes of the same file are fine (siblings may share one); a file that
+// includes a small one a hundred thousand times is a way to spend memory with
+// a few kilobytes of input.
+func TestSmokePingIncludesAreBudgeted(t *testing.T) {
+	defer func(f, b int) { maxIncludeFiles, maxIncludeBytes = f, b }(maxIncludeFiles, maxIncludeBytes)
+	maxIncludeFiles, maxIncludeBytes = 50, 1<<20 // bytes are lowered below, for the one case that is about them
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "x.cfg"), "# x\n")
+	list := func(n int, name string) string {
+		return "*** Targets ***\nprobe = FPing\n+ A\nhost = 1.1.1.1\n" + strings.Repeat("@include "+name+"\n", n)
+	}
+	writeFile(t, filepath.Join(dir, "few"), list(10, "x.cfg"))
+	if _, _, err := ParseSmokePingFile(filepath.Join(dir, "few"), false); err != nil {
+		t.Errorf("ten includes of one file: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "many"), list(60, "x.cfg"))
+	if _, _, err := ParseSmokePingFile(filepath.Join(dir, "many"), false); err == nil || !strings.Contains(err.Error(), "more than") {
+		t.Errorf("sixty includes against a limit of fifty: err = %v", err)
+	}
+	maxIncludeBytes = 1 << 10
+	writeFile(t, filepath.Join(dir, "big.cfg"), strings.Repeat("# padding padding padding\n", 20)) // ~520 bytes
+	writeFile(t, filepath.Join(dir, "heavy"), list(3, "big.cfg"))
+	if _, _, err := ParseSmokePingFile(filepath.Join(dir, "heavy"), false); err == nil || !strings.Contains(err.Error(), "more than") {
+		t.Errorf("three reads of a 520-byte file against a limit of 1 KiB: err = %v", err)
+	}
+	// Nesting: a file that includes itself through a chain is the cycle guard's
+	// business, but a fan-out at every level multiplies; the budget stops it.
+	maxIncludeBytes = 1 << 20
+	writeFile(t, filepath.Join(dir, "l2"), "# l2\n")
+	writeFile(t, filepath.Join(dir, "l1"), strings.Repeat("@include l2\n", 8))
+	writeFile(t, filepath.Join(dir, "top"), "*** Targets ***\nprobe = FPing\n+ A\nhost = 1.1.1.1\n"+strings.Repeat("@include l1\n", 8))
+	if _, _, err := ParseSmokePingFile(filepath.Join(dir, "top"), false); err == nil {
+		t.Error("8 x 8 includes (73 reads) against a limit of fifty was accepted")
+	}
+}
+
+// The file the operator names is theirs to read, wherever it really is: a
+// config that is a symlink into a deployment directory still imports.
+func TestSmokePingTheNamedFileMayBeASymlink(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, "deploy", "Targets"), "*** Targets ***\nprobe = FPing\n+ A\nhost = 1.1.1.1\n")
+	if err := os.MkdirAll(filepath.Join(base, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "etc", "Targets")
+	if err := os.Symlink(filepath.Join(base, "deploy", "Targets"), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ParseSmokePingFile(link, false); err != nil {
+		t.Errorf("a named file that is a symlink to another directory: %v", err)
+	}
+}
