@@ -75,7 +75,7 @@ neither, smokeng cannot know the browser is on https, and with authentication en
 - **Cross-site changes are refused.** A request that changes something (anything but
   GET, HEAD and OPTIONS) is refused with 403 when the browser says it came from another
   site: `Sec-Fetch-Site` other than `same-origin` or `none`, or, from a browser that does not send that,
-  an `Origin` that is neither the `Host` it was sent to nor the host of `--external-url`.
+  an `Origin` whose scheme, host and port are neither those of the `Host` it was sent to (an http origin is refused where the request is known to be https) nor those of `--external-url`.
   A request that sends neither header is not from a browser (`curl`, an agent) and is
   let through: it carries no session cookie to ride on. `SameSite=Lax` alone does not stop
   a page on a sibling subdomain.

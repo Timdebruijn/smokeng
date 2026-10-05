@@ -51,7 +51,6 @@ func TestStateChangingRequestsMustComeFromThisOrigin(t *testing.T) {
 		{"fetch metadata: typed in the address bar", "", map[string]string{"Sec-Fetch-Site": "none"}, true},
 		{"fetch metadata: a sibling subdomain", "", map[string]string{"Sec-Fetch-Site": "same-site"}, false},
 		{"fetch metadata: another site", "", map[string]string{"Sec-Fetch-Site": "cross-site"}, false},
-		{"origin: this host", "", map[string]string{"Origin": "http://example.com"}, true},
 		{"origin: the public address behind a proxy", "backend:8080", map[string]string{"Origin": "https://smokeng.example.org"}, true},
 		{"origin: another host", "", map[string]string{"Origin": "https://evil.example"}, false},
 		{"origin: a prefix of this host", "", map[string]string{"Origin": "http://example.com.evil.example"}, false},
@@ -215,5 +214,66 @@ func TestADecodeSlotIsHeldWhileBatchIsHandledAndThenReleased(t *testing.T) {
 	}
 	if n := len(srv.decodeSlots); n != 0 {
 		t.Errorf("%d slot(s) still held after every batch finished", n)
+	}
+}
+
+// Where the browser sends no Sec-Fetch-Site (plain http, an old browser), the
+// Origin is all there is, and it names a scheme, a host and a port. The same
+// host on another scheme is another origin, and the default port is the same
+// port however it is written.
+func TestTheOriginFallbackComparesSchemeHostAndPort(t *testing.T) {
+	st := seededStore(t)
+	trusted, err := ParseTrustedProxies("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := New(st, Options{Auth: &fakeAuth{session: adminSession()}, TrustedProxies: trusted}, fstest.MapFS{})
+	https := New(st, Options{Auth: &fakeAuth{session: adminSession()}, ExternalURL: "https://smokeng.example.org"}, fstest.MapFS{})
+	http80 := New(st, Options{Auth: &fakeAuth{session: adminSession()}, ExternalURL: "http://smokeng.example.org:80"}, fstest.MapFS{})
+	try := func(h http.Handler, host, origin, peer, proto string) bool {
+		req := httptest.NewRequest("POST", "/api/v1/targets", strings.NewReader("{}"))
+		req.Host = host
+		req.Header.Set("Origin", origin)
+		if peer != "" {
+			req.RemoteAddr = peer
+		}
+		if proto != "" {
+			req.Header.Set("X-Forwarded-Proto", proto)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code != http.StatusForbidden
+	}
+	for _, c := range []struct {
+		name                      string
+		h                         http.Handler
+		host, origin, peer, proto string
+		want                      bool
+	}{
+		{"same host, same scheme", plain, "example.com", "http://example.com", "", "", true},
+		{"explicit default port", plain, "example.com", "http://example.com:80", "", "", true},
+		{"default port on the host side", plain, "example.com:80", "http://example.com", "", "", true},
+		{"another port", plain, "example.com", "http://example.com:8080", "", "", false},
+		{"another port on the host side", plain, "example.com:8080", "http://example.com", "", "", false},
+		{"not a web origin", plain, "example.com", "ftp://example.com", "", "", false},
+		{"https origin where plain http is assumed", plain, "example.com", "https://example.com", "", "", true},
+		// A proxy we trust says the browser is on https: an http page of the same
+		// host is a downgrade, not this site.
+		{"http origin, trusted proxy says https", plain, "example.com", "http://example.com", "10.1.1.1:4000", "https", false},
+		{"https origin, trusted proxy says https", plain, "example.com", "https://example.com", "10.1.1.1:4000", "https", true},
+		{"http origin, trusted proxy says http", plain, "example.com", "http://example.com", "10.1.1.1:4000", "http", true},
+		{"http origin, untrusted peer claims https", plain, "example.com", "http://example.com", "203.0.113.5:4000", "https", true},
+		// An https external URL: the host matches but the scheme is not the site's.
+		{"external https, http origin on the same host", https, "smokeng.example.org", "http://smokeng.example.org", "", "", false},
+		{"external https, explicit 443", https, "backend:8080", "https://smokeng.example.org:443", "", "", true},
+		{"external https, plain https origin", https, "backend:8080", "https://smokeng.example.org", "", "", true},
+		{"external https, http origin on another host name", https, "backend:8080", "http://smokeng.example.org", "", "", false},
+		{"external https, another port", https, "backend:8080", "https://smokeng.example.org:8443", "", "", false},
+		{"external http with :80, origin without it", http80, "backend:8080", "http://smokeng.example.org", "", "", true},
+		{"external http, https origin", http80, "backend:8080", "https://smokeng.example.org", "", "", false},
+	} {
+		if got := try(c.h, c.host, c.origin, c.peer, c.proto); got != c.want {
+			t.Errorf("%s: Host %q Origin %q: let through = %v, want %v", c.name, c.host, c.origin, got, c.want)
+		}
 	}
 }

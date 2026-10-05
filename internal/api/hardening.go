@@ -62,14 +62,40 @@ func (s *server) sameOrigin(r *http.Request) bool {
 		return true
 	}
 	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return false // "null" included
 	}
-	if strings.EqualFold(u.Host, r.Host) {
-		return true
+	ext, extErr := url.Parse(s.externalURL)
+	extSet := s.externalURL != "" && extErr == nil
+	// Where the request itself is known to be https, an http origin is a page
+	// served without TLS from the same name: another origin, and the one a
+	// network attacker can write. Where it is not known (a proxy we do not
+	// trust may be terminating TLS) an https origin is not held against it.
+	httpsKnown := r.TLS != nil || s.trusted.ForwardedHTTPS(r) || (extSet && ext.Scheme == "https")
+	if sameAuthority(u, r.Host) {
+		return !(u.Scheme == "http" && httpsKnown)
 	}
-	ext, err := url.Parse(s.externalURL)
-	return s.externalURL != "" && err == nil && strings.EqualFold(u.Host, ext.Host)
+	return extSet && u.Scheme == ext.Scheme && sameAuthority(u, ext.Host)
+}
+
+// sameAuthority reports whether an origin's host and port are those of a Host
+// header or URL authority, taking the scheme's default port where one is left
+// out, so that example.org and example.org:443 are the same for https.
+func sameAuthority(origin *url.URL, authority string) bool {
+	host, port := authority, ""
+	if h, p, err := net.SplitHostPort(authority); err == nil {
+		host, port = h, p
+	}
+	host = strings.Trim(host, "[]")
+	def := map[string]string{"http": "80", "https": "443"}[origin.Scheme]
+	if port == "" {
+		port = def
+	}
+	op := origin.Port()
+	if op == "" {
+		op = def
+	}
+	return strings.EqualFold(origin.Hostname(), host) && op == port
 }
 
 // knownHost reports whether a Host header names this server as a server with no
