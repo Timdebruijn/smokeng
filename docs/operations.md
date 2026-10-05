@@ -98,6 +98,15 @@ neither, smokeng cannot know the browser is on https, and with authentication en
   schema that expands to more than 256 fields (counting nested ones and metadata
   entries) or nests more than 4 deep is refused.
 
+## Importing a SmokePing config
+
+`smokeng config import-smokeping FILE` follows `@include`, but only under the directory of
+`FILE`, and only regular files, and it stops after 2,000 files or 64 MiB: a config is read
+by a tool with database access, and a line shaped like `key = value` in whatever it names
+would otherwise end up as a note on a target. A Debian install with `/etc/smokeping/config`
+including `/etc/smokeping/config.d/*` needs nothing. If your includes live elsewhere, name
+the directories with `--include-root DIR[,DIR]`; a refusal says so.
+
 ## Running the prober as its own process
 
 By default one process does everything: scheduler, probing engine, database, API and web

@@ -297,6 +297,10 @@ They are added to the system roots rather than replacing them, so public endpoin
 working — a file that parses to no certificate at all is an error rather than a silent
 no-op, because the intent was to trust something.
 
+A file may hold **only** certificates. A master hands every file to all of its agents, so a
+bundle with a private key appended (a "fullchain" with the key added is a common mistake)
+is refused at startup, with the block type named and nothing of its contents.
+
 It is a flag rather than a target setting because a CA is a property of the deployment,
 not of one measurement — and trusting a CA is not the same as measuring anything through
 it.

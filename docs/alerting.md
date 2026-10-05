@@ -162,6 +162,19 @@ Resolved alerts are sent as well, so receivers that track state stay in sync, an
 alerts are repeated — once a minute by default, `--alert-repeat` sets the interval —
 because Alertmanager expires an alert it stops hearing about.
 
+**Where the URL lives.** A webhook URL is often the credential: a token in the path, a key
+in the query, a user and password before the host. `--alert-webhook` puts it in the
+process list, readable by every local user, so smokeng warns when it is used; put the URL
+in a file (mode 0600) and pass `--alert-webhook-file PATH` instead. Neither the startup log
+nor an error names more than the scheme and host.
+
+**Delivery does not wait on the receiver.** Batches are posted from a queue of 64 on their
+own goroutine, so a receiver that is slow or down does not hold up the loop that records
+measurements. If the receiver stays unreachable until the queue is full, the oldest batch is
+dropped, with a log line, to keep the newest: a lost transition is logged, and a
+still-firing alert is repeated on the next `--alert-repeat`. Whatever is queued when smokeng
+stops is not delivered.
+
 **Rules are evaluated whether or not `--alert-webhook` is set.** Firing state and the
 transition history are live either way; a missing webhook only means a transition is
 never posted anywhere. `GET /api/v1/alerts` reports `enabled` (rules are being

@@ -50,10 +50,11 @@ The ones that matter:
 | `smokeng_allow_unauthenticated` | `false` | Required to bind off loopback without OIDC. The role refuses otherwise. |
 | `smokeng_oidc_issuer` | `""` | Setting it enables authentication; see [../../docs/authentication.md](../../docs/authentication.md) |
 | `smokeng_oidc_client_secret` | `""` | Vault this. Written to a service-owned 0600 file and passed as `--oidc-client-secret-file`, never on the command line |
-| `smokeng_oidc_admin_value` | `""` | Group granting admin. **Empty means every authenticated user is an admin** |
+| `smokeng_oidc_admin_value` | `""` | Group granting admin. With OIDC on, set this or `smokeng_oidc_everyone_is_admin`; the role refuses otherwise |
+| `smokeng_oidc_everyone_is_admin` | `false` | Every user the identity provider authenticates is an admin. An explicit choice, not a default; not together with an admin group |
 | `smokeng_default_role` | `viewer` | What an authenticated user with no grant may do. Grants restrict nothing until this is `none` — see [../../docs/access-control.md](../../docs/access-control.md) |
 | `smokeng_metrics_public` | `false` | Prometheus cannot present a session cookie |
-| `smokeng_alert_webhook` | `""` | Empty means rules are stored but never evaluated |
+| `smokeng_alert_webhook` | `""` | Where firing and resolved alerts are posted. Vault it if the URL carries a token: it is written to a service-owned 0600 file and passed as `--alert-webhook-file`, never on the command line. Empty means rules are evaluated and recorded but nothing is posted |
 | `smokeng_targets_file` | `""` | Path on the controller to a `targets.toml` |
 | `smokeng_targets_prune` | `false` | Delete absent targets instead of disabling them |
 | `smokeng_tls_ca_files` | `""` | PEM files on the host whose certificates https probes trust, on top of the system roots. Deploy the same file to any agent that measures an internally-signed target. |

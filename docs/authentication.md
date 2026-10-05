@@ -35,7 +35,8 @@ smokeng serve \
 | `--oidc-client-secret` | — | Client secret inline — see the warning below |
 | `--oidc-redirect-url` | `{external-url}/auth/callback`, else `http://{listen}/auth/callback` | Must match the provider's registration exactly |
 | `--oidc-admin-claim` | `groups` | The ID-token claim listing the user's groups |
-| `--oidc-admin-value` | — | Membership in this group grants admin. **Empty means every authenticated user is an admin**, and the API can edit and delete the tree. |
+| `--oidc-admin-value` | — | Membership in this group grants admin. Required with `--oidc-issuer`, unless you pass `--oidc-everyone-is-admin`. |
+| `--oidc-everyone-is-admin` | off | Every user the provider authenticates is an admin, who can edit and delete the tree, enrol agents and write grants. A choice you make, not a default; not with `--oidc-admin-value`. |
 
 Register `https://your-host/auth/callback` as the redirect URI with your provider, and
 make sure the claim named by `--oidc-admin-claim` is actually included in the ID token —
@@ -68,8 +69,11 @@ provider. Moving it to a file afterwards does not un-publish it.
 
 `admin` comes from the ID token: if the claim named by `--oidc-admin-claim` contains
 `--oidc-admin-value`, the user is a global admin. The claim is read as a string, a comma-
-or space-separated list, or an array. If `--oidc-admin-value` is empty, **every
-authenticated user is an admin** — fine for a small team, wrong for a large one.
+or space-separated list, or an array. smokeng will not start with `--oidc-issuer` and no
+`--oidc-admin-value` unless you pass `--oidc-everyone-is-admin`: without a group, **every
+authenticated user is an admin**, which is fine for a small team that controls who the
+provider lets through and wrong for anyone else. (Earlier versions did that
+silently.)
 
 Everyone else gets what their **grants** give them, plus whatever `--default-role` allows
 a user with no grants. That is where per-subtree access lives — one customer seeing only

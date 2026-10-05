@@ -110,3 +110,64 @@ func TestHostsAreRestrictedOnlyWithoutAuthOnLoopback(t *testing.T) {
 		}
 	}
 }
+
+// Whoever the identity provider lets through becomes an administrator of the
+// tree, its agents and its grants if no admin group is named. That is a policy
+// of the provider's reach (an application assigned to everyone, a social login
+// someone enabled later), so it has to be asked for, not arrived at by leaving a
+// flag out.
+func TestAdminPolicyMustBeChosenWhenOIDCIsOn(t *testing.T) {
+	for _, c := range []struct {
+		name           string
+		issuer, admin  string
+		everyone, fail bool
+	}{
+		{"no oidc", "", "", false, false},
+		{"admin group named", "https://id.example.org", "smokeng-admins", false, false},
+		{"nothing chosen", "https://id.example.org", "", false, true},
+		{"everyone, asked for", "https://id.example.org", "", true, false},
+		{"both, which is a contradiction", "https://id.example.org", "smokeng-admins", true, true},
+		{"everyone without oidc means nothing", "", "", true, true},
+	} {
+		err := checkAdminPolicy(c.issuer, c.admin, c.everyone)
+		if (err != nil) != c.fail {
+			t.Errorf("%s: err = %v, want failure = %v", c.name, err, c.fail)
+		}
+	}
+}
+
+// The URL of a webhook is often what authorises a post to it, and an argument
+// is readable by every local user in the process list.
+func TestWebhookURLCanComeFromAFile(t *testing.T) {
+	file := func(content string, mode os.FileMode) string {
+		p := filepath.Join(t.TempDir(), "webhook")
+		if err := os.WriteFile(p, []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	good := "https://hooks.example.org/services/T0/B0/xyz"
+	for _, c := range []struct {
+		name, flag, file string
+		want             string
+		fail             bool
+	}{
+		{"neither", "", "", "", false},
+		{"flag", good, "", good, false},
+		{"file, with the newline an editor adds", "", file(good+"\n", 0o600), good, false},
+		{"both", good, file(good, 0o600), "", true},
+		{"empty file", "", file("\n", 0o600), "", true},
+		{"missing file", "", filepath.Join(t.TempDir(), "absent"), "", true},
+		{"not a URL", "alertmanager:9093", "", "", true},
+		{"wrong scheme", "ftp://example.org/x", "", "", true},
+		{"no host", "https:///path", "", "", true},
+	} {
+		got, err := loadWebhookURL(c.flag, c.file)
+		if (err != nil) != c.fail || got != c.want {
+			t.Errorf("%s: got %q, %v; want %q, failure %v", c.name, got, err, c.want, c.fail)
+		}
+		if err != nil && strings.Contains(err.Error(), "xyz") {
+			t.Errorf("%s: the error repeats the URL: %v", c.name, err)
+		}
+	}
+}

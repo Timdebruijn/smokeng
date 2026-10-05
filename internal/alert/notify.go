@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -112,11 +115,91 @@ func (w *Webhook) Notify(ctx context.Context, alerts []Alert) error {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		// net/http words a failure with the whole URL, and the URL is often the
+		// credential: a token in the path, a key in the query, a user and
+		// password before the host.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
+		return fmt.Errorf("alert: webhook %s: %w", RedactURL(w.URL), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("alert: webhook %s returned %s", w.URL, resp.Status)
+		return fmt.Errorf("alert: webhook %s returned %s", RedactURL(w.URL), resp.Status)
 	}
 	return nil
+}
+
+// RedactURL names where a URL points without what authorises a request to it:
+// scheme, host and port, and an ellipsis where a path or query was. For logs
+// and errors.
+func RedactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "(unparseable URL)"
+	}
+	out := u.Scheme + "://" + u.Host
+	if u.Path != "" && u.Path != "/" || u.RawQuery != "" {
+		out += "/…"
+	}
+	return out
+}
+
+// Queue delivers through another Notifier on its own goroutine. Delivery is
+// called from the loop that writes measurements, and a receiver that is slow or
+// down held that loop for its whole timeout on every batch.
+//
+// The queue is bounded. When it is full the oldest batch is dropped to make room
+// for the newest, and the drop is logged: what is current matters more than what
+// was current a while ago, and a firing alert is announced again on a timer
+// (Manager.Repeat), so what is lost is a transition, said so, not a state.
+type Queue struct {
+	ctx   context.Context
+	inner Notifier
+	ch    chan []Alert
+}
+
+// queueDeliveryTimeout bounds one delivery, as the webhook's own client does.
+const queueDeliveryTimeout = 30 * time.Second
+
+// NewQueue starts the worker; it stops with ctx, and anything still queued then
+// is not delivered.
+func NewQueue(ctx context.Context, inner Notifier, size int) *Queue {
+	q := &Queue{ctx: ctx, inner: inner, ch: make(chan []Alert, size)}
+	go q.run()
+	return q
+}
+
+func (q *Queue) run() {
+	for {
+		select {
+		case <-q.ctx.Done():
+			return
+		case alerts := <-q.ch:
+			// Not the caller's context: it belongs to a write that has finished
+			// by the time this runs.
+			ctx, cancel := context.WithTimeout(q.ctx, queueDeliveryTimeout)
+			if err := q.inner.Notify(ctx, alerts); err != nil {
+				log.Printf("alert: deliver %d alert(s): %v", len(alerts), err)
+			}
+			cancel()
+		}
+	}
+}
+
+// Notify queues a batch and returns at once.
+func (q *Queue) Notify(_ context.Context, alerts []Alert) error {
+	for {
+		select {
+		case q.ch <- alerts:
+			return nil
+		default:
+		}
+		select {
+		case old := <-q.ch:
+			log.Printf("alert: the delivery queue is full; dropped a batch of %d alert(s), the oldest", len(old))
+		default:
+		}
+	}
 }

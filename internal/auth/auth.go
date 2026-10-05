@@ -65,8 +65,7 @@ func New(ctx context.Context, cfg Config, signingKey []byte) (*Authenticator, er
 		cfg.AdminClaim = "groups"
 	}
 	if cfg.AdminValue == "" {
-		log.Printf("auth: no admin group configured, so every authenticated user is an admin; "+
-			"set --oidc-admin-value to restrict it (claim %q)", cfg.AdminClaim)
+		log.Printf("auth: no admin group configured, as asked, so every authenticated user is an admin")
 	}
 	return &Authenticator{
 		cfg:      cfg,
