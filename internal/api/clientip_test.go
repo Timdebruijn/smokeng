@@ -53,3 +53,38 @@ func TestClientIPIgnoresTheHeaderWithoutTrustedProxies(t *testing.T) {
 		t.Errorf("clientIP = %q, want the peer", got)
 	}
 }
+
+// Only a trusted peer's word about TLS is taken: from anyone else the header is
+// a claim about nothing, and believing it would mark a cookie Secure that no
+// browser will then send back over the http it is actually on.
+func TestForwardedHTTPSIsBelievedOnlyFromATrustedPeer(t *testing.T) {
+	trusted, err := ParseTrustedProxies("10.0.0.0/8, ::1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		peer, proto string
+		want        bool
+	}{
+		{"10.1.2.3:5555", "https", true},
+		{"10.1.2.3:5555", "HTTPS", true},
+		{"10.1.2.3:5555", "https, http", true},
+		{"10.1.2.3:5555", "http", false},
+		{"10.1.2.3:5555", "", false},
+		{"[::1]:5555", "https", true},
+		{"203.0.113.9:5555", "https", false},
+		{"no-port", "https", false},
+	} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = c.peer
+		if c.proto != "" {
+			r.Header.Set("X-Forwarded-Proto", c.proto)
+		}
+		if got := trusted.ForwardedHTTPS(r); got != c.want {
+			t.Errorf("peer %s proto %q = %v, want %v", c.peer, c.proto, got, c.want)
+		}
+	}
+	if (TrustedProxies)(nil).ForwardedHTTPS(httptest.NewRequest("GET", "/", nil)) {
+		t.Error("with no trusted proxies, TLS was vouched for")
+	}
+}

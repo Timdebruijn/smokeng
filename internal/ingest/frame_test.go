@@ -481,3 +481,33 @@ func TestDecodeBatchCapsRowsAcrossRecordBatches(t *testing.T) {
 		t.Error("a stream carrying more than the cap in dropped rows was decoded")
 	}
 }
+
+// The reader builds a Go value for every field a schema declares, outside the
+// allocator and before any row is read, so a schema of 150,000 one-byte fields
+// in a 6 MiB body cost 54 MiB. An honest agent sends a dozen.
+func TestScreenFramesCapsTheFieldsOfASchema(t *testing.T) {
+	schemaOf := func(n int) []byte {
+		fields := make([]arrow.Field, n)
+		for i := range fields {
+			fields[i] = arrow.Field{Name: "c" + strings.Repeat("x", i%7) + string(rune('a'+i%26)) + string(rune('a'+i/26%26)) + string(rune('a'+i/676%26)), Type: arrow.PrimitiveTypes.Int8}
+		}
+		var buf bytes.Buffer
+		sc := arrow.NewSchema(fields, nil)
+		w := ipc.NewWriter(&buf, ipc.WithSchema(sc))
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+	if err := screenFrames(schemaOf(maxSchemaFields)); err != nil {
+		t.Errorf("a schema of %d fields was refused: %v", maxSchemaFields, err)
+	}
+	err := screenFrames(schemaOf(maxSchemaFields + 1))
+	if err == nil || !strings.Contains(err.Error(), "fields") {
+		t.Errorf("a schema of %d fields: err = %v", maxSchemaFields+1, err)
+	}
+	// The real schema is well inside it.
+	if n := len(BatchSchema.Fields()); n > maxSchemaFields/2 {
+		t.Errorf("the real schema has %d fields; the cap of %d leaves no room to grow", n, maxSchemaFields)
+	}
+}

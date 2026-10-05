@@ -319,11 +319,16 @@ func serve(args []string) error {
 			// travelling in the clear. When the external address is known, it
 			// is what the browser actually used, so it decides.
 			Insecure: cookieInsecure(*externalURL, *listen),
+			HTTPS:    trusted.ForwardedHTTPS,
 		}, key)
 		if err != nil {
 			return err
 		}
 		log.Printf("authentication enabled via %s", *oidcIssuer)
+		if cookieInsecure(*externalURL, *listen) && len(trusted) == 0 {
+			log.Printf("the session cookie is not marked Secure, because nothing says browsers arrive over https; " +
+				"behind a proxy that terminates TLS, set --external-url or --trusted-proxies")
+		}
 	}
 
 	// Rules are always evaluated. They used to be skipped without a webhook,
@@ -388,16 +393,15 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	srv := &http.Server{
-		Addr: *listen,
-		Handler: api.New(st, api.Options{
+	srv := newHTTPServer(*listen,
+		api.New(st, api.Options{
 			Alerts: alertViewOrNil(alerts), Auth: authOrNil(authenticator),
 			Probe: eng, Version: version, MetricsPublic: *metricsPublic,
 			AgentCAs:    probe.LocalCAPEMs(),
 			DefaultRole: auth.Role(*defaultRole), ExternalURL: *externalURL,
 			TrustedProxies: trusted,
-		}, dist),
-	}
+			RestrictHosts:  hostsRestricted(authenticator != nil, *listen),
+		}, dist))
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
@@ -439,6 +443,31 @@ func authOrNil(a *auth.Authenticator) api.Authenticator {
 		return nil
 	}
 	return a
+}
+
+// newHTTPServer is the listener with the timeouts a server that faces anything
+// needs: without them a client that opens a connection and says nothing, or
+// trickles a header a byte a minute, holds it until the process runs out of
+// them. The body and write windows are wide because an agent uploads up to
+// 8 MiB over whatever link it has and a read can stream a large range.
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       2 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+}
+
+// hostsRestricted reports whether the server should answer only to its own
+// names: when it has no authentication, so that a page on another site cannot
+// reach the API by pointing a name of its own at loopback. A server that
+// authenticates is not exposed that way, and one an operator has deliberately
+// opened up on a non-loopback address is reached by whatever names it has.
+func hostsRestricted(authEnabled bool, listen string) bool {
+	return !authEnabled && isLoopback(listen)
 }
 
 // cookieInsecure reports whether the session cookie may go out without the

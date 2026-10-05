@@ -66,6 +66,9 @@ func screenFrames(body []byte) error {
 			if messages != 1 {
 				return errFrame("schema message is not first")
 			}
+			if hdr.schemaFields > maxSchemaFields {
+				return errFrame("schema declares %d fields, more than the %d allowed", hdr.schemaFields, maxSchemaFields)
+			}
 		case ipc.MessageRecordBatch:
 			if messages == 1 {
 				return errFrame("record batch before any schema")
@@ -91,9 +94,15 @@ func screenFrames(body []byte) error {
 // otherwise small.
 const maxMessages = 32
 
+// maxSchemaFields bounds the columns a schema may declare. The reader builds a
+// Go value per field before it reads a row, outside the allocator, so the cost
+// is set by the count the schema claims. The real schema has a dozen.
+const maxSchemaFields = 64
+
 type msgHeader struct {
-	typ        ipc.MessageType
-	compressed bool
+	typ          ipc.MessageType
+	compressed   bool
+	schemaFields int
 }
 
 // Flatbuffer vtable offsets are 4 + 2*slot. These are the slots of the Arrow
@@ -104,6 +113,7 @@ const (
 	vtMessageHeader     = 8  // Message.header, union
 	vtMessageBodyLength = 10 // Message.bodyLength, int64
 	vtBatchCompression  = 10 // RecordBatch.compression, table
+	vtSchemaFields      = 6  // Schema.fields, vector of Field
 )
 
 var errFrameShort = errors.New("ingest: malformed message header")
@@ -133,6 +143,17 @@ func inspectMessage(meta []byte) (hdr msgHeader, bodyLen int64, err error) {
 			return hdr, 0, errFrameShort
 		}
 		bodyLen = int64(binary.LittleEndian.Uint64(meta[p:]))
+	}
+	if hdr.typ == ipc.MessageSchema {
+		schema, ok, err := root.table(vtMessageHeader)
+		if err != nil {
+			return hdr, 0, err
+		}
+		if ok {
+			if hdr.schemaFields, err = schema.vectorLen(vtSchemaFields); err != nil {
+				return hdr, 0, err
+			}
+		}
 	}
 	if hdr.typ == ipc.MessageRecordBatch {
 		batch, ok, err := root.table(vtMessageHeader)
@@ -216,6 +237,24 @@ func (t fbTable) table(vt int) (fbTable, bool, error) {
 		return fbTable{}, false, errFrameShort
 	}
 	return fbTable{b: t.b, pos: pos}, true, nil
+}
+
+// vectorLen follows an offset field to a vector and reports how many elements it
+// declares, or 0 when the field is absent.
+func (t fbTable) vectorLen(vt int) (int, error) {
+	p, present, err := t.field(vt)
+	if err != nil || !present {
+		return 0, err
+	}
+	rel, ok := le32(t.b, p)
+	if !ok || uint64(rel) > uint64(len(t.b)-p) {
+		return 0, errFrameShort
+	}
+	n, ok := le32(t.b, p+int(rel))
+	if !ok || uint64(n) > uint64(len(t.b)) { // an element is at least a byte, so more than the slice holds is a lie
+		return 0, errFrameShort
+	}
+	return int(n), nil
 }
 
 // The bounds are written as off > len(b)-n rather than off+n > len(b): on a

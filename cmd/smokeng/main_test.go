@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A secret read from a file is only as private as the file. Deploying it 0600
@@ -69,6 +71,42 @@ func TestCookieSecurityFollowsTheAddressTheBrowserUsed(t *testing.T) {
 	for _, tc := range cases {
 		if got := cookieInsecure(tc.externalURL, tc.listen); got != tc.wantInsecur {
 			t.Errorf("%s: cookieInsecure = %v, want %v", tc.name, got, tc.wantInsecur)
+		}
+	}
+}
+
+func TestTheServerHasTimeouts(t *testing.T) {
+	s := newHTTPServer("127.0.0.1:0", http.NotFoundHandler())
+	for name, d := range map[string]time.Duration{
+		"ReadHeaderTimeout": s.ReadHeaderTimeout, "ReadTimeout": s.ReadTimeout,
+		"WriteTimeout": s.WriteTimeout, "IdleTimeout": s.IdleTimeout,
+	} {
+		if d <= 0 {
+			t.Errorf("%s is not set", name)
+		}
+	}
+	// A header has to arrive well before the body does.
+	if s.ReadHeaderTimeout >= s.ReadTimeout {
+		t.Errorf("headers get %v, the whole request %v", s.ReadHeaderTimeout, s.ReadTimeout)
+	}
+}
+
+func TestHostsAreRestrictedOnlyWithoutAuthOnLoopback(t *testing.T) {
+	for _, c := range []struct {
+		auth   bool
+		listen string
+		want   bool
+	}{
+		{false, "127.0.0.1:8080", true},
+		{false, "[::1]:8080", true},
+		{false, "localhost:8080", true},
+		{true, "127.0.0.1:8080", false},
+		{false, "0.0.0.0:8080", false},
+		{false, ":8080", false},
+		{true, "0.0.0.0:8080", false},
+	} {
+		if got := hostsRestricted(c.auth, c.listen); got != c.want {
+			t.Errorf("hostsRestricted(%v, %q) = %v, want %v", c.auth, c.listen, got, c.want)
 		}
 	}
 }

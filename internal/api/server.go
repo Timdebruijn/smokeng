@@ -73,6 +73,11 @@ type server struct {
 	defaultRole auth.Role
 	externalURL string
 	trusted     TrustedProxies
+	// restrictHosts answers only to loopback names and externalURL, which is
+	// what a server without authentication needs against DNS rebinding.
+	restrictHosts bool
+	// decodeSlots admits a few ingest decodes at a time; see handleIngest.
+	decodeSlots chan struct{}
 	verifier    *ingest.Verifier
 	probe       ProbeStats
 	ingest      IngestStats
@@ -104,6 +109,12 @@ type Options struct {
 	// log lines can name the real client rather than the proxy. Nothing is
 	// authorised on a client address, so this affects logging only.
 	TrustedProxies TrustedProxies
+	// RestrictHosts refuses a request whose Host header is not a loopback name or
+	// the host of ExternalURL. It is for a server with no authentication, which
+	// answers whoever reaches it: a page on any site can point its own name at
+	// 127.0.0.1 and read the API, and the one thing it cannot do is choose the
+	// Host header the browser sends.
+	RestrictHosts bool
 	// DefaultRole is what an authenticated caller holding no grant gets.
 	// Empty means viewer, which is what smokeng did before grants existed.
 	// Set it to "none" once grants describe who may see what.
@@ -141,6 +152,8 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	}
 	s.externalURL = opts.ExternalURL
 	s.trusted = opts.TrustedProxies
+	s.restrictHosts = opts.RestrictHosts
+	s.decodeSlots = make(chan struct{}, maxConcurrentDecodes)
 	s.defaultRole = opts.DefaultRole
 	if s.defaultRole == "" {
 		s.defaultRole = auth.RoleViewer
@@ -237,7 +250,7 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	rt.handle(classAgentSigned, "GET /api/v1/agent/targets", s.handleAgentTargets)
 	s.routes = rt
 	mux.Handle("/", http.FileServerFS(webFS))
-	return &handler{Handler: mux, srv: s}
+	return &handler{Handler: s.protect(mux), srv: s}
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
