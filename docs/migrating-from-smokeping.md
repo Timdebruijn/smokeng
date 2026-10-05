@@ -28,7 +28,7 @@ dropped in silence. You will typically see some of these:
 
 | SmokePing construct | What happens |
 | --- | --- |
-| `@include` | **Followed**, relative to the including file, so pointing the importer at your main config pulls the whole install in one command. An include cycle is broken with a warning rather than looping. |
+| `@include` | **Followed**, relative to the including file and only under its directory (`--include-root DIR` allows others; files must be regular, and the number and size read are bounded), so pointing the importer at your main config pulls the whole install in one command. An include cycle is broken with a warning rather than looping. |
 | `probe = …` | **Mapped to a smokeng probe type** — see below. |
 | `host = DYNAMIC` | Not imported. smokeng re-resolves hostnames on their DNS TTL instead, so a dynamic address needs no special mode. |
 | `host = a b c` (overlay graphs) | Not imported. Multi-host overlays are a rendering feature; add the hosts as separate targets. |

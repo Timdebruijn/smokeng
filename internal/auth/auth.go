@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -33,6 +34,10 @@ type Config struct {
 	// than leaving to be discovered.
 	AdminClaim string
 	AdminValue string
+	// EveryoneIsAdmin must be set to run without an AdminValue: it makes every
+	// user the provider authenticates an admin. It is a choice, never what
+	// leaving AdminValue empty arrives at on its own, and not with AdminValue.
+	EveryoneIsAdmin bool
 	// Insecure allows the session cookie over plain HTTP, for local
 	// development only.
 	Insecure bool
@@ -57,6 +62,13 @@ type Authenticator struct {
 // signing key is supplied by the caller so it can be persisted; a fresh key
 // would log everyone out on every restart.
 func New(ctx context.Context, cfg Config, signingKey []byte) (*Authenticator, error) {
+	switch {
+	case cfg.AdminValue == "" && !cfg.EveryoneIsAdmin:
+		return nil, errors.New("auth: no admin group (AdminValue) and EveryoneIsAdmin not set; " +
+			"every authenticated user would be an admin")
+	case cfg.AdminValue != "" && cfg.EveryoneIsAdmin:
+		return nil, errors.New("auth: both an admin group and EveryoneIsAdmin given; choose one")
+	}
 	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("auth: discover %s: %w", cfg.Issuer, err)

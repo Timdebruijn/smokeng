@@ -299,7 +299,10 @@ no-op, because the intent was to trust something.
 
 A file may hold **only** certificates. A master hands every file to all of its agents, so a
 bundle with a private key appended (a "fullchain" with the key added is a common mistake)
-is refused at startup, with the block type named and nothing of its contents.
+is refused at startup, with the block type named and nothing of its contents. Anything in
+the text that looks like a private key is refused too, however it is mangled, and what is
+handed to agents is the certificates themselves, parsed and encoded again, never the file
+as it was written (a comment line in it is not passed on).
 
 It is a flag rather than a target setting because a CA is a property of the deployment,
 not of one measurement — and trusting a CA is not the same as measuring anything through

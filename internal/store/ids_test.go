@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -651,5 +653,50 @@ func TestAnExistingDatabaseLosesWorldAccessAndNothingElse(t *testing.T) {
 			}
 		}
 		s.Close()
+	}
+}
+
+// "Private whatever the umask" has to hold for a restrictive umask too: OpenFile
+// applies the umask to the mode it is given, and a database created 0400 is one
+// SQLite cannot write.
+func TestANewDatabaseIsWritableUnderAStrictUmask(t *testing.T) {
+	dir := t.TempDir() // before the umask: a directory made under it could not be entered
+	old := syscall.Umask(0o277)
+	defer syscall.Umask(old)
+	path := filepath.Join(dir, "strict.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open under umask 0277: %v", err)
+	}
+	defer s.Close()
+	if m := mode(t, path); m != 0o600 {
+		t.Errorf("created %v, want -rw-------", m)
+	}
+}
+
+// A mode that cannot be changed (a file owned by someone else, a filesystem
+// without modes) is said and left, not a reason to refuse to start.
+func TestAnUnchangeableModeDoesNotStopTheDatabaseOpening(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "other.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	defer func(f func(string, os.FileMode) error) { chmodFile = f }(chmodFile)
+	chmodFile = func(string, os.FileMode) error { return os.ErrPermission }
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	s, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open refused to start over a mode it could not change: %v", err)
+	}
+	s.Close()
+	if !strings.Contains(logged.String(), "could not be changed") {
+		t.Errorf("the operator was not told: %q", logged.String())
 	}
 }

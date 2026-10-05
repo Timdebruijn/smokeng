@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/store"
@@ -586,5 +587,51 @@ func TestAcknowledgeUnackAndMiss(t *testing.T) {
 	}
 	if f := m.Firing(); len(f) != 1 || f[0].Acked {
 		t.Fatalf("unack should have cleared the mark, got %+v", f)
+	}
+}
+
+// slowNotifier delays a delivery, as a queue behind a slow receiver does.
+type slowNotifier struct {
+	inner alert.Notifier
+	delay time.Duration
+}
+
+func (s slowNotifier) Notify(ctx context.Context, a []alert.Alert) error {
+	time.Sleep(s.delay)
+	return s.inner.Notify(ctx, a)
+}
+
+// endsAt is when the alert resolved, which a receiver that tracks state takes
+// as fact. It was stamped when the post was made, so a delivery that waited in a
+// queue reported an end later than the transition: a number that claims more
+// than anyone knew.
+func TestAResolvedAlertEndsWhenItResolvedNotWhenItWasDelivered(t *testing.T) {
+	ctx := context.Background()
+	st, groupID, leafID := setup(t)
+	cap := &capture{}
+	srv := httptest.NewServer(cap.handler())
+	defer srv.Close()
+	rule := alert.Rule{TargetID: groupID, Name: "packet loss", Metric: alert.MetricLoss,
+		Op: alert.OpGreater, Threshold: 20, For: 1, ClearFor: 1, Enabled: true}
+	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	m := alert.NewManager(st, slowNotifier{inner: &alert.Webhook{URL: srv.URL}, delay: 1500 * time.Millisecond})
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m.Observe(ctx, []alert.Input{input(leafID, 0, 10, 5)})
+	resolvedAt := time.Now()
+	m.Observe(ctx, []alert.Input{input(leafID, 1, 10, 10)})
+	all := cap.all()
+	if len(all) != 2 {
+		t.Fatalf("got %d notifications, want fire and resolve", len(all))
+	}
+	end, err := time.Parse(time.RFC3339, all[1]["endsAt"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if late := end.Sub(resolvedAt); late > time.Second {
+		t.Errorf("endsAt is %v after the transition; it was stamped at delivery", late)
 	}
 }

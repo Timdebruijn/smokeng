@@ -107,7 +107,8 @@ func eventually(t *testing.T, what string, ok func() bool) {
 // that is slow or down must not hold that loop for its timeout, every time.
 func TestAQueuedNotifierNeverHoldsItsCaller(t *testing.T) {
 	inner := &recorder{block: make(chan struct{}), entered: make(chan struct{}, 8)}
-	q := NewQueue(t.Context(), inner, 3)
+	q := NewQueue(inner, 3)
+	defer q.Close(time.Second)
 	start := time.Now()
 	q.Notify(t.Context(), firing("a"))
 	<-inner.entered // "a" is in flight, so the queue itself is empty
@@ -120,8 +121,8 @@ func TestAQueuedNotifierNeverHoldsItsCaller(t *testing.T) {
 		t.Fatalf("seven Notify calls against a stuck receiver took %v", d)
 	}
 	close(inner.block)
-	// "a" was already in flight. Of the rest, a full queue gives up its oldest
-	// to make room, so what is current is what gets delivered.
+	// Of what was waiting, a full queue gives up its oldest to make room, so
+	// what is current is what gets delivered.
 	eventually(t, "the newest batches to be delivered", func() bool { return len(inner.names()) >= 4 })
 	time.Sleep(50 * time.Millisecond)
 	if got := strings.Join(inner.names(), ""); got != "aefg" {
@@ -129,31 +130,30 @@ func TestAQueuedNotifierNeverHoldsItsCaller(t *testing.T) {
 	}
 }
 
-func TestAQueuedNotifierDeliversInOrderAndStopsWithItsContext(t *testing.T) {
-	inner := &recorder{}
-	ctx, cancel := context.WithCancel(t.Context())
-	q := NewQueue(ctx, inner, 8)
-	for _, n := range []string{"1", "2", "3"} {
-		q.Notify(t.Context(), firing(n))
-	}
-	eventually(t, "delivery", func() bool { return len(inner.names()) == 3 })
+// A resolved alert is not announced again, so stopping must deliver what is
+// queued rather than drop it.
+func TestClosingAQueueDeliversWhatIsQueuedInOrder(t *testing.T) {
+	inner := &recorder{block: make(chan struct{}), entered: make(chan struct{}, 8)}
+	q := NewQueue(inner, 8)
+	q.Notify(t.Context(), firing("1"))
+	<-inner.entered
+	q.Notify(t.Context(), firing("2"))
+	q.Notify(t.Context(), firing("3"))
+	go func() { time.Sleep(50 * time.Millisecond); close(inner.block) }()
+	q.Close(5 * time.Second)
 	if got := strings.Join(inner.names(), ""); got != "123" {
-		t.Errorf("delivered %q, want 123", got)
+		t.Errorf("after Close, delivered %q, want 123", got)
 	}
-	cancel()
-	time.Sleep(50 * time.Millisecond)
+	q.Close(time.Second)                  // twice is fine
 	q.Notify(t.Context(), firing("late")) // must not block or panic
-	time.Sleep(50 * time.Millisecond)
-	if n := len(inner.names()); n != 3 {
-		t.Errorf("%d batches delivered; one after the queue was stopped", n)
-	}
 }
 
 // What the worker delivers with is its own context, not the one the caller
 // passed, which belongs to a write that is about to finish.
 func TestAQueuedNotifierDoesNotUseTheCallersContext(t *testing.T) {
 	inner := &ctxCheck{seen: make(chan error, 1)}
-	q := NewQueue(t.Context(), inner, 2)
+	q := NewQueue(inner, 2)
+	defer q.Close(time.Second)
 	callers, cancel := context.WithCancel(t.Context())
 	cancel()
 	q.Notify(callers, firing("x"))
@@ -174,19 +174,21 @@ func (c *ctxCheck) Notify(ctx context.Context, _ []Alert) error {
 	return nil
 }
 
-// A delivery in flight is stopped with the queue, rather than waiting out its
-// timeout while the process is trying to exit.
-func TestAQueuedNotifierCancelsADeliveryInFlightWhenStopped(t *testing.T) {
-	ctx, stop := context.WithCancel(t.Context())
+// A receiver that never answers costs the grace, not the delivery timeout.
+func TestClosingAQueueCancelsADeliveryThatOutlastsTheGrace(t *testing.T) {
 	inner := &blockOnContext{started: make(chan struct{}), done: make(chan struct{})}
-	q := NewQueue(ctx, inner, 2)
+	q := NewQueue(inner, 2)
 	q.Notify(t.Context(), firing("x"))
 	<-inner.started
-	stop()
+	start := time.Now()
+	q.Close(100 * time.Millisecond)
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("Close took %v against a grace of 100ms", d)
+	}
 	select {
 	case <-inner.done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("the delivery was still waiting after the queue's context was cancelled")
+	default:
+		t.Fatal("the delivery was not cancelled")
 	}
 }
 

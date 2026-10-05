@@ -72,8 +72,8 @@ provider. Moving it to a file afterwards does not un-publish it.
 or space-separated list, or an array. smokeng will not start with `--oidc-issuer` and no
 `--oidc-admin-value` unless you pass `--oidc-everyone-is-admin`: without a group, **every
 authenticated user is an admin**, which is fine for a small team that controls who the
-provider lets through and wrong for anyone else. (Earlier versions did that
-silently.)
+provider lets through and wrong for anyone else. (Earlier versions did that and
+logged it at startup.)
 
 Everyone else gets what their **grants** give them, plus whatever `--default-role` allows
 a user with no grants. That is where per-subtree access lives — one customer seeing only

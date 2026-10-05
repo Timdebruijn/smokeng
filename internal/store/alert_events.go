@@ -8,7 +8,8 @@ import (
 )
 
 // RecordAlertEvents appends transitions. It is called with whatever the
-// manager just delivered, so the log and the webhook cannot disagree.
+// manager is about to deliver, before delivery: the log is the record of what
+// happened, and the webhook is a best effort that can be late or dropped.
 func (s *SQLite) RecordAlertEvents(ctx context.Context, events []alert.Event) error {
 	if len(events) == 0 {
 		return nil

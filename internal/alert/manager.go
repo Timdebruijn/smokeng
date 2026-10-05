@@ -360,6 +360,9 @@ func (m *Manager) alertLocked(r *Rule, st *State, app applicable, firing bool) A
 	if st.Since != 0 {
 		a.Since = time.Unix(st.Since, 0)
 	}
+	if !firing {
+		a.Ended = time.Now()
+	}
 	if st.Acked() {
 		a.Acked, a.AckedBy = true, st.AckedBy
 		if st.AckedAt != 0 {

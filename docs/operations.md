@@ -101,10 +101,11 @@ neither, smokeng cannot know the browser is on https, and with authentication en
 ## Importing a SmokePing config
 
 `smokeng config import-smokeping FILE` follows `@include`, but only under the directory of
-`FILE`, and only regular files, and it stops after 2,000 files or 64 MiB: a config is read
+`FILE`, and only regular files, and it stops after 2,000 files, 64 MiB or two million lines: a config is read
 by a tool with database access, and a line shaped like `key = value` in whatever it names
-would otherwise end up as a note on a target. A Debian install with `/etc/smokeping/config`
-including `/etc/smokeping/config.d/*` needs nothing. If your includes live elsewhere, name
+would otherwise end up as a note on a target. A Debian install, whose `/etc/smokeping/config`
+includes each file it uses from `/etc/smokeping/config.d/`, needs nothing (`@include` takes
+one path, not a glob). If your includes live elsewhere, name
 the directories with `--include-root DIR[,DIR]`; a refusal says so.
 
 ## Running the prober as its own process

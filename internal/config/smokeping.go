@@ -89,20 +89,23 @@ func ParseSmokePingFile(path string, alsoIPv6 bool, roots ...string) (File, []st
 	return f, append(warnings, w2...), err
 }
 
-// What one import may read through @include, in files and bytes. A real install
-// is a few dozen files of a few kilobytes. Variables so a test can lower them.
+// What one import may read through @include, in files, bytes and lines. A real
+// install is a few dozen files of a few kilobytes. Lines are counted as well as
+// bytes because each becomes a record of about forty bytes, so a file of blank
+// lines costs sixty times what it weighs. Variables so a test can lower them.
 var (
 	maxIncludeFiles = 2000
 	maxIncludeBytes = 64 << 20
+	maxIncludeLines = 2_000_000
 )
 
 // includeReader expands @include in place. seen guards against an include
 // cycle; depth is a backstop; roots are the directories an include may live
 // under, with symlinks resolved; files and bytes are what has been read so far.
 type includeReader struct {
-	seen         map[string]bool
-	roots        []string
-	files, bytes int
+	seen                map[string]bool
+	roots               []string
+	files, bytes, lines int
 }
 
 func (r *includeReader) within(real string) bool {
@@ -126,16 +129,17 @@ func (r *includeReader) readFile(abs string, top bool) ([]byte, error) {
 		return nil, fmt.Errorf("%s is outside the directory of the file being imported; "+
 			"pass --include-root DIR to allow a directory", real)
 	}
+	// Before opening: opening a FIFO nobody writes to does not return.
+	if st, err := os.Stat(real); err != nil {
+		return nil, err
+	} else if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", real)
+	}
 	f, err := os.Open(real)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	if st, err := f.Stat(); err != nil {
-		return nil, err
-	} else if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", real)
-	}
 	if r.files++; r.files > maxIncludeFiles {
 		return nil, fmt.Errorf("more than %d files read through @include", maxIncludeFiles)
 	}
@@ -145,6 +149,9 @@ func (r *includeReader) readFile(abs string, top bool) ([]byte, error) {
 	}
 	if r.bytes += len(data); r.bytes > maxIncludeBytes {
 		return nil, fmt.Errorf("more than %d bytes read through @include", maxIncludeBytes)
+	}
+	if r.lines += bytes.Count(data, []byte{'\n'}) + 1; r.lines > maxIncludeLines {
+		return nil, fmt.Errorf("more than %d lines read through @include", maxIncludeLines)
 	}
 	return data, nil
 }

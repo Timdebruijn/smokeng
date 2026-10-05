@@ -49,13 +49,14 @@ func TrustCAFiles(paths []string) error {
 		if err != nil {
 			return fmt.Errorf("probe: read CA file: %w", err)
 		}
-		if err := certificatesOnly(data); err != nil {
+		clean, err := cleanCertificates(data)
+		if err != nil {
 			return fmt.Errorf("probe: %s: %w", p, err)
 		}
-		if !x509.NewCertPool().AppendCertsFromPEM(data) {
+		if len(clean) == 0 {
 			return fmt.Errorf("probe: %s contains no PEM certificates", p)
 		}
-		pems = append(pems, data)
+		pems = append(pems, clean)
 	}
 	caMu.Lock()
 	defer caMu.Unlock()
@@ -63,20 +64,35 @@ func TrustCAFiles(paths []string) error {
 	return rebuildLocked()
 }
 
-// certificatesOnly refuses PEM that holds anything but certificates. A CA file
-// is handed, whole, to every agent the master has, so a private key appended to
-// a bundle would be published to all of them. The error names the block type
-// and never its contents.
-func certificatesOnly(data []byte) error {
+// cleanCertificates returns the certificates in a PEM file, parsed and encoded
+// again, and refuses anything that looks like more. A CA file is handed, whole,
+// to every agent the master has, so what is published must be exactly the
+// certificates and nothing a decoder happened to skip: a private key appended to
+// a bundle (a "fullchain" with the key added is a common mistake) would otherwise
+// go to all of them, and Go's PEM decoder skips a block that is indented,
+// truncated, glued to the line before it or mangled. So a block of another type
+// is an error, a block that does not parse as a certificate is an error, text
+// that looks like a key anywhere in the file is an error, and what is published
+// is the re-encoded certificates, with no comment text and no residue. The error
+// names what was found and never its contents.
+func cleanCertificates(data []byte) ([]byte, error) {
+	if bytes.Contains(bytes.ToUpper(data), []byte("PRIVATE KEY")) {
+		return nil, fmt.Errorf("contains what looks like a private key; a CA file may hold only certificates")
+	}
+	var out []byte
 	for {
 		var block *pem.Block
 		block, data = pem.Decode(data)
 		if block == nil {
-			return nil
+			return out, nil
 		}
 		if block.Type != "CERTIFICATE" {
-			return fmt.Errorf("contains a %q block; a CA file may hold only certificates", block.Type)
+			return nil, fmt.Errorf("contains a %q block; a CA file may hold only certificates", block.Type)
 		}
+		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+			return nil, fmt.Errorf("contains a CERTIFICATE block that is not a certificate: %w", err)
+		}
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: block.Bytes})...)
 	}
 }
 
@@ -102,11 +118,15 @@ func LocalCAPEMs() [][]byte {
 // being told what to trust is a thing an operator must be able to audit after
 // the fact, so it is never silent.
 func TrustRemoteCAPEMs(pems [][]byte) error {
+	cleaned := make([][]byte, 0, len(pems))
 	for _, p := range pems {
-		if err := certificatesOnly(p); err != nil {
+		clean, err := cleanCertificates(p)
+		if err != nil {
 			return fmt.Errorf("probe: from the master: %w", err)
 		}
+		cleaned = append(cleaned, clean)
 	}
+	pems = cleaned
 	caMu.Lock()
 	defer caMu.Unlock()
 	if samePEMs(remoteCAs, pems) {

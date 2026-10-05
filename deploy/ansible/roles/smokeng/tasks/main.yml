@@ -164,6 +164,13 @@
   no_log: true
   notify: Restart smokeng
 
+# Emptying smokeng_alert_webhook must not leave the old URL on disk.
+- name: Remove the alert webhook URL when none is configured
+  ansible.builtin.file:
+    path: "{{ smokeng_alert_webhook_file }}"
+    state: absent
+  when: smokeng_alert_webhook | length == 0
+
 - name: Install the systemd unit
   ansible.builtin.template:
     src: smokeng.service.j2

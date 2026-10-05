@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // #1: ParseSmokePingFile follows @include, resolving each relative to the
@@ -287,5 +289,48 @@ func TestSmokePingTheNamedFileMayBeASymlink(t *testing.T) {
 	}
 	if _, _, err := ParseSmokePingFile(link, false); err != nil {
 		t.Errorf("a named file that is a symlink to another directory: %v", err)
+	}
+}
+
+// A FIFO nobody writes to blocks open(2) itself, before anything is read, so
+// the check for a regular file has to come first.
+func TestSmokePingIncludeOfAFIFODoesNotHang(t *testing.T) {
+	dir := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o600); err != nil {
+		t.Skipf("no FIFOs here: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "Targets"), "*** Targets ***\nprobe = FPing\n+ A\nhost = 1.1.1.1\n@include pipe\n")
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := ParseSmokePingFile(filepath.Join(dir, "Targets"), false)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "regular file") {
+			t.Errorf("@include of a FIFO: err = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("@include of a FIFO hangs the import")
+	}
+}
+
+// The byte budget is not a memory budget: every line becomes a record of about
+// forty bytes, so blank lines multiply what they cost sixty-fold.
+func TestSmokePingIncludesAreBudgetedInLines(t *testing.T) {
+	defer func(l int) { maxIncludeLines = l }(maxIncludeLines)
+	maxIncludeLines = 100
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "blank.cfg"), strings.Repeat("\n", 60))
+	top := func(n int) string {
+		p := filepath.Join(dir, "Targets")
+		writeFile(t, p, "*** Targets ***\nprobe = FPing\n+ A\nhost = 1.1.1.1\n"+strings.Repeat("@include blank.cfg\n", n))
+		return p
+	}
+	if _, _, err := ParseSmokePingFile(top(1), false); err != nil {
+		t.Errorf("one include of sixty lines against a limit of a hundred: %v", err)
+	}
+	if _, _, err := ParseSmokePingFile(top(3), false); err == nil || !strings.Contains(err.Error(), "lines") {
+		t.Errorf("three includes of sixty lines against a limit of a hundred: err = %v", err)
 	}
 }

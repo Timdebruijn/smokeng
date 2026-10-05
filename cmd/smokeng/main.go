@@ -208,7 +208,7 @@ func serve(args []string) error {
 	webhook := fs.String("alert-webhook", "",
 		"POST firing and resolved alerts to this URL in Alertmanager's v2 format")
 	alertRepeat := fs.Duration("alert-repeat", time.Minute,
-		"re-post still-firing alerts this often so Alertmanager does not expire them; only used with --alert-webhook")
+		"re-post still-firing alerts this often so Alertmanager does not expire them; only used with --alert-webhook or --alert-webhook-file")
 	retentionInterval := fs.Duration("retention-interval", time.Hour,
 		"how often to prune measurements past each target's retention_s (retention itself is per target; 0 there keeps forever)")
 	oidcIssuer := fs.String("oidc-issuer", "", "OIDC issuer URL; enables authentication")
@@ -236,6 +236,16 @@ func serve(args []string) error {
 	if *oidcIssuer == "" && !isLoopback(*listen) && !*insecure {
 		return fmt.Errorf("refusing to listen on non-loopback %q without authentication: "+
 			"configure --oidc-issuer, or pass --i-know-this-is-unauthenticated to override", *listen)
+	}
+
+	// What can be refused is refused before the database is touched: a start that
+	// fails should not have created one.
+	if err := checkAdminPolicy(*oidcIssuer, *oidcAdminValue, *oidcEveryoneAdmin); err != nil {
+		return err
+	}
+	webhookURL, err := loadWebhookURL(*webhook, *webhookFile)
+	if err != nil {
+		return err
 	}
 
 	st, err := store.Open(*dbPath)
@@ -271,10 +281,6 @@ func serve(args []string) error {
 	case auth.RoleViewer, auth.RoleNone:
 	default:
 		return fmt.Errorf("--default-role must be viewer or none, got %q", *defaultRole)
-	}
-
-	if err := checkAdminPolicy(*oidcIssuer, *oidcAdminValue, *oidcEveryoneAdmin); err != nil {
-		return err
 	}
 
 	if *oidcSecretFile != "" {
@@ -313,12 +319,13 @@ func serve(args []string) error {
 			}
 		}
 		authenticator, err = auth.New(ctx, auth.Config{
-			Issuer:       *oidcIssuer,
-			ClientID:     *oidcClientID,
-			ClientSecret: *oidcSecret,
-			RedirectURL:  redirect,
-			AdminClaim:   *oidcAdminClaim,
-			AdminValue:   *oidcAdminValue,
+			Issuer:          *oidcIssuer,
+			ClientID:        *oidcClientID,
+			ClientSecret:    *oidcSecret,
+			RedirectURL:     redirect,
+			AdminClaim:      *oidcAdminClaim,
+			AdminValue:      *oidcAdminValue,
+			EveryoneIsAdmin: *oidcEveryoneAdmin,
 			// Cookies may only skip the Secure attribute where the browser
 			// would refuse them anyway: local development over plain HTTP.
 			//
@@ -347,10 +354,7 @@ func serve(args []string) error {
 	// is useful on its own and a missing webhook now means only that nothing
 	// is posted anywhere.
 	var notifier alert.Notifier
-	webhookURL, err := loadWebhookURL(*webhook, *webhookFile)
-	if err != nil {
-		return err
-	}
+	var queue *alert.Queue
 	if webhookURL != "" {
 		if *alertRepeat <= 0 {
 			return fmt.Errorf("--alert-repeat must be positive, got %s", *alertRepeat)
@@ -361,10 +365,11 @@ func serve(args []string) error {
 		}
 		// Delivered on its own goroutine: this is called from the loop that
 		// writes measurements, and a receiver that is down must not hold it.
-		notifier = alert.NewQueue(ctx, &alert.Webhook{URL: webhookURL}, 64)
+		queue = alert.NewQueue(&alert.Webhook{URL: webhookURL}, 64)
+		notifier = queue
 		log.Printf("alerting enabled, posting to %s (repeating every %s)", alert.RedactURL(webhookURL), *alertRepeat)
 	} else {
-		log.Printf("alerting evaluated but not delivered: no --alert-webhook is set")
+		log.Printf("alerting evaluated but not delivered: no --alert-webhook or --alert-webhook-file is set")
 	}
 	alerts := alert.NewManager(st, notifier)
 
@@ -438,6 +443,11 @@ func serve(args []string) error {
 			return err
 		}
 		<-engDone // engine flushes its last batch before the store closes
+		if queue != nil {
+			// What the engine's last flush resolved is delivered, not dropped: a
+			// resolved alert is not announced again.
+			queue.Close(5 * time.Second)
+		}
 	}
 	return nil
 }
