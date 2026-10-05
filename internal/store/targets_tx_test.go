@@ -162,6 +162,39 @@ func TestDeletingATargetTakesItsRulesAndTheirStateAlong(t *testing.T) {
 	}
 }
 
+// A rule on an ancestor keeps its state per target it applies to, keyed by the
+// leaf. Deleting the leaf must take that row too, or a firing state for a target
+// that no longer exists stays behind; the ancestor's state for other targets
+// stays.
+func TestDeletingATargetTakesTheStateOfInheritedRulesToo(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	parent := newTarget(t, s, "parent")
+	leaf, other := newTarget(t, s, "leaf"), newTarget(t, s, "other")
+	rule := alert.Rule{TargetID: parent, Name: "loss", Metric: alert.MetricLoss, Op: alert.OpGreater,
+		Threshold: 20, For: 3, ClearFor: 3, Enabled: true}
+	if err := s.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	for _, tgt := range []int64{leaf, other} {
+		if _, err := s.db.Exec(`INSERT INTO alert_state (rule_id, target_id, agent_id, firing) VALUES (?, ?, 0, 1)`, rule.ID, tgt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DeleteTarget(ctx, leaf); err != nil {
+		t.Fatal(err)
+	}
+	var gone, kept int
+	s.db.QueryRow("SELECT COUNT(*) FROM alert_state WHERE target_id = ?", leaf).Scan(&gone)
+	s.db.QueryRow("SELECT COUNT(*) FROM alert_state WHERE target_id = ?", other).Scan(&kept)
+	if gone != 0 {
+		t.Errorf("%d state row(s) for a deleted target remain", gone)
+	}
+	if kept != 1 {
+		t.Errorf("another target's state was deleted: %d rows remain, want 1", kept)
+	}
+}
+
 // The callback reads through the pool while the transaction holds a connection.
 // With more writers than connections, every connection used to be held by a
 // writer waiting for the write lock, and the one that held it could not get a

@@ -94,7 +94,10 @@ func (s *SQLite) DeleteTarget(ctx context.Context, id int64) error {
 // history they produced (events, measurements) stays, as it does for the target.
 func deleteTarget(ctx context.Context, q idRunner, id int64) error {
 	for _, stmt := range []string{
+		// State is kept per target a rule applies to: a rule on this node, for
+		// any target beneath it, and a rule on an ancestor, for this target.
 		"DELETE FROM alert_state WHERE rule_id IN (SELECT id FROM alert_rules WHERE target_id = ?)",
+		"DELETE FROM alert_state WHERE target_id = ?",
 		"DELETE FROM alert_rules WHERE target_id = ?",
 		"DELETE FROM targets WHERE id = ?",
 	} {

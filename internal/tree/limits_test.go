@@ -469,3 +469,14 @@ func TestStartingATargetIsHeldToTheLoadLimits(t *testing.T) {
 		t.Errorf("a retitle of a running over-limit target was refused: %v", err)
 	}
 }
+
+// A disabled target does not run, so staging one over the load limit is not a
+// load. Enabling it is, and is refused (TestStartingATargetIsHeldToTheLoadLimits).
+func TestADisabledTargetIsNotHeldToTheLoadLimits(t *testing.T) {
+	hot := append(testTargets()[:1], Target{ID: 2, ParentID: ptr(int64(1)), Name: "staged", Enabled: false,
+		Host: ptr("192.0.2.1"), AddressFamily: ptr("v4"),
+		Settings: Settings{IntervalS: ptr(1), PingsPerInterval: ptr(1000), TimeoutMS: ptr(1000), ProbeMode: ptr("spread")}})
+	if err := CheckTreeLimits(nil, hot); err != nil {
+		t.Errorf("a new disabled target over the load limit was refused: %v", err)
+	}
+}

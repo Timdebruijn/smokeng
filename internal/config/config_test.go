@@ -927,3 +927,25 @@ func TestImportDoesNotRefuseALoadItLeavesAlone(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// Deleting a target deletes the rules defined on it, and the summary says so,
+// whether or not they were also in the file.
+func TestPruningATargetCountsItsRules(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	const withRule = "[targets.\"x\"]\nhost = \"1.1.1.1\"\naddress_family = \"v4\"\n" +
+		"[targets.\"x\".alerts.loss]\nmetric = \"loss\"\nop = \">\"\nthreshold = 5\n"
+	if _, err := Import(ctx, s, []byte(withRule), false); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := Import(ctx, s, []byte(""), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Deleted != 1 || sum.RulesDeleted != 1 {
+		t.Errorf("pruned %d target(s) and %d rule(s), want 1 and 1 (%+v)", sum.Deleted, sum.RulesDeleted, sum)
+	}
+	if rules, err := s.ListAlertRules(ctx); err != nil || len(rules) != 0 {
+		t.Errorf("rules after pruning their target = %v (err %v)", rules, err)
+	}
+}

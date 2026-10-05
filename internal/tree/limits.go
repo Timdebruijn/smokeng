@@ -287,16 +287,14 @@ func CheckTreeLimits(before, after []Target) error {
 	var rateBefore, rateAfter float64
 	for i := range after {
 		n := &after[i]
-		if n.Host == nil {
+		if n.Host == nil || !n.Enabled { // a group, or a target that does not run
 			continue
 		}
 		res, err := afterT.Resolve(n.ID)
 		if err != nil {
 			return err
 		}
-		if n.Enabled {
-			rateAfter += probeRate(res)
-		}
+		rateAfter += probeRate(res)
 		if beforeT != nil {
 			// A target that was not running (a group, or disabled) is started by
 			// this write, whatever its values did, so it is checked as new.

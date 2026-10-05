@@ -457,6 +457,23 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 			return sum, fmt.Errorf("config: upsert %q: %w", p, err)
 		}
 	}
+	// Deleting a target deletes the rules defined on it; count them first, since
+	// the rule sync below can no longer see them.
+	if len(deletePaths) > 0 {
+		rules, err := st.ListAlertRules(ctx)
+		if err != nil {
+			return sum, err
+		}
+		gone := map[int64]bool{}
+		for _, p := range deletePaths {
+			gone[nodes[p].ID] = true
+		}
+		for _, r := range rules {
+			if gone[r.TargetID] {
+				sum.RulesDeleted++
+			}
+		}
+	}
 	for _, p := range deletePaths {
 		if err := st.DeleteTarget(ctx, nodes[p].ID); err != nil {
 			return sum, fmt.Errorf("config: delete %q: %w", p, err)
