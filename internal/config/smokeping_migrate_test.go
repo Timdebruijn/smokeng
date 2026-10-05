@@ -334,3 +334,71 @@ func TestSmokePingIncludesAreBudgetedInLines(t *testing.T) {
 		t.Errorf("three includes of sixty lines against a limit of a hundred: err = %v", err)
 	}
 }
+
+// Checking a path and then opening it leaves a window in which the entry can be
+// replaced. What is read has to be the object that was checked, so the open
+// itself is confined to the root and does not follow a link out of it, and the
+// descriptor, not the name, is what is examined.
+func TestSmokePingIncludeCannotBeSwappedBetweenCheckAndOpen(t *testing.T) {
+	defer func() { afterIncludeCheck = func(string) {} }()
+	for name, swap := range map[string]func(path, outside string){
+		"a symlink out of the root": func(path, outside string) {
+			os.Remove(path)
+			if err := os.Symlink(outside, path); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a symlinked parent directory": func(path, outside string) {
+			dir := filepath.Dir(path)
+			os.RemoveAll(dir)
+			if err := os.Symlink(filepath.Dir(outside), dir); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(dir, filepath.Base(path))); err != nil && !os.IsExist(err) {
+				t.Fatal(err)
+			}
+		},
+		"a FIFO": func(path, outside string) {
+			os.Remove(path)
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Skipf("no FIFOs here: %v", err)
+			}
+		},
+	} {
+		base := t.TempDir()
+		conf := filepath.Join(base, "conf")
+		outside := filepath.Join(base, "outside", "secret.cfg")
+		writeFile(t, outside, "++ leaked\nhost = 192.0.2.9\nnotes = hunter2\n")
+		inner := filepath.Join(conf, "sub", "inc.cfg")
+		writeFile(t, inner, "++ fine\nhost = 1.0.0.1\n")
+		writeFile(t, filepath.Join(conf, "Targets"), "*** Targets ***\nprobe = FPing\n+ A\nhost = 1.1.1.1\n@include sub/inc.cfg\n")
+		realInner, _ := filepath.EvalSymlinks(inner)
+		afterIncludeCheck = func(real string) {
+			if real == realInner {
+				swap(real, outside)
+			}
+		}
+		done := make(chan struct {
+			f   File
+			err error
+		}, 1)
+		go func() {
+			f, _, err := ParseSmokePingFile(filepath.Join(conf, "Targets"), false)
+			done <- struct {
+				f   File
+				err error
+			}{f, err}
+		}()
+		select {
+		case r := <-done:
+			if r.err == nil {
+				t.Errorf("%s: the swapped file was read; targets %v", name, keys(r.f.Targets))
+			}
+			if _, leaked := r.f.Targets["A/leaked"]; leaked {
+				t.Errorf("%s: what sat outside the root is in the import", name)
+			}
+		case <-time.After(3 * time.Second):
+			t.Errorf("%s: the import hangs", name)
+		}
+	}
+}

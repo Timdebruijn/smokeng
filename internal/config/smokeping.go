@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // srcLine is one input line with where it came from, so a warning can name the
@@ -117,6 +118,40 @@ func (r *includeReader) within(real string) bool {
 	return false
 }
 
+// afterIncludeCheck runs between checking an include's path and opening it, so a
+// test can replace the entry in the window an attacker would have.
+var afterIncludeCheck = func(string) {}
+
+// open opens a file for reading without blocking and without following a link
+// out of the root it was found under. The path was resolved and checked
+// against the roots a moment ago, but a name can be made to mean something else
+// between a check and an open; os.Root refuses a symlink or ".." that leaves
+// the root at the moment of the open, and O_NONBLOCK keeps a FIFO from blocking
+// it. The file the operator named is theirs to read, wherever it is.
+func (r *includeReader) open(real string, top bool) (*os.File, error) {
+	if top {
+		if st, err := os.Stat(real); err != nil {
+			return nil, err
+		} else if !st.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s is not a regular file", real)
+		}
+		return os.Open(real)
+	}
+	for _, dir := range r.roots {
+		rel, err := filepath.Rel(dir, real)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			continue
+		}
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		return root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	}
+	return nil, fmt.Errorf("%s is outside the directory of the file being imported", real)
+}
+
 // readFile reads one file, refusing what is outside the roots (the file the
 // operator named is always allowed), what is not a regular file, and what would
 // take the import past its budget.
@@ -129,17 +164,18 @@ func (r *includeReader) readFile(abs string, top bool) ([]byte, error) {
 		return nil, fmt.Errorf("%s is outside the directory of the file being imported; "+
 			"pass --include-root DIR to allow a directory", real)
 	}
-	// Before opening: opening a FIFO nobody writes to does not return.
-	if st, err := os.Stat(real); err != nil {
-		return nil, err
-	} else if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", real)
-	}
-	f, err := os.Open(real)
+	afterIncludeCheck(real)
+	f, err := r.open(real, top)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	// The descriptor, not the name: what was opened is what is examined and read.
+	if st, err := f.Stat(); err != nil {
+		return nil, err
+	} else if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", real)
+	}
 	if r.files++; r.files > maxIncludeFiles {
 		return nil, fmt.Errorf("more than %d files read through @include", maxIncludeFiles)
 	}

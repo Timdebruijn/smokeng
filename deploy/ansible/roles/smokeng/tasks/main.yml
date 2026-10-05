@@ -160,7 +160,9 @@
     owner: "{{ smokeng_user }}"
     group: "{{ smokeng_group }}"
     mode: "0600"
-  when: smokeng_alert_webhook | length > 0
+  when:
+    - smokeng_alert_webhook | length > 0
+    - _smokeng_new_flags | bool
   no_log: true
   notify: Restart smokeng
 
@@ -169,7 +171,7 @@
   ansible.builtin.file:
     path: "{{ smokeng_alert_webhook_file }}"
     state: absent
-  when: smokeng_alert_webhook | length == 0
+  when: smokeng_alert_webhook | length == 0 or not (_smokeng_new_flags | bool)
 
 - name: Install the systemd unit
   ansible.builtin.template:

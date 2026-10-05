@@ -361,7 +361,14 @@ func (m *Manager) alertLocked(r *Rule, st *State, app applicable, firing bool) A
 		a.Since = time.Unix(st.Since, 0)
 	}
 	if !firing {
-		a.Ended = time.Now()
+		// The interval that resolved it, as Since is the interval that fired it.
+		// Processing and delivery can run long after: buffered agent batches,
+		// a queue behind a slow receiver.
+		if st.LastTS != 0 {
+			a.Ended = time.Unix(st.LastTS, 0)
+		} else {
+			a.Ended = time.Now()
+		}
 	}
 	if st.Acked() {
 		a.Acked, a.AckedBy = true, st.AckedBy

@@ -23,9 +23,9 @@ type Alert struct {
 	AgentName  string
 	Firing     bool
 	Since      time.Time
-	// Ended is when a resolved alert resolved, stamped where the transition
-	// happens: delivery may wait in a queue, and a receiver that tracks state
-	// takes the end as fact.
+	// Ended is when a resolved alert resolved: the timestamp of the measurement
+	// interval that resolved it. Delivery may run long after, and a receiver that
+	// tracks state takes the end as fact.
 	Ended time.Time
 	Value float64
 	// Acked and its detail describe an acknowledgement: a firing alert a person

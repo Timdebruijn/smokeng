@@ -590,48 +590,47 @@ func TestAcknowledgeUnackAndMiss(t *testing.T) {
 	}
 }
 
-// slowNotifier delays a delivery, as a queue behind a slow receiver does.
-type slowNotifier struct {
-	inner alert.Notifier
-	delay time.Duration
-}
-
-func (s slowNotifier) Notify(ctx context.Context, a []alert.Alert) error {
-	time.Sleep(s.delay)
-	return s.inner.Notify(ctx, a)
-}
-
-// endsAt is when the alert resolved, which a receiver that tracks state takes
-// as fact. It was stamped when the post was made, so a delivery that waited in a
-// queue reported an end later than the transition: a number that claims more
-// than anyone knew.
-func TestAResolvedAlertEndsWhenItResolvedNotWhenItWasDelivered(t *testing.T) {
+// endsAt is when the alert resolved, which a receiver that tracks state takes as
+// fact. It is the timestamp of the measurement interval that resolved it, as
+// startsAt is the interval that fired it: neither is when smokeng got round to
+// processing or posting it, which a buffered agent batch or a queue can put
+// minutes or hours later.
+func TestAResolvedAlertEndsAtTheIntervalThatResolvedIt(t *testing.T) {
 	ctx := context.Background()
 	st, groupID, leafID := setup(t)
 	cap := &capture{}
 	srv := httptest.NewServer(cap.handler())
 	defer srv.Close()
 	rule := alert.Rule{TargetID: groupID, Name: "packet loss", Metric: alert.MetricLoss,
-		Op: alert.OpGreater, Threshold: 20, For: 1, ClearFor: 1, Enabled: true}
+		Op: alert.OpGreater, Threshold: 20, For: 1, ClearFor: 2, Enabled: true}
 	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
 		t.Fatal(err)
 	}
-	m := alert.NewManager(st, slowNotifier{inner: &alert.Webhook{URL: srv.URL}, delay: 1500 * time.Millisecond})
+	m := alert.NewManager(st, &alert.Webhook{URL: srv.URL})
 	if err := m.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	m.Observe(ctx, []alert.Input{input(leafID, 0, 10, 5)})
-	resolvedAt := time.Now()
-	m.Observe(ctx, []alert.Input{input(leafID, 1, 10, 10)})
+	m.Observe(ctx, []alert.Input{input(leafID, 0, 10, 5)})  // fires, at step 0
+	m.Observe(ctx, []alert.Input{input(leafID, 1, 10, 10)}) // first good interval
+	m.Observe(ctx, []alert.Input{input(leafID, 2, 10, 10)}) // second: resolves
 	all := cap.all()
 	if len(all) != 2 {
 		t.Fatalf("got %d notifications, want fire and resolve", len(all))
 	}
-	end, err := time.Parse(time.RFC3339, all[1]["endsAt"].(string))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if late := end.Sub(resolvedAt); late > time.Second {
-		t.Errorf("endsAt is %v after the transition; it was stamped at delivery", late)
+	for i, c := range []struct {
+		key  string
+		step int64
+	}{{"startsAt", 0}, {"endsAt", 2}} {
+		got, ok := all[i][c.key].(string)
+		if !ok {
+			t.Fatalf("notification %d has no %s", i, c.key)
+		}
+		at, err := time.Parse(time.RFC3339, got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := time.Unix(1_756_400_000+c.step*60, 0); !at.Equal(want) {
+			t.Errorf("%s = %v, want the interval at %v (these ran long after it, now)", c.key, at, want)
+		}
 	}
 }
