@@ -675,7 +675,8 @@ Two consequences fall out of it:
   defines any are the whole set, and a rule on an ancestor that a nearer node overrides is
   answered as a rule that does not exist.
 
-**What stays global admin only:** agents and enrolment tokens, the root defaults,
+**What stays global admin only:** agents and enrolment tokens, the root defaults, the `dscp` and
+`retention_s` settings (their effect leaves the subtree),
 `/metrics` (it counts and names things across the whole installation), and `config
 import`/`export`, which are declarative over the entire tree and cannot express a partial
 apply.
@@ -683,6 +684,15 @@ apply.
 **Writes.** An editor may create, edit and delete within their subtree. Creation and moves
 check *both* endpoints: the node's current parent and its proposed parent must each be
 inside the scope, or a move becomes a way to smuggle a target across a boundary.
+
+**Atomic writes and limits.** Every tree write runs in one transaction from the read of the
+tree to the commit, with the scope computed inside it; validating first and writing after
+let two moves that were each fine make a cycle together. Limits on a target's settings and
+on the tree (depth, count, per-target and total probe load) are checked where a write is
+planned, only for fields it changes and, for load, only when it makes it worse — never in
+`tree.New`, which runs on every request and must keep reading what is already stored.
+Deleting a node deletes its rules and their state. Reads are bounded by what they read,
+not by how wide the window is.
 
 **Enforcement is at the API boundary**, not in the store. Sessions exist there and nowhere
 else, and threading a scope through every query would spread the check across every layer

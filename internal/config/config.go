@@ -398,6 +398,10 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 			synth[p] = true
 		}
 	}
+	stored := make(map[int64]*tree.Target, len(current))
+	for i := range current {
+		stored[current[i].ID] = &current[i]
+	}
 	planned := make([]tree.Target, 0, len(nodes))
 	for p, n := range nodes {
 		if deleted[p] {
@@ -410,10 +414,19 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 			pid := nodes[parentPath(p)].ID
 			c.ParentID = &pid
 		}
+		// What the file changes is held to the limits the API holds an edit to
+		// (see tree.CheckLimits); what it leaves alone is not, so a file that
+		// restates a legacy value does not start failing.
+		if err := tree.CheckLimits(stored[n.ID], &c); err != nil {
+			return sum, fmt.Errorf("config: %q: %w", p, err)
+		}
 		planned = append(planned, c)
 	}
 	if _, err := tree.New(planned); err != nil {
 		return sum, fmt.Errorf("config: resulting tree invalid: %w", err)
+	}
+	if err := tree.CheckTreeLimits(current, planned); err != nil {
+		return sum, fmt.Errorf("config: %w", err)
 	}
 
 	// 5. Write, parents first so real ids exist before their children need
@@ -442,6 +455,23 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 		}
 		if err := st.UpsertTarget(ctx, n); err != nil {
 			return sum, fmt.Errorf("config: upsert %q: %w", p, err)
+		}
+	}
+	// Deleting a target deletes the rules defined on it; count them first, since
+	// the rule sync below can no longer see them.
+	if len(deletePaths) > 0 {
+		rules, err := st.ListAlertRules(ctx)
+		if err != nil {
+			return sum, err
+		}
+		gone := map[int64]bool{}
+		for _, p := range deletePaths {
+			gone[nodes[p].ID] = true
+		}
+		for _, r := range rules {
+			if gone[r.TargetID] {
+				sum.RulesDeleted++
+			}
 		}
 	}
 	for _, p := range deletePaths {

@@ -370,7 +370,7 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 		if err != nil {
 			// No address, no measurement: the gap in the data is the honest
 			// representation (DESIGN.md §8.2).
-			log.Printf("probe: target %d (%s): resolve: %v", spec.TargetID, spec.Host, err)
+			log.Printf("probe: target %d (%q): resolve: %v", spec.TargetID, spec.Host, err)
 			e.dnsErrs.Add(1)
 			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
 				return
@@ -379,7 +379,7 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 		}
 		if a := addr.String(); a != lastAddr {
 			if lastAddr != "" {
-				log.Printf("probe: target %d (%s): address changed %s -> %s", spec.TargetID, spec.Host, lastAddr, a)
+				log.Printf("probe: target %d (%q): address changed %s -> %s", spec.TargetID, spec.Host, lastAddr, a)
 			}
 			if err := e.st.RecordResolution(ctx, spec.TargetID, time.Now().Unix(), a); err != nil {
 				log.Printf("probe: target %d: record resolution: %v", spec.TargetID, err)

@@ -91,6 +91,9 @@ However wide the subtree, a grant does not reach:
   lists none. A global admin may name any enrolled agent, and is told which exist when
   they get one wrong. Changing a node's title is not refused because of an agent the node
   already carries: the list is checked when a request sets it.
+- **`dscp` and `retention_s`**, on any node. `dscp` marks the prober's traffic on the
+  operator's network, and a positive `retention_s` deletes history. Their effect leaves the
+  subtree, so an editor who sets either gets a 403 naming the setting.
 - **The root defaults.**
 - **`/metrics`**, which counts and names things across the whole installation.
 - **`config import` and `config export`**, which are declarative over the entire

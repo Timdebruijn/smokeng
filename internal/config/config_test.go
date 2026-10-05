@@ -828,3 +828,124 @@ probe_type = "https"
 		t.Fatal("tls_skip_verify did not survive an export/import round-trip")
 	}
 }
+
+// An import is held to the limits a request through the API is, for what the
+// file changes: a door that skips them would make them advisory.
+func TestImportIsHeldToTheLimits(t *testing.T) {
+	ctx := context.Background()
+	entry := func(extra string) string {
+		return "[targets.\"x\"]\nhost = \"1.1.1.1\"\naddress_family = \"v4\"\n" + extra
+	}
+	for name, body := range map[string]string{
+		"65535 pings":                 entry("pings_per_interval = 65535\n"),
+		"a flood":                     entry("pings_per_interval = 1000\ninterval_s = 1\nburst_gap_ms = 0\n"),
+		"a huge packet":               entry("packet_size = 65000\n"),
+		"a timeout past the interval": entry("interval_s = 5\ntimeout_ms = 6000\npings_per_interval = 2\nburst_gap_ms = 1\n"),
+		"retention of 1s":             entry("retention_s = 1\n"),
+		"an interval overflow":        entry("interval_s = 9223372037\n"),
+		"a host with a path":          "[targets.\"x\"]\nhost = \"a/b\"\naddress_family = \"v4\"\n",
+		"a host with userinfo":        "[targets.\"x\"]\nhost = \"u@h\"\naddress_family = \"v4\"\n",
+		"a name with a newline":       "[targets.\"a\\nb\"]\nhost = \"1.1.1.1\"\naddress_family = \"v4\"\n",
+		"a title with an override":    entry("title = \"a\\u202eb\"\n"),
+	} {
+		s := open(t)
+		if _, err := Import(ctx, s, []byte(body), false); err == nil {
+			t.Errorf("%s: the import was accepted", name)
+		}
+	}
+	// The control: a file inside every limit.
+	s := open(t)
+	if _, err := Import(ctx, s, []byte(entry("pings_per_interval = 50\n")), false); err != nil {
+		t.Errorf("an ordinary file was refused: %v", err)
+	}
+}
+
+// What the file leaves alone is not held to a limit it predates. Restating a
+// value already stored must not start failing the day a limit is added, or every
+// repository that manages its targets this way breaks at once.
+func TestImportDoesNotRefuseWhatItLeavesAlone(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	body := "[targets.\"x\"]\nhost = \"1.1.1.1\"\naddress_family = \"v4\"\n"
+	if _, err := Import(ctx, s, []byte(body), false); err != nil {
+		t.Fatal(err)
+	}
+	// Written before the limit existed, directly.
+	targets, err := s.ListTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range targets {
+		if targets[i].Name == "x" {
+			targets[i].Settings.PacketSize = ptr(20000)
+			if err := s.UpsertTarget(ctx, &targets[i]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	restated := body + "packet_size = 20000\n"
+	if _, err := Import(ctx, s, []byte(restated), false); err != nil {
+		t.Errorf("restating a stored value that is over a limit was refused: %v", err)
+	}
+	// Changing it to another value over the limit is checked.
+	if _, err := Import(ctx, s, []byte(body+"packet_size = 30000\n"), false); err == nil {
+		t.Error("changing a legacy value to another one over the limit was accepted")
+	}
+}
+
+// The limits that depend on inheritance are held to the same rule. A leaf that
+// already sends more than one target may, and that the file restates unchanged,
+// is not refused; making it send more is.
+func TestImportDoesNotRefuseALoadItLeavesAlone(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	fast := "[targets.\"x\"]\nhost = \"1.1.1.1\"\naddress_family = \"v4\"\n"
+	load := "pings_per_interval = 900\ninterval_s = 2\nburst_gap_ms = 1\n" // 450 a second
+	if _, err := Import(ctx, s, []byte(fast), false); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := s.ListTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range targets {
+		if targets[i].Name == "x" {
+			targets[i].Settings.PingsPerInterval = ptr(900)
+			targets[i].Settings.IntervalS = ptr(2)
+			targets[i].Settings.BurstGapMS = ptr(1)
+			if err := s.UpsertTarget(ctx, &targets[i]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := Import(ctx, s, []byte(fast+load), false); err != nil {
+		t.Errorf("restating a load that is already stored was refused: %v", err)
+	}
+	if _, err := Import(ctx, s, []byte(fast+"pings_per_interval = 950\ninterval_s = 2\nburst_gap_ms = 1\n"), false); err == nil {
+		t.Error("raising a load that was already over the limit was accepted")
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// Deleting a target deletes the rules defined on it, and the summary says so,
+// whether or not they were also in the file.
+func TestPruningATargetCountsItsRules(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	const withRule = "[targets.\"x\"]\nhost = \"1.1.1.1\"\naddress_family = \"v4\"\n" +
+		"[targets.\"x\".alerts.loss]\nmetric = \"loss\"\nop = \">\"\nthreshold = 5\n"
+	if _, err := Import(ctx, s, []byte(withRule), false); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := Import(ctx, s, []byte(""), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Deleted != 1 || sum.RulesDeleted != 1 {
+		t.Errorf("pruned %d target(s) and %d rule(s), want 1 and 1 (%+v)", sum.Deleted, sum.RulesDeleted, sum)
+	}
+	if rules, err := s.ListAlertRules(ctx); err != nil || len(rules) != 0 {
+		t.Errorf("rules after pruning their target = %v (err %v)", rules, err)
+	}
+}

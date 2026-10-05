@@ -225,6 +225,11 @@ type Store interface {
 	ListTargets(ctx context.Context) ([]tree.Target, error)
 	// UpsertTarget inserts (ID == 0, assigning t.ID) or updates a target.
 	UpsertTarget(ctx context.Context, t *tree.Target) error
+	// ChangeTargets reads the tree, lets fn decide what to write against exactly
+	// what it read, and applies that in one transaction. Use it where a write
+	// depends on the tree as it is: validating against one read and writing
+	// after another is a race.
+	ChangeTargets(ctx context.Context, fn func(current []tree.Target) (TargetChange, error)) error
 	// DeleteTarget removes a target row. Measurements are left untouched —
 	// history is only ever destroyed by an explicit operator action. Callers
 	// must delete children before their parent (foreign key).

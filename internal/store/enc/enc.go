@@ -61,7 +61,11 @@ func Decode(blob []byte) ([]uint32, error) {
 		return nil, fmt.Errorf("enc: unsupported blob version 0x%02x", blob[0])
 	}
 	rest := blob[1:]
-	var out []uint32
+	// One allocation of the right size. A varint ends at the first byte below
+	// 0x80, so counting those is counting the samples. Growing by append took
+	// several times the final size at its peak, on a path that decodes every row
+	// of every request.
+	out := make([]uint32, 0, countVarints(rest))
 	var cur uint64
 	for i := 0; len(rest) > 0; i++ {
 		v, n := binary.Uvarint(rest)
@@ -87,6 +91,19 @@ func Decode(blob []byte) ([]uint32, error) {
 		out = append(out, uint32(cur))
 	}
 	return out, nil
+}
+
+// countVarints returns how many varints b holds: each ends at the first byte
+// below 0x80. A truncated last varint has no such byte and is not counted, and
+// the decoder reports it as an error.
+func countVarints(b []byte) int {
+	n := 0
+	for _, c := range b {
+		if c < 0x80 {
+			n++
+		}
+	}
+	return n
 }
 
 // Blob layout, format version 2 (signed series):
@@ -142,7 +159,7 @@ func DecodeSigned(blob []byte) ([]int32, error) {
 		return nil, fmt.Errorf("enc: unsupported signed blob version 0x%02x", blob[0])
 	}
 	rest := blob[1:]
-	var out []int32
+	out := make([]int32, 0, countVarints(rest))
 	var cur int64
 	for i := 0; len(rest) > 0; i++ {
 		if i == 0 {
