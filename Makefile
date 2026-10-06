@@ -35,6 +35,7 @@ check:
 	done
 	go test ./...
 	cd web && npm run typecheck
+	cd web && npm test
 
 # The licences of everything statically linked into the binary. smokeng is
 # MIT, but its dependencies travel inside the released file and most of them
