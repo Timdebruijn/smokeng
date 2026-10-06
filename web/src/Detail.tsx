@@ -15,6 +15,7 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
+import { csvCell } from './util'
 
 const RANGES: { label: string; seconds: number }[] = [
   { label: '15m', seconds: 900 },
@@ -341,8 +342,8 @@ function pct(x: number): string {
   return `${(x * 100).toFixed(x >= 0.9995 ? 3 : 2)}%`
 }
 
-function downloadCSV(filename: string, rows: string[][]) {
-  const text = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n')
+function downloadCSV(filename: string, rows: (string | number)[][]) {
+  const text = rows.map((r) => r.map(csvCell).join(',')).join('\n')
   const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }))
   const a = document.createElement('a')
   a.href = url
@@ -411,7 +412,7 @@ function AvailabilityPanel({ target }: { target: Target }) {
 
   const exportCSV = () => {
     if (!data) return
-    const rows: string[][] = [
+    const rows: (string | number)[][] = [
       ['target', 'agent', 'availability', 'coverage', 'up_s', 'down_s', 'unknown_s', 'outages'],
     ]
     for (const a of data.agents) {
@@ -419,12 +420,12 @@ function AvailabilityPanel({ target }: { target: Target }) {
       rows.push([
         data.target,
         a.agent,
-        String(r.availability),
-        String(r.coverage),
-        String(r.up_s),
-        String(r.down_s),
-        String(r.unknown_s),
-        String(r.downtime.length),
+        r.availability,
+        r.coverage,
+        r.up_s,
+        r.down_s,
+        r.unknown_s,
+        r.downtime.length,
       ])
     }
     const name = `availability-${data.target.replace(/[^\w-]+/g, '_')}.csv`

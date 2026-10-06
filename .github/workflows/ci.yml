@@ -53,6 +53,11 @@ jobs:
         working-directory: web
       - run: npm run typecheck
         working-directory: web
+      # Node's own runner, with Node stripping the types: no test framework to
+      # keep current. The heap is capped so a decoder that allocates on a corrupt
+      # byte fails the run instead of passing on a big runner.
+      - run: npm test
+        working-directory: web
 
       - name: web/dist matches the source
         run: |

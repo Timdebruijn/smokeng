@@ -1,4 +1,5 @@
-import { tableFromIPC } from '@uwdata/flechette'
+import { tableFromIPC, type Column } from '@uwdata/flechette'
+import { screenIPC } from './ipc.ts'
 
 export interface Me {
   /** The master's own version. */
@@ -745,13 +746,83 @@ async function fetchSeriesUncached(
     { cache: 'no-store' },
   )
   if (!r.ok) throw new Error(`measurements: HTTP ${r.status}`)
-  const table = tableFromIPC(new Uint8Array(await r.arrayBuffer()))
+  return decodeSeries(new Uint8Array(await r.arrayBuffer()))
+}
+
+/**
+ * A row costs the sender bytes in every column, so a table that claims more rows
+ * than the response has bytes is lying, and everything sized from the claim
+ * would be allocated for nothing. A corrupt length is how one bad byte becomes a
+ * request for gigabytes.
+ */
+export function plausibleRows(rows: number, bytes: number): boolean {
+  return Number.isInteger(rows) && rows >= 0 && rows <= bytes
+}
+
+/**
+ * Decode the Arrow stream a measurements request answers with. Whatever is wrong
+ * with the bytes (not Arrow at all, a column missing, a length that is not true,
+ * a proxy's error page) comes out as one Error that begins "measurements:", the
+ * way the HTTP failure does, because that is what the page shows the reader and
+ * a RangeError or TypeError out of a library says nothing about what to do.
+ */
+export function decodeSeries(bytes: Uint8Array): Series {
+  try {
+    return decodeSeriesUnchecked(bytes)
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('measurements: ')) throw e
+    throw new Error(
+      `measurements: the response is not a valid measurement table (${e instanceof Error ? e.name : 'unknown error'})`,
+    )
+  }
+}
+
+/**
+ * A list column is a buffer of offsets into its values, in the body of the
+ * response where no header check reaches. flechette builds the array for a row
+ * from the difference of two of them, so an offset of two billion is a request
+ * for two billion elements from one corrupt byte; and one that is merely wrong
+ * hands back the wrong samples as if they were measured. They have to start at
+ * zero, never decrease, and end inside the values.
+ */
+function checkList(col: Column<unknown>, name: string) {
+  const bad = (why: string): never => {
+    throw new Error(`measurements: the ${name} column is inconsistent (${why})`)
+  }
+  for (const batch of col.data) {
+    const offsets = batch.offsets
+    const values = batch.children?.[0]
+    if (!offsets || !values) return bad('no offsets')
+    if (offsets.length !== batch.length + 1) bad('wrong number of offsets')
+    let prev = 0
+    for (let i = 0; i < offsets.length; i++) {
+      const v = Number(offsets[i])
+      if (!(v >= prev)) bad('offsets that go backwards')
+      prev = v
+    }
+    if (Number(offsets[0]) !== 0) bad('offsets that do not start at zero')
+    if (prev > values.length) bad('offsets past the values')
+  }
+}
+
+function decodeSeriesUnchecked(bytes: Uint8Array): Series {
+  screenIPC(bytes) // before the library: see ipc.ts
+  const table = tableFromIPC(bytes)
   const n = table.numRows
-  const tsCol = table.getChild('ts')!
-  const sentCol = table.getChild('sent')!
-  const recvCol = table.getChild('received')!
-  const flagsCol = table.getChild('flags')!
-  const samplesCol = table.getChild('samples')!
+  if (!plausibleRows(n, bytes.byteLength)) {
+    throw new Error(`measurements: the response claims ${n} rows in ${bytes.byteLength} bytes`)
+  }
+  const need = (name: string) => {
+    const col = table.getChild(name)
+    if (!col) throw new Error(`measurements: the response has no ${name} column`)
+    return col
+  }
+  const tsCol = need('ts')
+  const sentCol = need('sent')
+  const recvCol = need('received')
+  const flagsCol = need('flags')
+  const samplesCol = need('samples')
+  checkList(samplesCol, 'samples')
   const icmpCol = table.getChild('icmp_error')
   const sendErrCol = table.getChild('send_error')
 
@@ -793,6 +864,7 @@ async function fetchSeriesUncached(
   for (const name of SERIES_NAMES) {
     const col = table.getChild(name)
     if (!col) continue
+    checkList(col, name)
     const eOffsets = new Uint32Array(n + 1)
     const measured = new Uint8Array(n)
     const eRows: (ArrayLike<number> | null)[] = new Array(n)
