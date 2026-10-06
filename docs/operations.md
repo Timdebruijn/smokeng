@@ -98,6 +98,16 @@ neither, smokeng cannot know the browser is on https, and with authentication en
   schema that expands to more than 256 fields (counting nested ones and metadata
   entries) or nests more than 4 deep is refused.
 
+## Importing a SmokePing config
+
+`smokeng config import-smokeping FILE` follows `@include`, but only under the directory of
+`FILE`, and only regular files, and it stops after 2,000 files, 64 MiB or two million lines: a config is read
+by a tool with database access, and a line shaped like `key = value` in whatever it names
+would otherwise end up as a note on a target. A Debian install, whose `/etc/smokeping/config`
+includes each file it uses from `/etc/smokeping/config.d/`, needs nothing (`@include` takes
+one path, not a glob). If your includes live elsewhere, name
+the directories with `--include-root DIR[,DIR]`; a refusal says so.
+
 ## Running the prober as its own process
 
 By default one process does everything: scheduler, probing engine, database, API and web
@@ -186,8 +196,18 @@ The database is a single SQLite file in WAL mode. Do not copy it with `cp` while
 is running; use SQLite's own online backup:
 
 ```bash
-sqlite3 /var/lib/smokeng/smokeng.db ".backup '/var/backups/smokeng-$(date +%F).db'"
+(umask 077 && sqlite3 /var/lib/smokeng/smokeng.db ".backup '/var/backups/smokeng-$(date +%F).db'")
 ```
+
+**Treat the database, and every copy of it, as a secret.** It holds the key that signs
+session cookies; whoever can read it can forge a session as any user, an admin included.
+smokeng creates it mode 0600, and closes an existing one to other users (keeping what you
+gave its group) with a log line at startup, but a backup is made by whoever runs the
+command above, under their umask, in a directory you chose. The `umask 077` in that
+command is what keeps it private; `/var/backups` itself is usually world-listable, so
+check the mode of what lands there. If a copy was ever readable by others, rotate the key:
+stop smokeng, run `sqlite3 /var/lib/smokeng/smokeng.db "DELETE FROM settings WHERE key = 'session_key'"`,
+and start it again. A new key is generated, and everyone signs in again.
 
 Keep your `targets.toml` in Git as well. Between the TOML and the database you can rebuild
 either one: `config export` regenerates the file from the database, and `config import`

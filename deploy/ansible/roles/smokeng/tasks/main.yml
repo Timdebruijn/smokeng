@@ -6,6 +6,19 @@
       This role targets Debian-family hosts with systemd. smokeng itself is a
       static binary and runs anywhere; only this role is opinionated.
 
+- name: Make the choice of who administers explicit
+  ansible.builtin.assert:
+    that:
+      - smokeng_oidc_issuer | length == 0
+        or smokeng_oidc_admin_value | length > 0
+        or smokeng_oidc_everyone_is_admin | bool
+      - not (smokeng_oidc_admin_value | length > 0 and smokeng_oidc_everyone_is_admin | bool)
+    fail_msg: >-
+      With smokeng_oidc_issuer set, name the admin group in
+      smokeng_oidc_admin_value, or set smokeng_oidc_everyone_is_admin if every
+      user your identity provider authenticates should administer smokeng.
+      Not both.
+
 - name: Refuse to expose an unauthenticated instance by accident
   ansible.builtin.assert:
     that:
@@ -137,6 +150,28 @@
     - smokeng_oidc_client_secret | length > 0
   no_log: true
   notify: Restart smokeng
+
+# The alert webhook URL, for the same reasons: it is often what authorises a
+# post, so it is a service-owned 0600 file and not an argument.
+- name: Install the alert webhook URL
+  ansible.builtin.copy:
+    content: "{{ smokeng_alert_webhook }}\n"
+    dest: "{{ smokeng_alert_webhook_file }}"
+    owner: "{{ smokeng_user }}"
+    group: "{{ smokeng_group }}"
+    mode: "0600"
+  when:
+    - smokeng_alert_webhook | length > 0
+    - _smokeng_new_flags | bool
+  no_log: true
+  notify: Restart smokeng
+
+# Emptying smokeng_alert_webhook must not leave the old URL on disk.
+- name: Remove the alert webhook URL when none is configured
+  ansible.builtin.file:
+    path: "{{ smokeng_alert_webhook_file }}"
+    state: absent
+  when: smokeng_alert_webhook | length == 0 or not (_smokeng_new_flags | bool)
 
 - name: Install the systemd unit
   ansible.builtin.template:

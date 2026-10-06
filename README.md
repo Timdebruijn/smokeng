@@ -307,9 +307,9 @@ smokeng serve --db smokeng.db --listen 0.0.0.0:8080 \
 
 **admin** is global and comes from a claim (`--oidc-admin-claim`, default `groups`);
 anything not recognised as an admin is not one, so a provider that renames or drops the
-claim demotes people rather than promoting them. Leaving `--oidc-admin-value` empty makes
-every authenticated user an admin, which is logged loudly at startup rather than left to
-be discovered.
+claim demotes people rather than promoting them. smokeng will not start with OIDC and no
+`--oidc-admin-value` unless you pass `--oidc-everyone-is-admin`, which makes every
+authenticated user an admin and says so at startup.
 
 Everyone else gets what their **grants** give them. A grant gives an OIDC group `viewer`
 or `editor` on one node and its subtree, and the isolation is total: that subtree is

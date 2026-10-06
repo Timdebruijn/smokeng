@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/store"
@@ -586,5 +587,50 @@ func TestAcknowledgeUnackAndMiss(t *testing.T) {
 	}
 	if f := m.Firing(); len(f) != 1 || f[0].Acked {
 		t.Fatalf("unack should have cleared the mark, got %+v", f)
+	}
+}
+
+// endsAt is when the alert resolved, which a receiver that tracks state takes as
+// fact. It is the timestamp of the measurement interval that resolved it, as
+// startsAt is the interval that fired it: neither is when smokeng got round to
+// processing or posting it, which a buffered agent batch or a queue can put
+// minutes or hours later.
+func TestAResolvedAlertEndsAtTheIntervalThatResolvedIt(t *testing.T) {
+	ctx := context.Background()
+	st, groupID, leafID := setup(t)
+	cap := &capture{}
+	srv := httptest.NewServer(cap.handler())
+	defer srv.Close()
+	rule := alert.Rule{TargetID: groupID, Name: "packet loss", Metric: alert.MetricLoss,
+		Op: alert.OpGreater, Threshold: 20, For: 1, ClearFor: 2, Enabled: true}
+	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	m := alert.NewManager(st, &alert.Webhook{URL: srv.URL})
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m.Observe(ctx, []alert.Input{input(leafID, 0, 10, 5)})  // fires, at step 0
+	m.Observe(ctx, []alert.Input{input(leafID, 1, 10, 10)}) // first good interval
+	m.Observe(ctx, []alert.Input{input(leafID, 2, 10, 10)}) // second: resolves
+	all := cap.all()
+	if len(all) != 2 {
+		t.Fatalf("got %d notifications, want fire and resolve", len(all))
+	}
+	for i, c := range []struct {
+		key  string
+		step int64
+	}{{"startsAt", 0}, {"endsAt", 2}} {
+		got, ok := all[i][c.key].(string)
+		if !ok {
+			t.Fatalf("notification %d has no %s", i, c.key)
+		}
+		at, err := time.Parse(time.RFC3339, got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := time.Unix(1_756_400_000+c.step*60, 0); !at.Equal(want) {
+			t.Errorf("%s = %v, want the interval at %v (these ran long after it, now)", c.key, at, want)
+		}
 	}
 }

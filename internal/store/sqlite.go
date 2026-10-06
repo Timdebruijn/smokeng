@@ -93,6 +93,9 @@ func Open(path string) (*SQLite, error) {
 	// "?" and "#" as well: a path with either was cut there as a URI, so
 	// "a?b.db" opened a database called "a" with none of the pragmas, and
 	// "a#b.db" the same, silently, in rollback-journal mode.
+	if err := secureDatabase(path); err != nil {
+		return nil, err
+	}
 	esc := strings.NewReplacer("%", "%25", " ", "%20", "?", "%3F", "#", "%23").Replace(path)
 	dsn := "file:" + esc +
 		"?_pragma=journal_mode(WAL)" +
@@ -129,6 +132,7 @@ func Open(path string) (*SQLite, error) {
 		db.Close()
 		return nil, err
 	}
+	secureSidecars(path)
 	return s, nil
 }
 

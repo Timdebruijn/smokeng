@@ -31,6 +31,10 @@ smokeng_metrics_public: false
 # Alertmanager-compatible endpoint. Empty means rules are stored but never
 # evaluated.
 smokeng_alert_webhook: ""
+# The URL is written here, service-owned and 0600, and passed to smokeng as a
+# file: it is often the credential (a token in the path), and a command line is
+# readable by every local user.
+smokeng_alert_webhook_file: "{{ smokeng_state_dir }}/alert-webhook"
 
 # OIDC. Setting the issuer enables authentication; the rest is only read then.
 smokeng_oidc_issuer: ""
@@ -42,9 +46,12 @@ smokeng_oidc_client_secret: ""
 smokeng_oidc_client_secret_file: "{{ smokeng_state_dir }}/oidc-client-secret"
 smokeng_oidc_redirect_url: ""
 smokeng_oidc_admin_claim: groups
-# Empty means every authenticated user is an admin, and smokeng's API can edit
-# and delete the target tree. Name the group that should hold admin.
+# The group that holds admin. With smokeng_oidc_issuer set, this or
+# smokeng_oidc_everyone_is_admin must be chosen: smokeng refuses to start
+# otherwise, since leaving both out used to make everyone the identity provider
+# let through an administrator of the whole tree.
 smokeng_oidc_admin_value: ""
+smokeng_oidc_everyone_is_admin: false
 
 # What an authenticated user holding no grant may do: "viewer" reads
 # everything, "none" means access comes from grants alone. It is deliberately a

@@ -166,3 +166,25 @@ func TestCookieIsSecureWhenAProxyVouchesForTLS(t *testing.T) {
 		}
 	}
 }
+
+// The policy is enforced where the roles are decided, not only by the flag
+// parser, so another caller of New cannot arrive at "everyone is an admin" by
+// leaving a field empty. It is refused before anything is fetched from the
+// provider.
+func TestNewRefusesAnEmptyAdminValueUnlessEveryoneIsChosen(t *testing.T) {
+	ctx := t.Context()
+	// An unroutable issuer: reaching it would fail differently, and slowly.
+	_, err := New(ctx, Config{Issuer: "http://127.0.0.1:1", ClientID: "x"}, make([]byte, 32))
+	if err == nil || !strings.Contains(err.Error(), "admin") {
+		t.Errorf("an empty AdminValue without EveryoneIsAdmin: err = %v", err)
+	}
+	_, err = New(ctx, Config{Issuer: "http://127.0.0.1:1", ClientID: "x", AdminValue: "g", EveryoneIsAdmin: true}, make([]byte, 32))
+	if err == nil || !strings.Contains(err.Error(), "both") {
+		t.Errorf("an admin group together with EveryoneIsAdmin: err = %v", err)
+	}
+	// With the choice made it gets as far as the provider, which is not there.
+	_, err = New(ctx, Config{Issuer: "http://127.0.0.1:1", ClientID: "x", EveryoneIsAdmin: true}, make([]byte, 32))
+	if err == nil || strings.Contains(err.Error(), "admin") {
+		t.Errorf("with EveryoneIsAdmin the refusal should come from the provider, got %v", err)
+	}
+}

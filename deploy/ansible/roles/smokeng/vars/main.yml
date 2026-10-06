@@ -6,3 +6,10 @@ _smokeng_arch_map:
   armv7l: arm
   i386: "386"
 smokeng_arch: "{{ _smokeng_arch_map[ansible_facts['architecture']] | default('amd64') }}"
+
+# Whether the pinned smokeng accepts --alert-webhook-file and
+# --oidc-everyone-is-admin. v0.22.0 is the first release that does (adjust it if
+# that release is numbered differently); with an older pin the role keeps to the
+# flags that binary has, since an unknown flag is a crash loop. An older binary
+# has no admin choice to make: leaving the group out already meant everyone.
+_smokeng_new_flags: "{{ smokeng_version is version('v0.22.0', '>=') }}"

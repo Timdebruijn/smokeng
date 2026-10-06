@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"math/big"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -230,4 +232,110 @@ func pemFile(t *testing.T, srv *httptest.Server) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// A CA file is handed, whole, to every agent the master has, and logged about.
+// A bundle that also carries a private key (a "fullchain" with the key appended
+// is a common mistake) would publish it to all of them.
+func TestACAFileMayHoldOnlyCertificates(t *testing.T) {
+	srv, _ := httpsServer(t)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+	t.Cleanup(resetCAs)
+
+	write := func(data []byte) string {
+		p := filepath.Join(t.TempDir(), "bundle.pem")
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	for name, data := range map[string][]byte{
+		"cert then key": append(pemBytes(srv), keyPEM...),
+		"key then cert": append(append([]byte(nil), keyPEM...), pemBytes(srv)...),
+		"a request":     append(pemBytes(srv), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: []byte("x")})...),
+	} {
+		err := TrustCAFiles([]string{write(data)})
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+			continue
+		}
+		if bytes.Contains([]byte(err.Error()), []byte(base64Of(der))) {
+			t.Errorf("%s: the error repeats key material: %v", name, err)
+		}
+		if got := LocalCAPEMs(); len(got) != 0 {
+			t.Errorf("%s: %d block(s) were kept after a refusal", name, len(got))
+		}
+	}
+	// Control: the certificate alone, and with text around it, is accepted.
+	if err := TrustCAFiles([]string{write(append([]byte("# my CA\n"), pemBytes(srv)...))}); err != nil {
+		t.Errorf("a certificate with a comment line: %v", err)
+	}
+	// A master that sends one is not believed either.
+	resetCAs()
+	if err := TrustRemoteCAPEMs([][]byte{append(pemBytes(srv), keyPEM...)}); err == nil {
+		t.Error("a bundle with a private key from the master was accepted")
+	}
+}
+
+func base64Of(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
+
+// What is published is what was parsed, not what was in the file. PEM that Go's
+// decoder does not recognise (indented, truncated, glued to a line, mangled) is
+// skipped by it and still sat in the bytes handed to every agent.
+func TestACAFilePublishesOnlyTheCertificatesInIt(t *testing.T) {
+	srv, _ := httpsServer(t)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := base64.StdEncoding.EncodeToString(der)
+	cert := string(pemBytes(srv))
+	t.Cleanup(resetCAs)
+	for name, bundle := range map[string]string{
+		"indented key":           cert + "  -----BEGIN PRIVATE KEY-----\n  " + body + "\n  -----END PRIVATE KEY-----\n",
+		"truncated end line":     cert + "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY",
+		"corrupted base64":       cert + "-----BEGIN PRIVATE KEY-----\n" + body + "!!!\n-----END PRIVATE KEY-----\n",
+		"glued to the cert":      strings.TrimSuffix(cert, "\n") + "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----\n",
+		"key labelled as a cert": cert + "-----BEGIN CERTIFICATE-----\n" + body + "\n-----END CERTIFICATE-----\n",
+		"key between two certs":  cert + "garbage -----BEGIN PRIVATE KEY----- " + body + "\n" + cert,
+	} {
+		p := filepath.Join(t.TempDir(), "b.pem")
+		if err := os.WriteFile(p, []byte(bundle), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := TrustCAFiles([]string{p}); err == nil {
+			for _, published := range LocalCAPEMs() {
+				if bytes.Contains(published, []byte(body)) {
+					t.Errorf("%s: accepted, and the key is in what agents are sent", name)
+				}
+			}
+			t.Errorf("%s: accepted", name)
+		}
+		resetCAs()
+	}
+	// Control: what a master publishes is the certificate, re-encoded, with no
+	// comment text, and an agent can trust exactly that.
+	p := filepath.Join(t.TempDir(), "ok.pem")
+	if err := os.WriteFile(p, []byte("# internal root, renewed 2026\n"+cert), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := TrustCAFiles([]string{p}); err != nil {
+		t.Fatal(err)
+	}
+	got := LocalCAPEMs()
+	if len(got) != 1 || !bytes.Equal(got[0], pemBytes(srv)) {
+		t.Errorf("published %q, want exactly the certificate", got)
+	}
 }

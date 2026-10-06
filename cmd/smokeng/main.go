@@ -94,6 +94,8 @@ func configCmd(args []string) error {
 		"accept `agents` entries that name no enrolled agent, reporting them as warnings")
 	alsoIPv6 := fs.Bool("also-ipv6", false,
 		"import-smokeping: also create a v6 target for every hostname (address families are separate targets)")
+	includeRoots := fs.String("include-root", "",
+		"import-smokeping: comma-separated directories, besides the file's own, that @include may read from")
 	dryRun := fs.Bool("dry-run", false, "import-smokeping: print the translated config instead of writing it")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -129,12 +131,12 @@ func configCmd(args []string) error {
 		return nil
 	case "import-smokeping":
 		if fs.NArg() != 1 {
-			return errors.New("usage: smokeng config import-smokeping [--db path] [--also-ipv6] [--dry-run] TARGETS-FILE")
+			return errors.New("usage: smokeng config import-smokeping [--db path] [--also-ipv6] [--include-root DIR] [--dry-run] TARGETS-FILE")
 		}
 		// The file form, not the byte form, so @include is followed relative to
 		// the file — a real SmokePing install is almost always split across
 		// included files.
-		f, warnings, err := config.ParseSmokePingFile(fs.Arg(0), *alsoIPv6)
+		f, warnings, err := config.ParseSmokePingFile(fs.Arg(0), *alsoIPv6, splitList(*includeRoots)...)
 		// Warnings name what SmokePing expressed that smokeng will not, so
 		// they go to stderr even when the import itself fails.
 		for _, w := range warnings {
@@ -201,10 +203,12 @@ func serve(args []string) error {
 			"does not silently lock out everyone who could already read")
 	metricsPublic := fs.Bool("metrics-public", false,
 		"serve /metrics without a session so Prometheus can scrape it")
+	webhookFile := fs.String("alert-webhook-file", "",
+		"read the alert webhook URL from this file instead of --alert-webhook; the URL is often a credential, and an argument is visible to every local user")
 	webhook := fs.String("alert-webhook", "",
 		"POST firing and resolved alerts to this URL in Alertmanager's v2 format")
 	alertRepeat := fs.Duration("alert-repeat", time.Minute,
-		"re-post still-firing alerts this often so Alertmanager does not expire them; only used with --alert-webhook")
+		"re-post still-firing alerts this often so Alertmanager does not expire them; only used with --alert-webhook or --alert-webhook-file")
 	retentionInterval := fs.Duration("retention-interval", time.Hour,
 		"how often to prune measurements past each target's retention_s (retention itself is per target; 0 there keeps forever)")
 	oidcIssuer := fs.String("oidc-issuer", "", "OIDC issuer URL; enables authentication")
@@ -222,7 +226,9 @@ func serve(args []string) error {
 	oidcAdminClaim := fs.String("oidc-admin-claim", "groups",
 		"ID-token claim listing the user's groups")
 	oidcAdminValue := fs.String("oidc-admin-value", "",
-		"membership in this group grants admin; empty means every authenticated user is an admin")
+		"membership in this group grants admin; required with --oidc-issuer unless --oidc-everyone-is-admin is given")
+	oidcEveryoneAdmin := fs.Bool("oidc-everyone-is-admin", false,
+		"make every user the identity provider authenticates an administrator, instead of naming a group with --oidc-admin-value")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -230,6 +236,16 @@ func serve(args []string) error {
 	if *oidcIssuer == "" && !isLoopback(*listen) && !*insecure {
 		return fmt.Errorf("refusing to listen on non-loopback %q without authentication: "+
 			"configure --oidc-issuer, or pass --i-know-this-is-unauthenticated to override", *listen)
+	}
+
+	// What can be refused is refused before the database is touched: a start that
+	// fails should not have created one.
+	if err := checkAdminPolicy(*oidcIssuer, *oidcAdminValue, *oidcEveryoneAdmin); err != nil {
+		return err
+	}
+	webhookURL, err := loadWebhookURL(*webhook, *webhookFile)
+	if err != nil {
+		return err
 	}
 
 	st, err := store.Open(*dbPath)
@@ -303,12 +319,13 @@ func serve(args []string) error {
 			}
 		}
 		authenticator, err = auth.New(ctx, auth.Config{
-			Issuer:       *oidcIssuer,
-			ClientID:     *oidcClientID,
-			ClientSecret: *oidcSecret,
-			RedirectURL:  redirect,
-			AdminClaim:   *oidcAdminClaim,
-			AdminValue:   *oidcAdminValue,
+			Issuer:          *oidcIssuer,
+			ClientID:        *oidcClientID,
+			ClientSecret:    *oidcSecret,
+			RedirectURL:     redirect,
+			AdminClaim:      *oidcAdminClaim,
+			AdminValue:      *oidcAdminValue,
+			EveryoneIsAdmin: *oidcEveryoneAdmin,
 			// Cookies may only skip the Secure attribute where the browser
 			// would refuse them anyway: local development over plain HTTP.
 			//
@@ -337,14 +354,22 @@ func serve(args []string) error {
 	// is useful on its own and a missing webhook now means only that nothing
 	// is posted anywhere.
 	var notifier alert.Notifier
-	if *webhook != "" {
+	var queue *alert.Queue
+	if webhookURL != "" {
 		if *alertRepeat <= 0 {
 			return fmt.Errorf("--alert-repeat must be positive, got %s", *alertRepeat)
 		}
-		notifier = &alert.Webhook{URL: *webhook}
-		log.Printf("alerting enabled, posting to %s (repeating every %s)", *webhook, *alertRepeat)
+		if *webhook != "" {
+			log.Printf("warning: --alert-webhook is visible to every local user in the process list; " +
+				"if the URL carries a token or password, use --alert-webhook-file")
+		}
+		// Delivered on its own goroutine: this is called from the loop that
+		// writes measurements, and a receiver that is down must not hold it.
+		queue = alert.NewQueue(&alert.Webhook{URL: webhookURL}, 64)
+		notifier = queue
+		log.Printf("alerting enabled, posting to %s (repeating every %s)", alert.RedactURL(webhookURL), *alertRepeat)
 	} else {
-		log.Printf("alerting evaluated but not delivered: no --alert-webhook is set")
+		log.Printf("alerting evaluated but not delivered: no --alert-webhook or --alert-webhook-file is set")
 	}
 	alerts := alert.NewManager(st, notifier)
 
@@ -418,6 +443,11 @@ func serve(args []string) error {
 			return err
 		}
 		<-engDone // engine flushes its last batch before the store closes
+		if queue != nil {
+			// What the engine's last flush resolved is delivered, not dropped: a
+			// resolved alert is not announced again.
+			queue.Close(5 * time.Second)
+		}
 	}
 	return nil
 }
@@ -443,6 +473,50 @@ func authOrNil(a *auth.Authenticator) api.Authenticator {
 		return nil
 	}
 	return a
+}
+
+// loadWebhookURL returns the webhook URL from the flag or from a file, never
+// both, and refuses what cannot be one. Errors do not repeat it: it is often the
+// credential.
+func loadWebhookURL(flagValue, file string) (string, error) {
+	if flagValue != "" && file != "" {
+		return "", errors.New("--alert-webhook and --alert-webhook-file both given: pass one")
+	}
+	raw := flagValue
+	if file != "" {
+		b, err := readSecretFile(file)
+		if err != nil {
+			return "", fmt.Errorf("--alert-webhook-file: %w", err)
+		}
+		if raw = strings.TrimSpace(string(b)); raw == "" {
+			return "", fmt.Errorf("--alert-webhook-file: %s is empty", file)
+		}
+	}
+	if raw == "" {
+		return "", nil
+	}
+	if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", errors.New("the alert webhook is not an http or https URL with a host")
+	}
+	return raw, nil
+}
+
+// checkAdminPolicy makes the choice of who is an administrator explicit. With
+// authentication on and no admin group, every user the provider lets through is
+// an admin, which used to be what happened when a flag was left out. It is now
+// something to ask for, with a name that says what it does.
+func checkAdminPolicy(issuer, adminValue string, everyone bool) error {
+	switch {
+	case everyone && adminValue != "":
+		return errors.New("--oidc-everyone-is-admin and --oidc-admin-value both given: choose one")
+	case everyone && issuer == "":
+		return errors.New("--oidc-everyone-is-admin does nothing without --oidc-issuer")
+	case issuer != "" && adminValue == "" && !everyone:
+		return errors.New("--oidc-issuer is set without --oidc-admin-value, which would make every user the " +
+			"provider authenticates an administrator. Name the group that may administer with " +
+			"--oidc-admin-value, or pass --oidc-everyone-is-admin if that is what you want")
+	}
+	return nil
 }
 
 // newHTTPServer is the listener with the timeouts a server that faces anything

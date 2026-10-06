@@ -17,7 +17,8 @@ ExecStart={{ smokeng_bin }} serve \
     --tls-ca-file {{ smokeng_tls_ca_files }}{% endif %}{% if smokeng_irtt_hmac_keys | length > 0 %} \
     --irtt-hmac-keys {{ smokeng_irtt_hmac_keyfile }}{% endif %}{% if smokeng_allow_unauthenticated | bool %} \
     --i-know-this-is-unauthenticated{% endif %}{% if smokeng_metrics_public | bool %} \
-    --metrics-public{% endif %}{% if smokeng_alert_webhook | length > 0 %} \
+    --metrics-public{% endif %}{% if smokeng_alert_webhook | length > 0 and _smokeng_new_flags | bool %} \
+    --alert-webhook-file {{ smokeng_alert_webhook_file }}{% elif smokeng_alert_webhook | length > 0 %} \
     --alert-webhook {{ smokeng_alert_webhook }}{% endif %} \
     --default-role {{ smokeng_default_role }}{% if smokeng_oidc_issuer | length > 0 %} \
     --oidc-issuer {{ smokeng_oidc_issuer }} \
@@ -25,7 +26,8 @@ ExecStart={{ smokeng_bin }} serve \
     --oidc-client-secret-file {{ smokeng_oidc_client_secret_file }} \
     --oidc-admin-claim {{ smokeng_oidc_admin_claim }}{% if smokeng_oidc_redirect_url | length > 0 %} \
     --oidc-redirect-url {{ smokeng_oidc_redirect_url }}{% endif %}{% if smokeng_oidc_admin_value | length > 0 %} \
-    --oidc-admin-value {{ smokeng_oidc_admin_value }}{% endif %}{% endif %}
+    --oidc-admin-value {{ smokeng_oidc_admin_value }}{% endif %}{% if smokeng_oidc_everyone_is_admin | bool and _smokeng_new_flags | bool %} \
+    --oidc-everyone-is-admin{% endif %}{% endif %}
 
 Restart=always
 RestartSec=5
