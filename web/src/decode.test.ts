@@ -68,12 +68,18 @@ test('the fixtures cover what the reader has to handle', () => {
   assert.equal(decodeSeries(load('wide.arrow')).ts.length, 20) // validity bitmaps of more than one byte
 })
 
-test('a column the reader has no use for is skipped; a time unit other than seconds is converted', () => {
+test('the series the reader returns are the series the API names', () => {
+  // The reader takes its list of series from the columns the server writes
+  // (arrow.ts); the rest of the page takes them from SERIES_NAMES (api.ts). If they
+  // drift, a series is silently missing from the graph picker or never drawn.
+  const wide = decodeSeries(load('wide.arrow')) // every series is measured on some row
+  assert.deepEqual(Object.keys(wide.extra).sort(), [...SERIES_NAMES].sort())
+})
+
+test('a column the reader has no use for is skipped', () => {
   const extra = decodeSeries(load('extra-int-column.arrow'))
   assert.equal(extra.ts.length, 1)
   assert.equal(extra.ts[0], 1_756_400_000)
-  // The same number written as milliseconds is a thousand times earlier.
-  assert.equal(decodeSeries(load('ts-in-millis.arrow')).ts[0], 1_756_400)
 })
 
 // ---- where things are, found by an independent walk ---------------------------
@@ -196,7 +202,7 @@ test('the layout walk finds what the writer wrote', () => {
 // ---- the properties every result must have, whatever the bytes ----------------
 
 /** Whatever decodes has to be a coherent series, with no number made of nothing. */
-function assertCoherent(s: Series, what: string) {
+function assertCoherent(s: Series, what: string, responseBytes: number) {
   const n = s.ts.length
   assert.equal(s.sent.length, n, what)
   assert.equal(s.received.length, n, what)
@@ -206,15 +212,22 @@ function assertCoherent(s: Series, what: string) {
   assert.equal(s.offsets.length, n + 1, what)
   assert.equal(s.offsets[0], 0, what)
   assert.equal(s.values.length, s.offsets[n], what)
-  for (let i = 0; i < n; i++) {
-    assert.ok(Number.isFinite(s.ts[i]) && Number.isFinite(s.sent[i]) && Number.isFinite(s.received[i]), `${what}: row ${i} has a number that is not a number`)
-    assert.ok(s.offsets[i] <= s.offsets[i + 1], what)
-  }
+  // (No check for NaN: these are typed arrays filled from integers, which cannot
+  // hold one. What kept NaN out is the rules that refuse a column shorter than
+  // its rows, each tested on its own below.)
+  for (let i = 0; i < n; i++) assert.ok(s.offsets[i] <= s.offsets[i + 1], what)
+  let allocated = s.ts.byteLength + s.sent.byteLength + s.received.byteLength + s.flags.byteLength + s.offsets.byteLength + s.values.byteLength + 16 * n
   for (const e of Object.values(s.extra)) {
     assert.equal(e.offsets.length, n + 1, what)
     assert.equal(e.measured.length, n, what)
     assert.equal(e.values.length, e.offsets[n], what)
+    allocated += e.offsets.byteLength + e.values.byteLength + e.measured.byteLength
   }
+  // Typed arrays live outside the heap the test run caps, so the cap cannot catch
+  // a reader that allocates a lot for a little. This does: what the result holds is
+  // a small multiple of what the response held, since every column's buffer is
+  // checked, and they cannot overlap.
+  assert.ok(allocated <= 16 * responseBytes + 65_536, `${what}: ${allocated} bytes allocated for a response of ${responseBytes}`)
 }
 
 /**
@@ -225,11 +238,11 @@ function assertCoherent(s: Series, what: string) {
  */
 function outcome(bytes: Uint8Array, what: string): 'decoded' | 'refused' {
   try {
-    assertCoherent(decodeSeries(bytes), what)
+    assertCoherent(decodeSeries(bytes), what, bytes.length)
     return 'decoded'
   } catch (e) {
     if (e instanceof assert.AssertionError) throw e
-    assert.ok(e instanceof Error && e.message.startsWith('measurements: malformed response (') || e instanceof Error && /^measurements: the response has no /.test(e.message),
+    assert.ok(e instanceof Error && e.message.startsWith('measurements: malformed response ('),
       `${what}: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`)
     return 'refused'
   }
@@ -305,7 +318,6 @@ test('messages out of order or in excess are refused', () => {
   refused(cat(schema, schema, batch, end), /schema that is not first/, 'a second schema')
   // A schema with no batches is an empty series, not an error.
   assert.equal(decodeSeries(cat(schema, end)).ts.length, 0)
-  assert.ok(MAX_MESSAGES < 100_000)
   refused(cat(schema, ...Array(MAX_MESSAGES + 1).fill(batch), end), /too many messages/, 'more messages than a response has')
   assert.equal(decodeSeries(cat(schema, ...Array(MAX_MESSAGES - 1).fill(batch), end)).ts.length, 3 * (MAX_MESSAGES - 1))
 })
@@ -318,32 +330,56 @@ test('the schema rules', () => {
   refused(rename(small, 'send_error', 'icmp_error'), /two columns named icmp_error/, 'a duplicated name')
   refused(rename(small, 'received', 'receivex'), /no received column of the right type/, 'a required column that is not there')
   refused(rename(small, 'samples', 'sampleX'), /no samples column/, 'the samples column renamed')
+  // The columns that say what went wrong, and the per-packet series, are required
+  // too: one that is missing or renamed would read as "nothing was refused" or
+  // "this target does not measure it".
+  refused(rename(small, 'icmp_error', 'icmp_erroX'), /no icmp_error column/, 'icmp_error renamed')
+  refused(rename(small, 'send_error', 'send_erroX'), /no send_error column/, 'send_error renamed')
+  refused(rename(small, 'ipdv_send', 'ipdv_seng'), /no ipdv_send column/, 'ipdv_send renamed')
+  refused(rename(small, 'ipdv_receive', 'ipdv_receivX'), /no ipdv_receive column/, 'ipdv_receive renamed')
+  refused(rename(small, 'server_processing', 'server_processinX'), /no server_processing column/, 'server_processing renamed')
   // A list column's child count is exactly one.
   const f = fieldTable(small, 4) // samples
   const children = f.follow(f.slot(f.field, 14))
   refused(setU32(small, children, 2), /list without exactly one child/, 'a list with two children')
   refused(setU32(small, children, 0), /list without exactly one child/, 'a list with none')
-  // The time unit is one of four.
+  // The time unit is seconds: any other would put every time in the wrong place.
   const millis = load('ts-in-millis.arrow')
   const ts = fieldTable(millis, 0)
   const tsType = ts.follow(ts.slot(ts.field, 10))
   const unitPos = ts.slot(tsType, 4)
   assert.ok(unitPos >= 0, 'the fixture writes its unit')
-  for (const unit of [4, 7, 0x7fff, 0xffff]) refused(setU16(millis, unitPos, unit), /time unit/, `a unit of ${unit}`)
+  refused(millis, /time unit other than seconds/, 'milliseconds')
+  for (const unit of [2, 3, 4, 7, 0x7fff, 0xffff]) refused(setU16(millis, unitPos, unit), /time unit other than seconds/, `a unit of ${unit}`)
+  // Control: the same stream with the unit set to seconds decodes, so the refusal is the unit.
+  assert.equal(decodeSeries(setU16(millis, unitPos, 0)).ts[0], 1_756_400_000)
+  // A dictionary on the child of a list is as much one as on a column.
+  refused(load('samples-dictionary-child.arrow'), /dictionary-encoded/, 'a dictionary-encoded list child')
+  // The stream is little-endian. The writer leaves the endianness slot out (the
+  // default), so point it at bytes inside the table that are not zero.
+  const m = layout(small)[0]
+  const dv = new DataView(small.buffer, small.byteOffset, small.byteLength)
+  const schemaTable = m.headerPos + dv.getUint32(m.headerPos, true)
+  const vtable = schemaTable - dv.getInt32(schemaTable, true)
+  assert.ok(dv.getUint16(vtable, true) >= 8 && dv.getUint16(vtable + 4, true) === 0, 'the fixture schema omits endianness')
+  refused(setU16(small, vtable + 4, dv.getUint16(vtable + 6, true)), /big-endian/, 'a stream that says it is not little-endian')
 })
 
 test('the types the server never writes are refused, where they would change a value', () => {
   const cases: [string, RegExp][] = [
     ['samples-u64', /integer of 64 bits/],
-    ['samples-signed', /samples that are not unsigned 32-bit/],
-    ['samples-u16', /samples that are not unsigned 32-bit/],
+    ['samples-signed', /samples column is not an unsigned 32-bit/],
+    ['samples-u16', /samples column is not an unsigned 32-bit/],
     ['samples-flat', /no samples column of the right type/],
-    ['series-unsigned', /ipdv_send column is not signed 32-bit/],
+    ['series-flat', /no ipdv_send column of the right type/],
+    ['series-unsigned', /ipdv_send column is not a signed 32-bit/],
     ['sent-u64', /integer of 64 bits/],
     ['sent-float', /column of type 3/],
-    ['flags-u16', /flags that are not an unsigned byte/],
-    ['flags-i8', /flags that are not an unsigned byte/],
-    ['series-i16', /ipdv_send column is not signed 32-bit/],
+    ['flags-u16', /flags column is not an unsigned 8-bit/],
+    ['flags-i8', /flags column is not an unsigned 8-bit/],
+    ['series-i16', /ipdv_send column is not a signed 32-bit/],
+    ['sent-u8', /sent column is not an unsigned 16-bit/],
+    ['sent-i16', /sent column is not an unsigned 16-bit/],
     ['extra-utf8', /column of type 5/],
     ['extra-dictionary', /dictionary-encoded/],
     ['samples-of-structs', /list of something other than integers/],
@@ -351,10 +387,17 @@ test('the types the server never writes are refused, where they would change a v
   for (const [name, pattern] of cases) refused(load(`${name}.arrow`), pattern, name)
 })
 
-test('an optional column of the wrong kind is left out, not read as something it is not', () => {
-  const s = decodeSeries(load('series-flat.arrow')) // ipdv_send written as a plain integer
-  assert.equal(s.ts.length, 1)
-  assert.equal(s.extra.ipdv_send, undefined)
+test('a width changed by one byte of the schema is refused, not read as another width', () => {
+  // The bit width of sent, received and icmp_error is 16; setting it to 8 made the
+  // reader take a column of 16-bit values for 8-bit ones and read every second byte.
+  const small = load('small.arrow')
+  for (const at of [472, 652, 672, 728]) {
+    assert.equal(small[at], 16, `byte ${at} is a bit width of 16`)
+    refused(patched(small, [[at, 8]]), /column is not an unsigned 16-bit/, `a width of 8 at ${at}`)
+    // 32 bits of 16-bit data is refused too, though which rule gets there first depends
+    // on what else the byte is (a width, or something a header points at).
+    assert.equal(outcome(patched(small, [[at, 32]]), `a width of 32 at ${at}`), 'refused', `a width of 32 at ${at}`)
+  }
 })
 
 test('a compressed batch is refused', () => {
@@ -387,6 +430,17 @@ test('the batch must match the schema, in counts and in bytes', () => {
     refused(setU64(small, b.nodes[0], BigInt(claim)), /not the batch length/, `ts says ${claim} rows, the batch says 7`)
   }
   refused(setU64(small, b.bufs[1], 1n << 40n), /outside the body/, 'a buffer that starts past the body')
+  // Buffers lie one after the other, as arrow-go writes them. Overlapping ones
+  // would give a column the bytes of its neighbour, silently, and let a small
+  // response stand behind many large columns.
+  const dv = new DataView(small.buffer, small.byteOffset, small.byteLength)
+  const off = (i: number) => Number(dv.getBigInt64(b.bufs[i], true))
+  assert.deepEqual([off(1), off(3), off(5)], [0, 56, 72], 'the fixture buffers are where the walk says')
+  refused(setU64(small, b.bufs[3], 64n), /overlap or are out of order/, 'sent shifted forward over the next buffer')
+  refused(setU64(small, b.bufs[3], 48n), /overlap or are out of order/, 'sent shifted back over ts')
+  refused(setU64(small, b.bufs[5], 0n), /overlap or are out of order/, 'received at the start of the body')
+  refused(setU64(small, b.bufs[3], 57n), /8 bytes/, 'sent starting between words')
+  refused(setU64(small, b.bufs[3], 60n), /8 bytes|overlap/, 'sent starting inside a word')
   refused(setU64(small, b.bufs[1] + 8, 1n << 40n), /outside the body/, 'a buffer that runs past the body')
   refused(setU64(small, b.bufs[1] + 8, 0xffffffffffffffffn), /cannot be real/, 'a buffer of length -1')
   // A column shorter than its rows, however the length is written.
@@ -541,8 +595,4 @@ test('random corruption of several bytes gives a coherent series or a refusal', 
       outcome(bad, `${name} case ${k}: ${edits.join(' ')}`)
     }
   }
-})
-
-test('the most rows a response may carry is the most the server will send, with room', () => {
-  assert.ok(MAX_ROWS >= 200_000 * 2 && MAX_ROWS <= 5_000_000)
 })

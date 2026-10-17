@@ -586,16 +586,20 @@ icmp_error  UInt16, nullable    -- type<<8|code; null when nothing was refused (
 
 Content type `application/vnd.apache.arrow.stream`, record batches of ~8k rows streamed
 as they are read. A month of 1-min data is ~43k rows / ~900k sample values ≈ 4–5 MB on
-the wire, landing in typed arrays browser-side with no parse step. Decode cost
+the wire, landing in typed arrays browser-side after one linear read of the buffers. Decode cost
 server-side is a linear varint walk — negligible against I/O.
 
 The browser reads exactly this and nothing else (`web/src/arrow.ts`): a schema of
 integer, timestamp and list-of-integer columns, record batches, and the end-of-stream
 marker, which it requires, so a response cut short is an error and not a shorter series.
 Every length it takes from a header is compared with the bytes it describes before
-anything is allocated from it, a column that holds fewer values than it claims rows is
-refused (it used to read as NaN, and a NaN loss as 0.0%), and a null in a column every
-interval has is refused, not read as the zero in its slot. The tests read streams the
+anything is allocated from it; buffers have to lie one after the other, so no two columns
+read the same bytes and what is allocated is a small multiple of what was received; a
+column that holds fewer values than it claims rows is refused (it used to read as NaN,
+and a NaN loss as 0.0%); a null in a column every interval has is refused, not read as
+the zero in its slot; and every column the server writes has to be there, in the width
+and signedness the server writes it, with times in seconds, so a column cannot read as
+"nothing was refused" or as other values because a byte of the schema changed. The tests read streams the
 server's own writer produced (`web/testdata`, regenerated and checked by a Go test), and
 corrupt them byte by byte. What it cannot notice is a changed value: there is no
 checksum.

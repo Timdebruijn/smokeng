@@ -150,6 +150,10 @@ func variant(change func(fields []arrow.Field) []arrow.Field) []byte {
 				v.Append(1)
 			case *array.Int64Builder:
 				v.Append(1)
+			case *array.Uint32DictionaryBuilder:
+				if err := v.Append(1); err != nil {
+					panic(err)
+				}
 			case *array.StructBuilder:
 				v.Append(true)
 				v.FieldBuilder(0).(*array.Int32Builder).Append(1)
@@ -191,13 +195,17 @@ func variants() map[string][]byte {
 		}),
 		// Each of these is something the reader has to refuse, because it could not
 		// put the values in the arrays it has without changing them.
-		"samples-u64.arrow":     variant(withType("samples", arrow.ListOf(arrow.PrimitiveTypes.Uint64))),
-		"samples-u16.arrow":     variant(withType("samples", arrow.ListOf(arrow.PrimitiveTypes.Uint16))),
-		"samples-flat.arrow":    variant(withType("samples", arrow.PrimitiveTypes.Uint32)),
+		"samples-u64.arrow":  variant(withType("samples", arrow.ListOf(arrow.PrimitiveTypes.Uint64))),
+		"samples-u16.arrow":  variant(withType("samples", arrow.ListOf(arrow.PrimitiveTypes.Uint16))),
+		"samples-flat.arrow": variant(withType("samples", arrow.PrimitiveTypes.Uint32)),
+		"samples-dictionary-child.arrow": variant(withType("samples", arrow.ListOf(&arrow.DictionaryType{
+			IndexType: arrow.PrimitiveTypes.Uint32, ValueType: arrow.PrimitiveTypes.Uint32}))),
 		"series-flat.arrow":     variant(withType("ipdv_send", arrow.PrimitiveTypes.Int32)),
 		"samples-signed.arrow":  variant(withType("samples", arrow.ListOf(arrow.PrimitiveTypes.Int32))),
 		"series-unsigned.arrow": variant(withType("ipdv_send", arrow.ListOf(arrow.PrimitiveTypes.Uint32))),
 		"sent-u64.arrow":        variant(withType("sent", arrow.PrimitiveTypes.Uint64)),
+		"sent-u8.arrow":         variant(withType("sent", arrow.PrimitiveTypes.Uint8)),
+		"sent-i16.arrow":        variant(withType("sent", arrow.PrimitiveTypes.Int16)),
 		"sent-float.arrow":      variant(withType("sent", arrow.PrimitiveTypes.Float32)),
 		"flags-u16.arrow":       variant(withType("flags", arrow.PrimitiveTypes.Uint16)),
 		"flags-i8.arrow":        variant(withType("flags", arrow.PrimitiveTypes.Int8)),

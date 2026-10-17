@@ -154,7 +154,7 @@ interface IntSpec {
 }
 type ColSpec =
   | { name: string; kind: 'int'; int: IntSpec }
-  | { name: string; kind: 'timestamp'; unit: number }
+  | { name: string; kind: 'timestamp' }
   | { name: string; kind: 'list'; int: IntSpec }
 
 /** An integer of 8, 16 or 32 bits: what fits a typed array without changing. */
@@ -178,13 +178,15 @@ function readSchema(schema: Table): ColSpec[] {
     if (typeId === T_INT && type) {
       cols.push({ name, kind: 'int', int: intSpec(type) })
     } else if (typeId === T_TIMESTAMP && type) {
-      const unit = type.i16(4, 0)
-      if (unit < 0 || unit > 3) fail('a time unit that is not one')
-      cols.push({ name, kind: 'timestamp', unit })
+      // Seconds, as the server writes them and the page reads them: a unit that
+      // changed would give every time on the plot the wrong place on the axis.
+      if (type.i16(4, 0) !== 0) fail('a time unit other than seconds')
+      cols.push({ name, kind: 'timestamp' })
     } else if (typeId === T_LIST) {
       const kids = f.vector(14)
       if (kids.n !== 1) fail('a list without exactly one child')
       const child = f.element(kids.first, 0)
+      if (child.field(12) >= 0) fail('a dictionary-encoded column')
       const childType = child.table(10)
       if (child.u8(8, 0) !== T_INT || !childType) fail('a list of something other than integers')
       cols.push({ name, kind: 'list', int: intSpec(childType!) })
@@ -194,6 +196,23 @@ function readSchema(schema: Table): ColSpec[] {
   }
   return cols
 }
+
+/**
+ * The integer columns the server writes: whether each is a plain column or a
+ * list, its width in bytes, and whether it is signed. The per-packet series are
+ * lists of signed 32-bit integers.
+ */
+const EXPECTED_INTS: readonly (readonly [string, 'int' | 'list', 1 | 2 | 4, boolean])[] = [
+  ['sent', 'int', 2, false],
+  ['received', 'int', 2, false],
+  ['flags', 'int', 1, false],
+  ['samples', 'list', 4, false],
+  ['icmp_error', 'int', 2, false],
+  ['send_error', 'int', 1, false],
+  ['ipdv_send', 'list', 4, true],
+  ['ipdv_receive', 'list', 4, true],
+  ['server_processing', 'list', 4, true],
+]
 
 /** What one batch holds for one column, as the reader needs it. */
 interface Chunk {
@@ -219,14 +238,16 @@ function readInt(body: Uint8Array, view: DataView, off: number, len: number, row
   }
 }
 
-const SECONDS_PER_UNIT = [1, 1e3, 1e6, 1e9]
-
 /**
- * Read a measurements response. extraNames are the optional list columns to look
- * for besides the required ones; a column in the stream that is none of them is
- * skipped, but its type has to be one the server writes.
+ * Read a measurements response. Every column the server writes has to be there,
+ * with the width the server writes it in (EXPECTED_INTS): one that is missing,
+ * renamed, of another kind or of another width would otherwise read as "nothing
+ * was refused" or "this target does not measure it", or as other values. The
+ * per-packet series are null on a row the server has no measurement for. A column
+ * in the stream that is none of those is skipped, but its type has to be one the
+ * server writes.
  */
-export function readMeasurements(bytes: Uint8Array, extraNames: readonly string[]): Series {
+export function readMeasurements(bytes: Uint8Array): Series {
   const b = new Bytes(bytes)
   let pos = 0
   let messages = 0
@@ -260,6 +281,7 @@ export function readMeasurements(bytes: Uint8Array, extraNames: readonly string[
       if (messages !== 1) return fail('a schema that is not first')
       const schema = msg.table(8)
       if (!schema) return fail('a schema message without a schema')
+      if (schema!.i16(4, 0) !== 0) return fail('a big-endian stream') // 0 is little-endian, and the default
       cols = readSchema(schema!)
     } else if (type === MSG_RECORD_BATCH) {
       if (!cols) return fail('a record batch before any schema')
@@ -281,12 +303,23 @@ export function readMeasurements(bytes: Uint8Array, extraNames: readonly string[
         len: meta.u64(nodes.first + 16 * i),
         nulls: meta.u64(nodes.first + 16 * i + 8),
       })
-      const buffer = (i: number) => {
+      // Buffers are checked together, once: inside the body, in ascending order,
+      // not overlapping, and starting on 8 bytes, which is how arrow-go lays them
+      // out. Two columns reading the same bytes would give one the other's
+      // values without a sign of it, and would let a small response stand behind
+      // many large columns.
+      const layoutOf: { off: number; len: number }[] = []
+      let end = 0
+      for (let i = 0; i < bufs.n; i++) {
         const off = meta.u64(bufs.first + 16 * i)
         const len = meta.u64(bufs.first + 16 * i + 8)
         if (off > body.length || len > body.length - off) fail('a buffer outside the body')
-        return { off, len }
+        if (off < end) fail('buffers that overlap or are out of order')
+        if (off % 8 !== 0) fail('a buffer that does not start on 8 bytes')
+        layoutOf.push({ off, len })
+        end = off + len
       }
+      const buffer = (i: number) => layoutOf[i]
       // An empty validity buffer means every value is valid.
       const validity = (i: number, n: number) => {
         const v = buffer(i)
@@ -343,7 +376,7 @@ export function readMeasurements(bytes: Uint8Array, extraNames: readonly string[
   if (!cols) return fail('no schema')
   if (!ended) return fail('the response ends before its end-of-stream marker; it was cut short')
 
-  return assemble(cols, chunks, totalRows, extraNames)
+  return assemble(cols, chunks, totalRows)
 }
 
 /** A 64-bit signed integer column, which must be exactly representable. */
@@ -355,26 +388,33 @@ function readInt64(view: DataView, off: number, len: number, rows: number) {
   }
 }
 
-function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number, extraNames: readonly string[]): Series {
+function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
   const index = (name: string, kind: ColSpec['kind']) => cols.findIndex((c) => c.name === name && c.kind === kind)
   const need = (name: string, kind: ColSpec['kind']) => {
     const i = index(name, kind)
     return i >= 0 ? i : fail(`the response has no ${name} column of the right type`)
   }
   const iTs = need('ts', 'timestamp')
-  const iSent = need('sent', 'int')
-  const iRecv = need('received', 'int')
-  const iFlags = need('flags', 'int')
-  const iSamples = need('samples', 'list')
-  const iIcmp = index('icmp_error', 'int')
-  const iSend = index('send_error', 'int')
 
-  // The types the values are stored in: flags is a byte, so it has to be an
-  // unsigned byte; the round-trip samples are unsigned 32-bit and the extra
-  // series signed 32-bit. Anything else would change a value on the way in.
-  const spec = (i: number) => (cols[i] as { int: IntSpec }).int
-  if (spec(iFlags).bytes !== 1 || spec(iFlags).signed) fail('flags that are not an unsigned byte')
-  if (spec(iSamples).bytes !== 4 || spec(iSamples).signed) fail('samples that are not unsigned 32-bit')
+  // The width and signedness of every other column, as the server writes them
+  // (measurementsSchema). Pinned, not merely "an integer that fits": a width that
+  // changed in the schema, one byte of it, would make the reader take a column
+  // of 16-bit values for 8-bit ones and read every second byte.
+  const at: Record<string, number> = {}
+  for (const [name, kind, bytes, signed] of EXPECTED_INTS) {
+    const i = need(name, kind)
+    const spec = (cols[i] as { int: IntSpec }).int
+    if (spec.bytes !== bytes || spec.signed !== signed) {
+      fail(`the ${name} column is not ${signed ? 'a signed' : 'an unsigned'} ${bytes * 8}-bit integer`)
+    }
+    at[name] = i
+  }
+  const iSent = at.sent
+  const iRecv = at.received
+  const iFlags = at.flags
+  const iSamples = at.samples
+  const iIcmp = at.icmp_error
+  const iSend = at.send_error
 
   const ts = new Float64Array(rows)
   const sent = new Float64Array(rows)
@@ -382,7 +422,6 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number, extraNames: 
   const flags = new Uint8Array(rows)
   const icmpErrors: (number | null)[] = new Array(rows)
   const sendErrors: (number | null)[] = new Array(rows)
-  const perUnit = SECONDS_PER_UNIT[(cols[iTs] as { unit: number }).unit]
 
   const lists = (col: number, signed: boolean) => {
     const offsets = new Uint32Array(rows + 1)
@@ -414,25 +453,23 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number, extraNames: 
   let r = 0
   for (const ch of chunks) {
     for (let i = 0; i < ch[iTs].rows; i++, r++) {
-      ts[r] = ch[iTs].int!(i) / perUnit
+      ts[r] = ch[iTs].int!(i)
       sent[r] = ch[iSent].int!(i)
       received[r] = ch[iRecv].int!(i)
       flags[r] = ch[iFlags].int!(i)
-      icmpErrors[r] = iIcmp >= 0 && ch[iIcmp].valid(i) ? ch[iIcmp].int!(i) : null
-      sendErrors[r] = iSend >= 0 && ch[iSend].valid(i) ? ch[iSend].int!(i) : null
+      icmpErrors[r] = ch[iIcmp].valid(i) ? ch[iIcmp].int!(i) : null
+      sendErrors[r] = ch[iSend].valid(i) ? ch[iSend].int!(i) : null
     }
   }
 
   const samples = lists(iSamples, false)
-  // A list column that is null on every row means the target measures nothing of
-  // the sort; it is left out, since an empty graph would invite the reader to
+  // A series that is null on every row means the target measures nothing of the
+  // sort; it is left out, since an empty graph would invite the reader to
   // conclude the jitter was zero.
   const extra: Record<string, ExtraSeries> = {}
-  for (const name of extraNames) {
-    const i = index(name, 'list')
-    if (i < 0) continue
-    if (spec(i).bytes !== 4 || !spec(i).signed) fail(`the ${name} column is not signed 32-bit`)
-    const e = lists(i, true)
+  for (const [name, kind] of EXPECTED_INTS) {
+    if (kind !== 'list' || name === 'samples') continue
+    const e = lists(at[name], true)
     if (e.measured.some((m) => m === 1)) extra[name] = { offsets: e.offsets, values: e.values as Int32Array, measured: e.measured }
   }
   return {

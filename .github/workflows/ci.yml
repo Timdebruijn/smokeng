@@ -54,8 +54,9 @@ jobs:
       - run: npm run typecheck
         working-directory: web
       # Node's own runner, with Node stripping the types: no test framework to
-      # keep current. The heap is capped so a decoder that allocates on a corrupt
-      # byte fails the run instead of passing on a big runner.
+      # keep current. The heap cap catches plain JavaScript arrays growing; the
+      # typed arrays the reader allocates live outside it, so decode.test.ts
+      # checks what every result holds against the size of the response instead.
       - run: npm test
         working-directory: web
 

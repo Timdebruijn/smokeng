@@ -757,7 +757,7 @@ async function fetchSeriesUncached(
  */
 export function decodeSeries(bytes: Uint8Array): Series {
   try {
-    return readMeasurements(bytes, SERIES_NAMES)
+    return readMeasurements(bytes)
   } catch (e) {
     if (e instanceof Error && e.message.startsWith('measurements: ')) throw e
     throw new Error(
