@@ -41,11 +41,15 @@ func (s *server) handleListBaselines(w http.ResponseWriter, r *http.Request) {
 		if !sc.Visible(b.TargetID) {
 			continue
 		}
+		capturedBy := ""
+		if sc.CanSeeWho(&b.TargetID) {
+			capturedBy = b.CapturedBy
+		}
 		out = append(out, map[string]any{
 			"rule_id": b.RuleID, "target_id": b.TargetID, "agent_id": b.AgentID,
 			"from_ts": b.FromTS, "to_ts": b.ToTS, "intervals": b.Intervals,
 			"samples":     len(b.Samples),
-			"captured_at": b.CapturedAt, "captured_by": b.CapturedBy,
+			"captured_at": b.CapturedAt, "captured_by": capturedBy,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"baselines": out})

@@ -34,12 +34,16 @@ func (s *server) handleListSilences(w http.ResponseWriter, r *http.Request) {
 		if sl.TargetID != nil && !sc.Visible(*sl.TargetID) {
 			continue
 		}
+		createdBy := ""
+		if sc.CanSeeWho(sl.TargetID) {
+			createdBy = sl.CreatedBy
+		}
 		item := map[string]any{
 			"id":         sl.ID,
 			"starts_at":  sl.StartsAt,
 			"ends_at":    sl.EndsAt,
 			"reason":     sl.Reason,
-			"created_by": sl.CreatedBy,
+			"created_by": createdBy,
 			"created_at": sl.CreatedAt,
 			// Derived state the UI would otherwise recompute: active now, or a
 			// window still in the future, or already past.

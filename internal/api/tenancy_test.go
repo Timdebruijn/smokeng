@@ -788,6 +788,48 @@ func TestAGlobalSilenceIsRefusedNotHidden(t *testing.T) {
 	}
 }
 
+// Who made a change is a staff e-mail address. Someone who can only read a
+// subtree sees what was done there, not by whom; whoever may change the node,
+// and an administrator for a silence on the whole tree, sees the author too.
+func TestAuthorIsShownOnlyToWhoMayChangeTheNode(t *testing.T) {
+	f := tenants(t)
+	now := time.Now().Unix()
+	const who = "staff@example.org"
+	if _, err := f.mgr.AddSilence(context.Background(), alert.Silence{TargetID: &f.groupA, StartsAt: now, EndsAt: now + 3600, CreatedAt: now, Reason: "own", CreatedBy: who}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.mgr.AddSilence(context.Background(), alert.Silence{StartsAt: now, EndsAt: now + 3600, CreatedAt: now, Reason: "all hands", CreatedBy: who}); err != nil {
+		t.Fatal(err)
+	}
+	const baselineWho = "someone@example.org" // set in tenants()
+	for _, c := range []struct {
+		role      string
+		sees      bool
+		path, who string
+	}{
+		{"viewer", false, "/api/v1/silences", who},
+		{"editor", true, "/api/v1/silences", who},
+		{"viewer", false, "/api/v1/alert-baselines", baselineWho},
+		{"editor", true, "/api/v1/alert-baselines", baselineWho},
+	} {
+		h := f.server(t, "team-a", f.groupA, c.role)
+		_, body := call(t, h, "GET", c.path, nil)
+		if got := strings.Contains(body, c.who); got != c.sees {
+			t.Errorf("%s on %s: author shown = %v, want %v: %s", c.role, c.path, got, c.sees, body)
+		}
+		if !strings.Contains(body, `"`+map[bool]string{true: "created_by", false: "captured_by"}[strings.Contains(c.path, "silences")]+`"`) {
+			t.Errorf("%s on %s: the author field is gone, only its value should be: %s", c.role, c.path, body)
+		}
+	}
+	// The global silence is the administrator's to attribute: even an editor
+	// of a subtree does not see who set it.
+	h := f.server(t, "team-a", f.groupA, "editor")
+	_, body := call(t, h, "GET", "/api/v1/silences", nil)
+	if strings.Count(body, who) != 1 {
+		t.Errorf("an editor should see the author of the silence on their node only, not of the global one: %s", body)
+	}
+}
+
 // The guard on a measurements request compared (to-from)/n against the limit in
 // int64. For a window from a very negative from to a large to, the difference
 // wraps to -1, which read as an empty window and let the widest one there is
