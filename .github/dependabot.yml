@@ -28,6 +28,12 @@ updates:
     groups:
       web-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # The frontend tests run on Node 22 (ci.yml), so their types stay on that
+      # line; a newer major would typecheck them against APIs Node 22 lacks. Raise
+      # the Node version and this together.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
 
   # The workflows pin every action to a commit; this keeps the pins moving.
   - package-ecosystem: github-actions
