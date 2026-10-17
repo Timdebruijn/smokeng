@@ -50,7 +50,7 @@ jobs:
           cache: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
 
       # Refuse to ship a binary whose tests were never run: a tag is not a
       # reason to skip the checks, it is a reason to insist on them.
