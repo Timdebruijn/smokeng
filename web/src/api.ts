@@ -1,5 +1,4 @@
-import { tableFromIPC, type Column } from '@uwdata/flechette'
-import { screenIPC } from './ipc.ts'
+import { readMeasurements } from './arrow.ts'
 
 export interface Me {
   /** The master's own version. */
@@ -750,147 +749,21 @@ async function fetchSeriesUncached(
 }
 
 /**
- * A row costs the sender bytes in every column, so a table that claims more rows
- * than the response has bytes is lying, and everything sized from the claim
- * would be allocated for nothing. A corrupt length is how one bad byte becomes a
- * request for gigabytes.
- */
-export function plausibleRows(rows: number, bytes: number): boolean {
-  return Number.isInteger(rows) && rows >= 0 && rows <= bytes
-}
-
-/**
- * Decode the Arrow stream a measurements request answers with. Whatever is wrong
- * with the bytes (not Arrow at all, a column missing, a length that is not true,
- * a proxy's error page) comes out as one Error that begins "measurements:", the
- * way the HTTP failure does, because that is what the page shows the reader and
- * a RangeError or TypeError out of a library says nothing about what to do.
+ * Decode the Arrow stream a measurements request answers with (see arrow.ts for
+ * what it accepts and why it is not a library). Whatever is wrong with the bytes
+ * (not Arrow at all, a stream cut short, a length that is not true, a proxy's
+ * error page) comes out as one Error that begins "measurements:", the way the
+ * HTTP failure does, because that is what the page shows the reader.
  */
 export function decodeSeries(bytes: Uint8Array): Series {
   try {
-    return decodeSeriesUnchecked(bytes)
+    return readMeasurements(bytes, SERIES_NAMES)
   } catch (e) {
     if (e instanceof Error && e.message.startsWith('measurements: ')) throw e
     throw new Error(
       `measurements: the response is not a valid measurement table (${e instanceof Error ? e.name : 'unknown error'})`,
     )
   }
-}
-
-/**
- * A list column is a buffer of offsets into its values, in the body of the
- * response where no header check reaches. flechette builds the array for a row
- * from the difference of two of them, so an offset of two billion is a request
- * for two billion elements from one corrupt byte; and one that is merely wrong
- * hands back the wrong samples as if they were measured. They have to start at
- * zero, never decrease, and end inside the values.
- */
-function checkList(col: Column<unknown>, name: string) {
-  const bad = (why: string): never => {
-    throw new Error(`measurements: the ${name} column is inconsistent (${why})`)
-  }
-  for (const batch of col.data) {
-    const offsets = batch.offsets
-    const values = batch.children?.[0]
-    if (!offsets || !values) return bad('no offsets')
-    if (offsets.length !== batch.length + 1) bad('wrong number of offsets')
-    let prev = 0
-    for (let i = 0; i < offsets.length; i++) {
-      const v = Number(offsets[i])
-      if (!(v >= prev)) bad('offsets that go backwards')
-      prev = v
-    }
-    if (Number(offsets[0]) !== 0) bad('offsets that do not start at zero')
-    if (prev > values.length) bad('offsets past the values')
-  }
-}
-
-function decodeSeriesUnchecked(bytes: Uint8Array): Series {
-  screenIPC(bytes) // before the library: see ipc.ts
-  const table = tableFromIPC(bytes)
-  const n = table.numRows
-  if (!plausibleRows(n, bytes.byteLength)) {
-    throw new Error(`measurements: the response claims ${n} rows in ${bytes.byteLength} bytes`)
-  }
-  const need = (name: string) => {
-    const col = table.getChild(name)
-    if (!col) throw new Error(`measurements: the response has no ${name} column`)
-    return col
-  }
-  const tsCol = need('ts')
-  const sentCol = need('sent')
-  const recvCol = need('received')
-  const flagsCol = need('flags')
-  const samplesCol = need('samples')
-  checkList(samplesCol, 'samples')
-  const icmpCol = table.getChild('icmp_error')
-  const sendErrCol = table.getChild('send_error')
-
-  const ts = new Float64Array(n)
-  const sent = new Float64Array(n)
-  const received = new Float64Array(n)
-  const flags = new Uint8Array(n)
-  const offsets = new Uint32Array(n + 1)
-  const rows: Uint32Array[] = new Array(n)
-  const icmpErrors: (number | null)[] = new Array(n)
-  const sendErrors: (number | null)[] = new Array(n)
-  let total = 0
-  for (let i = 0; i < n; i++) {
-    // Flechette decodes timestamps as epoch milliseconds; normalize to seconds.
-    const t = Number(tsCol.at(i))
-    ts[i] = t > 1e11 ? t / 1000 : t
-    sent[i] = Number(sentCol.at(i))
-    received[i] = Number(recvCol.at(i))
-    flags[i] = Number(flagsCol.at(i))
-    const icmp = icmpCol?.at(i)
-    icmpErrors[i] = icmp === null || icmp === undefined ? null : Number(icmp)
-    const se = sendErrCol?.at(i)
-    sendErrors[i] = se === null || se === undefined ? null : Number(se)
-    const row = samplesCol.at(i) as ArrayLike<number> | null
-    const arr = row instanceof Uint32Array ? row : Uint32Array.from(row ?? [])
-    rows[i] = arr
-    total += arr.length
-    offsets[i + 1] = total
-  }
-  const values = new Uint32Array(total)
-  for (let i = 0; i < n; i++) values.set(rows[i], offsets[i])
-
-  // The extra series are optional columns: a master older than them, or a
-  // probe that does not produce them, simply does not send them. A column that
-  // is present but null on every row is dropped too — it means this target
-  // measures nothing of the sort, and an empty graph would invite the reader
-  // to conclude the jitter was zero.
-  const extra: Record<string, ExtraSeries> = {}
-  for (const name of SERIES_NAMES) {
-    const col = table.getChild(name)
-    if (!col) continue
-    checkList(col, name)
-    const eOffsets = new Uint32Array(n + 1)
-    const measured = new Uint8Array(n)
-    const eRows: (ArrayLike<number> | null)[] = new Array(n)
-    let eTotal = 0
-    let any = false
-    for (let i = 0; i < n; i++) {
-      const row = col.at(i) as ArrayLike<number> | null
-      if (row === null || row === undefined) {
-        eRows[i] = null
-      } else {
-        eRows[i] = row
-        measured[i] = 1
-        eTotal += row.length
-        any = true
-      }
-      eOffsets[i + 1] = eTotal
-    }
-    if (!any) continue
-    const eValues = new Int32Array(eTotal)
-    for (let i = 0; i < n; i++) {
-      const row = eRows[i]
-      if (row) eValues.set(row instanceof Int32Array ? row : Int32Array.from(row), eOffsets[i])
-    }
-    extra[name] = { offsets: eOffsets, values: eValues, measured }
-  }
-  return { ts, sent, received, flags, offsets, values, icmpErrors, sendErrors, extra }
 }
 
 /** The whole target tree as TOML — the same text `config export` writes. */

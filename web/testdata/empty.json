@@ -1,0 +1,11 @@
+{
+ "ts": null,
+ "sent": null,
+ "received": null,
+ "flags": null,
+ "samples": null,
+ "icmp_error": null,
+ "send_error": null,
+ "series": {},
+ "batches": 1
+}
