@@ -1,6 +1,9 @@
-# build output
+# build output. /smokeng is what a bare `go build ./cmd/smokeng` writes: a
+# 28 MB binary was committed once because nothing ignored it.
 /bin/
 /dist/
+/smokeng
+/smokeng-*
 
 # local databases and agent keys — never commit an agent's private key
 *.db

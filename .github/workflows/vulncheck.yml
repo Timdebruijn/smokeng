@@ -1,0 +1,50 @@
+name: Vulnerabilities
+
+# Known vulnerabilities in what smokeng is built from. On a schedule as well as
+# on every push and pull request, because a vulnerability is disclosed against a
+# dependency that did not change: the first sign of one is a failed run here, not
+# a failed build.
+#
+# govulncheck reports only what the code can reach: a vulnerability in a module
+# that is required but whose vulnerable function is never called is listed and
+# does not fail the run. npm audit looks at the packages that ship in the bundle
+# (react and the two font packages); the build tools are covered by Dependabot.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 5 * * 1' # Mondays, a little after five UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # A fixed version, so the scanner itself does not change under the run.
+      # Dependabot does not track `go run pkg@version`; bump it with the Go
+      # version (it is checked against the standard library of that release).
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: npm audit --omit=dev --audit-level=low
+        working-directory: web
