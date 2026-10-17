@@ -3,6 +3,7 @@ import Admin from './Admin'
 import Agents from './Agents'
 import Alerts from './Alerts'
 import Detail from './Detail'
+import ErrorBoundary from './ErrorBoundary'
 import Overview from './Overview'
 import Palette from './Palette'
 import A11yMenu, { useA11y, type A11yState } from './A11y'
@@ -102,6 +103,8 @@ export default function App() {
         />
       )}
       <main>
+      {/* Keyed by what is shown, so after a failure the next screen starts clean. */}
+      <ErrorBoundary key={view === 'detail' ? `detail-${detailId}` : view} what={view === 'detail' ? 'this target' : `the ${view} screen`}>
       {view === 'overview' ? (
         <Overview
           onOpenDetail={(id) => {
@@ -135,6 +138,7 @@ export default function App() {
             authEnabled={me?.auth_enabled !== false}
           />
       )}
+      </ErrorBoundary>
       </main>
     </>
   )

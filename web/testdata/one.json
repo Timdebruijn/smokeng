@@ -1,0 +1,35 @@
+{
+ "ts": [
+  1756400000
+ ],
+ "sent": [
+  20
+ ],
+ "received": [
+  0
+ ],
+ "flags": [
+  0
+ ],
+ "samples": [
+  []
+ ],
+ "icmp_error": [
+  771
+ ],
+ "send_error": [
+  2
+ ],
+ "series": {
+  "ipdv_receive": [
+   null
+  ],
+  "ipdv_send": [
+   null
+  ],
+  "server_processing": [
+   null
+  ]
+ },
+ "batches": 1
+}

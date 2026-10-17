@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import ErrorBoundary from './ErrorBoundary'
 
 // Self-hosted rather than fetched from Google, which the design's markup does.
 // smokeng runs on management networks that often have no route off-site: a
@@ -17,6 +18,9 @@ import './styles.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {/* The last resort: what the screen-level boundaries do not cover, the header and the menus. */}
+    <ErrorBoundary what="smokeng" reload>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 )

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchShapeReference, type ShapeReference } from './api'
+import { minMax } from './util'
 
 /**
  * The evidence behind a fired shape alert: the reference distribution it is
@@ -51,7 +52,7 @@ export default function ShapeOverlay({
 
   const W = 520
   const H = 120
-  const max = Math.max(...bins.ref, ...bins.cur, 1)
+  const max = Math.max(minMax(bins.ref)?.hi ?? 0, minMax(bins.cur)?.hi ?? 0, 1)
   const bw = W / bins.ref.length
 
   return (
@@ -102,9 +103,9 @@ export default function ShapeOverlay({
 function histograms(ref: number[], cur: number[]) {
   const all = [...ref, ...cur].filter((v) => v > 0)
   if (all.length === 0) return null
-  const lo = Math.min(...all)
-  const hi = Math.max(...all)
-  if (!(hi > lo)) return null
+  const range = minMax(all)
+  if (!range || !(range.hi > range.lo)) return null
+  const { lo, hi } = range
   const n = 40
   const l0 = Math.log(lo)
   const l1 = Math.log(hi)

@@ -1,0 +1,15 @@
+{
+ "ts": [],
+ "sent": [],
+ "received": [],
+ "flags": [],
+ "samples": [],
+ "icmp_error": [],
+ "send_error": [],
+ "series": {
+  "ipdv_receive": [],
+  "ipdv_send": [],
+  "server_processing": []
+ },
+ "batches": 1
+}

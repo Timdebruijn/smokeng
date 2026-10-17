@@ -57,14 +57,14 @@ go install github.com/timdebruijn/smokeng/cmd/smokeng@latest
 
 ## Build from source
 
-Requirements: Go 1.27+. Node 22+ only when rebuilding the frontend (`web/dist` is
+Requirements: Go 1.27+. Node 22.18+ (type stripping on by default, which the frontend tests rely on) only when rebuilding or testing the frontend (`web/dist` is
 committed, so `go build` alone always produces a working binary — and CI fails if that
 committed output ever drifts from the source).
 
 ```
 make            # rebuild frontend + binary
 make build      # binary only, no Node needed
-make check      # what CI runs: gofmt, vet, tests, frontend typecheck
+make check      # what CI runs: gofmt, vet, tests, frontend typecheck and tests
 make dist       # release binaries for every supported platform, with checksums
 ```
 

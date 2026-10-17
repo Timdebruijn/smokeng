@@ -1,4 +1,4 @@
-import { tableFromIPC } from '@uwdata/flechette'
+import { readMeasurements } from './arrow.ts'
 
 export interface Me {
   /** The master's own version. */
@@ -745,80 +745,25 @@ async function fetchSeriesUncached(
     { cache: 'no-store' },
   )
   if (!r.ok) throw new Error(`measurements: HTTP ${r.status}`)
-  const table = tableFromIPC(new Uint8Array(await r.arrayBuffer()))
-  const n = table.numRows
-  const tsCol = table.getChild('ts')!
-  const sentCol = table.getChild('sent')!
-  const recvCol = table.getChild('received')!
-  const flagsCol = table.getChild('flags')!
-  const samplesCol = table.getChild('samples')!
-  const icmpCol = table.getChild('icmp_error')
-  const sendErrCol = table.getChild('send_error')
+  return decodeSeries(new Uint8Array(await r.arrayBuffer()))
+}
 
-  const ts = new Float64Array(n)
-  const sent = new Float64Array(n)
-  const received = new Float64Array(n)
-  const flags = new Uint8Array(n)
-  const offsets = new Uint32Array(n + 1)
-  const rows: Uint32Array[] = new Array(n)
-  const icmpErrors: (number | null)[] = new Array(n)
-  const sendErrors: (number | null)[] = new Array(n)
-  let total = 0
-  for (let i = 0; i < n; i++) {
-    // Flechette decodes timestamps as epoch milliseconds; normalize to seconds.
-    const t = Number(tsCol.at(i))
-    ts[i] = t > 1e11 ? t / 1000 : t
-    sent[i] = Number(sentCol.at(i))
-    received[i] = Number(recvCol.at(i))
-    flags[i] = Number(flagsCol.at(i))
-    const icmp = icmpCol?.at(i)
-    icmpErrors[i] = icmp === null || icmp === undefined ? null : Number(icmp)
-    const se = sendErrCol?.at(i)
-    sendErrors[i] = se === null || se === undefined ? null : Number(se)
-    const row = samplesCol.at(i) as ArrayLike<number> | null
-    const arr = row instanceof Uint32Array ? row : Uint32Array.from(row ?? [])
-    rows[i] = arr
-    total += arr.length
-    offsets[i + 1] = total
+/**
+ * Decode the Arrow stream a measurements request answers with (see arrow.ts for
+ * what it accepts and why it is not a library). Whatever is wrong with the bytes
+ * (not Arrow at all, a stream cut short, a length that is not true, a proxy's
+ * error page) comes out as one Error that begins "measurements:", the way the
+ * HTTP failure does, because that is what the page shows the reader.
+ */
+export function decodeSeries(bytes: Uint8Array): Series {
+  try {
+    return readMeasurements(bytes)
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('measurements: ')) throw e
+    throw new Error(
+      `measurements: the response is not a valid measurement table (${e instanceof Error ? e.name : 'unknown error'})`,
+    )
   }
-  const values = new Uint32Array(total)
-  for (let i = 0; i < n; i++) values.set(rows[i], offsets[i])
-
-  // The extra series are optional columns: a master older than them, or a
-  // probe that does not produce them, simply does not send them. A column that
-  // is present but null on every row is dropped too — it means this target
-  // measures nothing of the sort, and an empty graph would invite the reader
-  // to conclude the jitter was zero.
-  const extra: Record<string, ExtraSeries> = {}
-  for (const name of SERIES_NAMES) {
-    const col = table.getChild(name)
-    if (!col) continue
-    const eOffsets = new Uint32Array(n + 1)
-    const measured = new Uint8Array(n)
-    const eRows: (ArrayLike<number> | null)[] = new Array(n)
-    let eTotal = 0
-    let any = false
-    for (let i = 0; i < n; i++) {
-      const row = col.at(i) as ArrayLike<number> | null
-      if (row === null || row === undefined) {
-        eRows[i] = null
-      } else {
-        eRows[i] = row
-        measured[i] = 1
-        eTotal += row.length
-        any = true
-      }
-      eOffsets[i + 1] = eTotal
-    }
-    if (!any) continue
-    const eValues = new Int32Array(eTotal)
-    for (let i = 0; i < n; i++) {
-      const row = eRows[i]
-      if (row) eValues.set(row instanceof Int32Array ? row : Int32Array.from(row), eOffsets[i])
-    }
-    extra[name] = { offsets: eOffsets, values: eValues, measured }
-  }
-  return { ts, sent, received, flags, offsets, values, icmpErrors, sendErrors, extra }
 }
 
 /** The whole target tree as TOML — the same text `config export` writes. */

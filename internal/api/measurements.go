@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -98,6 +99,15 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.apache.arrow.stream")
 	// A trailing window's contents change every interval; never cache it.
 	w.Header().Set("Cache-Control", "no-store")
+	writeMeasurementsArrow(w, ms, batchRows)
+}
+
+// writeMeasurementsArrow writes measurements as an Arrow IPC stream: the schema,
+// batches of at most batchRows, and the end-of-stream marker the reader requires
+// (a stream cut short has none, and is refused rather than shown as a shorter
+// series). It is a function of its own so a test can write exactly what the
+// handler writes, for the frontend's decoder to read.
+func writeMeasurementsArrow(w io.Writer, ms []store.Measurement, batchRows int) {
 	writer := ipc.NewWriter(w, ipc.WithSchema(measurementsSchema))
 	defer writer.Close()
 

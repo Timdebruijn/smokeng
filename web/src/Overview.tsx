@@ -11,6 +11,7 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
+import { minMax } from './util'
 
 const WINDOW_S = 3600
 // Matches the Graphs screen's REFRESH_MS (App.tsx) — the same "live" claim
@@ -368,8 +369,9 @@ function Kpi({
 /** A shape, not a chart: enough to see whether the last hour was level. */
 function Spark({ values }: { values: number[] }) {
   if (values.length < 2) return <span className="spark" />
-  const lo = Math.min(...values)
-  const hi = Math.max(...values)
+  const range = minMax(values)
+  if (!range) return <span className="spark" />
+  const { lo, hi } = range
   const span = hi - lo || 1
   const pts = values
     .map((v, i) => `${(i / (values.length - 1)) * 70 + 1},${24 - ((v - lo) / span) * 20}`)
