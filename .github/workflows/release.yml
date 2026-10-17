@@ -1,15 +1,27 @@
 name: Release
 
-# Two jobs, and the split is the point. `build` runs everything that executes
-# this repository's code and the code of its dependencies (the tests, the Node
-# toolchain, the Go build) with a token that can only read. `publish` holds the
-# permissions that can write a release and mint an attestation, and runs nothing
-# from the repository: it takes what `build` produced, checks it against the
-# checksums, attests it, and uploads it. A compromised dependency in the build
-# can therefore change what is released, but it cannot do so with a token that
-# can publish, and the attestation says which workflow run built each file.
+# Two jobs. `build` runs everything that executes this repository's code and the
+# code of its dependencies (the tests, the Node toolchain, the Go build) with a
+# token that can only read. `publish` holds the permissions that can write a
+# release and mint an attestation, and runs nothing from the repository: it takes
+# what `build` produced, attests it, and uploads it.
+#
+# What that buys, and what it does not. The build never holds a token that can
+# publish, so a dependency that is compromised while it builds cannot upload or
+# delete anything by itself. It can still change what the binaries contain, and
+# they will be attested all the same: the attestation says which workflow run, on
+# which commit, built a file, not that the source was sound. The checksum checks
+# in both jobs catch corruption in transit, not a tampered build: SHA256SUMS comes
+# from the same artifact as the files.
+#
+# Neither job uses a cache: a tag run could otherwise restore one written by a
+# job on main, one more input to the binaries that nothing attests.
 #
 # Every action is pinned to a commit (see ci.yml).
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 on:
   push:
@@ -24,6 +36,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,12 +47,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
 
       # Refuse to ship a binary whose tests were never run: a tag is not a
       # reason to skip the checks, it is a reason to insist on them.
@@ -63,17 +74,21 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 7
+          # So that re-running the whole workflow after a failed publish does not
+          # trip over the artifact the first attempt left behind.
+          overwrite: true
 
   publish:
     needs: build
-    # Only a tag publishes. A manual run stops after build.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Only the push of a tag publishes. A manual run, even one started on a tag,
+    # stops after build.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write # create the release and upload its files
       id-token: write # a short-lived Sigstore certificate for the attestation
       attestations: write
-      artifact-metadata: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -83,8 +98,9 @@ jobs:
           # default in this version, written out so it stays so).
           digest-mismatch: error
 
-      # The checksum list is the one thing the attestation and the release both
-      # rest on, so what travelled has to match it before either happens.
+      # The checksum list is what the attestation and the release both name, so
+      # what travelled has to match it before either happens (this catches
+      # corruption in transit; see the top of the file for what it cannot).
       - name: the files are the ones that were built
         working-directory: dist
         run: sha256sum --check --strict SHA256SUMS

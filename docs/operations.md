@@ -23,8 +23,16 @@ RestartSec=5
 StateDirectory=smokeng
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
 ProtectClock=true
 ProtectKernelLogs=true
 ProtectHostname=true
@@ -45,21 +53,25 @@ The service user needs to be in a group covered by `net.ipv4.ping_group_range` â
 above is compatible with unprivileged ICMP; it is not compatible with the
 `CAP_NET_RAW` fallback, so if you rely on `setcap` instead of the sysctl, drop that line
 and replace the empty `CapabilityBoundingSet=` with `CapabilityBoundingSet=CAP_NET_RAW` next
-to `AmbientCapabilities=CAP_NET_RAW` (an ambient capability has to be in the bounding set,
-or the unit does not start).
+to `AmbientCapabilities=CAP_NET_RAW`. An ambient capability outside the bounding set is
+dropped *without an error*: the unit starts, `CapAmb` in `/proc/<pid>/status` stays empty, and
+ICMP fails when the socket is opened (checked on systemd 259).
 
 Put a TLS-terminating reverse proxy in front of it if it is reachable by anyone but you,
 and configure [authentication](authentication.md).
 
 ### Hardening, and what was left out
 
-The unit above and the Ansible role's are the same directives, and each was tried on a
+The unit above carries the directives of the Ansible role's units (the role writes
+`ReadWritePaths=` where this example has `StateDirectory=`), and the role's were tried on a
 Linux host (Fedora CoreOS, systemd 259, kernel 7.1, with `ping_group_range` narrowed to the
 service group as the role does): the master measuring `icmp`, `tcp`, `http` and `dns`
 targets with path discovery running, and the prober measuring an `icmp` target through the
-master. Every interval arrived, none was lost, and nothing was refused. `systemd-analyze security` rates the unit 2.9 (the directives the
-unit had before: 5.8; none: 9.2). Debian's systemd and kernel were not tried;
-`ProtectProc=invisible` needs systemd 247, and an older one logs that it ignores it.
+master. Every interval arrived, none was lost, nothing was refused, and a target with
+`dscp = 46` measured as before. On that host `systemd-analyze security` rated the role's
+units 2.9 (the directives they had before: 5.8; none: 9.2); the score differs between systemd
+versions, and the example above was not scored separately. Debian's systemd and kernel were
+not tried; `ProtectProc=invisible` needs systemd 247, and an older one logs that it ignores it.
 
 Three directives that look free are not in it, on purpose:
 

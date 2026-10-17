@@ -8,7 +8,10 @@ Please report it privately, not in a public issue or pull request:
 2. Choose **Report a vulnerability**.
 
 That opens a private advisory visible only to you and the maintainer, where a fix
-can be prepared before anything is public. Include what you found, how to
+can be prepared before anything is public. If the button is not there (the repository
+owner has to switch the feature on), open a public issue titled *Security contact
+request* **with no details of the problem in it**, and a private channel will be
+arranged. Include what you found, how to
 reproduce it (the smallest request, file or configuration that shows it), which
 version it applies to, and what an attacker gains.
 
@@ -45,10 +48,16 @@ routable address).
 
 ## Verifying a release
 
-Release binaries come with `SHA256SUMS`, and from the release that adds them,
-a signed build-provenance attestation that ties each binary to the workflow run
-that built it:
+Release binaries come with `SHA256SUMS`. From the first release made by the current
+release workflow they also carry a signed build-provenance attestation that ties each
+file to the workflow run and commit that built it (it says where a file came from, not
+that the source was sound). With `gh` logged in:
 
 ```
-gh attestation verify smokeng-linux-amd64 --repo Timdebruijn/smokeng
+gh attestation verify smokeng-linux-amd64 \
+  --repo Timdebruijn/smokeng \
+  --signer-workflow Timdebruijn/smokeng/.github/workflows/release.yml
 ```
+
+Without `--signer-workflow`, an attestation made by any workflow in the repository
+would pass. Verify the binary you run; the checksum list is not itself attested.

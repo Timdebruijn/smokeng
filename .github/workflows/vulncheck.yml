@@ -3,7 +3,8 @@ name: Vulnerabilities
 # Known vulnerabilities in what smokeng is built from. On a schedule as well as
 # on every push and pull request, because a vulnerability is disclosed against a
 # dependency that did not change: the first sign of one is a failed run here, not
-# a failed build.
+# a failed build. (GitHub switches scheduled workflows off after 60 days without
+# any activity in a public repository; a push to main switches this one back on.)
 #
 # govulncheck reports only what the code can reach: a vulnerability in a module
 # that is required but whose vulnerable function is never called is listed and
@@ -24,6 +25,7 @@ permissions:
 jobs:
   go:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,6 +41,7 @@ jobs:
 
   npm:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -70,7 +70,8 @@ UMask=0077
 # No capabilities at all. ICMP goes over unprivileged datagram sockets (the
 # sysctl this role sets), so none is needed. If you use the CAP_NET_RAW fallback
 # instead (see docs/operations.md), this must become CapabilityBoundingSet=CAP_NET_RAW
-# next to AmbientCapabilities=CAP_NET_RAW, or the unit will not start.
+# next to AmbientCapabilities=CAP_NET_RAW: with it empty the unit still starts, and
+# the ambient capability is dropped without an error.
 CapabilityBoundingSet=
 
 # Deliberately absent:
