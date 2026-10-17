@@ -25,6 +25,16 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RemoveIPC=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
@@ -34,10 +44,35 @@ The service user needs to be in a group covered by `net.ipv4.ping_group_range` â
 [Getting started](getting-started.md). It does **not** need root, and `NoNewPrivileges`
 above is compatible with unprivileged ICMP; it is not compatible with the
 `CAP_NET_RAW` fallback, so if you rely on `setcap` instead of the sysctl, drop that line
-and add `AmbientCapabilities=CAP_NET_RAW`.
+and replace the empty `CapabilityBoundingSet=` with `CapabilityBoundingSet=CAP_NET_RAW` next
+to `AmbientCapabilities=CAP_NET_RAW` (an ambient capability has to be in the bounding set,
+or the unit does not start).
 
 Put a TLS-terminating reverse proxy in front of it if it is reachable by anyone but you,
 and configure [authentication](authentication.md).
+
+### Hardening, and what was left out
+
+The unit above and the Ansible role's are the same directives, and each was tried on a
+Linux host (Fedora CoreOS, systemd 259, kernel 7.1, with `ping_group_range` narrowed to the
+service group as the role does): the master measuring `icmp`, `tcp`, `http` and `dns`
+targets with path discovery running, and the prober measuring an `icmp` target through the
+master. Every interval arrived, none was lost, and nothing was refused. `systemd-analyze security` rates the unit 2.9 (the directives the
+unit had before: 5.8; none: 9.2). Debian's systemd and kernel were not tried;
+`ProtectProc=invisible` needs systemd 247, and an older one logs that it ignores it.
+
+Three directives that look free are not in it, on purpose:
+
+- **`ProcSubset=pid`** hides `/proc/net`, where the kernel counts the replies a socket dropped
+  for want of queue space. smokeng still runs and still measures, but logs `drop counter
+  unavailable` and can no longer tell a reply it failed to read from one the network lost, so
+  its loss figures claim more than they know. This one was tried: it is the reason for this
+  paragraph.
+- **`SystemCallFilter=`** worked for `icmp`, `tcp`, `http`, `dns` and path discovery, but `irtt`,
+  `https` and the alert webhook were not tried under it, and a refused syscall fails one probe
+  type quietly. If you add it, start with `SystemCallErrorNumber=EPERM` and read the log.
+- **`PrivateUsers=`** worked on that kernel; how ICMP socket permission (checked against group
+  ids) behaves in a user namespace has changed between kernels.
 
 ### Behind a proxy
 

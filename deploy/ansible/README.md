@@ -63,6 +63,13 @@ The ones that matter:
 
 Put the OIDC client secret in a vault, not in `group_vars` in the clear.
 
+## The systemd units
+
+Both units (`smokeng.service` and the prober's) carry the same hardening, listed with the
+reasons in the templates and in [../../docs/operations.md](../../docs/operations.md#hardening-and-what-was-left-out).
+If you replace unprivileged ICMP with the `CAP_NET_RAW` fallback, the unit's empty
+`CapabilityBoundingSet=` has to become `CAP_NET_RAW` as well.
+
 ## A note on exposure
 
 The role refuses to bind off loopback unless you have either configured OIDC or
