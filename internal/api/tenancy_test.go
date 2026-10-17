@@ -788,6 +788,82 @@ func TestAGlobalSilenceIsRefusedNotHidden(t *testing.T) {
 	}
 }
 
+// Who made a change is a staff e-mail address. Someone who can only read a
+// subtree sees what was done there, not by whom; whoever may change the node,
+// and an administrator for a silence on the whole tree, sees the author too.
+func TestAuthorIsShownOnlyToWhoMayChangeTheNode(t *testing.T) {
+	f := tenants(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+	const who = "staff@example.org"
+	const baselineWho = "someone@example.org" // CapturedBy of the baselines tenants() stores
+	if _, err := f.mgr.AddSilence(ctx, alert.Silence{TargetID: &f.groupA, StartsAt: now, EndsAt: now + 3600, CreatedAt: now, Reason: "own", CreatedBy: who}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.mgr.AddSilence(ctx, alert.Silence{StartsAt: now, EndsAt: now + 3600, CreatedAt: now, Reason: "all hands", CreatedBy: who}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		role, path, field, who string
+		sees                   bool
+	}{
+		{"viewer", "/api/v1/silences", "created_by", who, false},
+		{"editor", "/api/v1/silences", "created_by", who, true},
+		{"viewer", "/api/v1/alert-baselines", "captured_by", baselineWho, false},
+		{"editor", "/api/v1/alert-baselines", "captured_by", baselineWho, true},
+	} {
+		h := f.server(t, "team-a-"+c.role, f.groupA, c.role)
+		_, body := call(t, h, "GET", c.path, nil)
+		if got := strings.Contains(body, c.who); got != c.sees {
+			t.Errorf("%s on %s: author shown = %v, want %v: %s", c.role, c.path, got, c.sees, body)
+		}
+		if !strings.Contains(body, `"`+c.field+`"`) {
+			t.Errorf("%s on %s: the %s field is gone, only its value should be: %s", c.role, c.path, c.field, body)
+		}
+	}
+
+	// The global silence is the administrator's to attribute: an editor of a
+	// subtree sees the author of the silence on their node only.
+	_, body := call(t, f.server(t, "team-a-editor", f.groupA, "editor"), "GET", "/api/v1/silences", nil)
+	if strings.Count(body, who) != 1 {
+		t.Errorf("an editor should see the author of the silence on their node only, not of the global one: %s", body)
+	}
+	admin := New(f.st, Options{Auth: &fakeAuth{session: &auth.Session{Subject: "a", Role: auth.RoleAdmin, Expires: 1 << 40}}, Alerts: f.mgr}, fstest.MapFS{})
+	if _, body := call(t, admin, "GET", "/api/v1/silences", nil); strings.Count(body, who) != 2 {
+		t.Errorf("an administrator should see the author of both silences: %s", body)
+	}
+
+	// An acknowledgement is attributed by the target that fired, the node the
+	// acknowledge itself is authorised on, not the node the rule is defined on:
+	// an editor of the host alone acknowledged it and may see that they did.
+	rule := alert.Rule{ID: f.ruleA, TargetID: f.groupA, Name: "shape"}
+	acked := alert.Alert{Rule: &rule, TargetID: f.hostA, Firing: true, Since: time.Now(), Acked: true, AckedBy: who, AckedAt: time.Now()}
+	firing := firingOverride{Manager: f.mgr, fire: []alert.Alert{acked}}
+	viewOnParent := store.Grant{Group: "team-a-mixed", TargetID: f.groupA, Role: "viewer"}
+	if err := f.st.UpsertGrant(ctx, &viewOnParent); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		group string
+		node  int64
+		role  string
+		sees  bool
+	}{
+		{"team-a-viewer", f.groupA, "viewer", false},
+		{"team-a-mixed", f.hostA, "editor", true},
+	} {
+		if err := f.st.UpsertGrant(ctx, &store.Grant{Group: c.group, TargetID: c.node, Role: c.role}); err != nil {
+			t.Fatal(err)
+		}
+		sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{c.group}, Expires: 1 << 40}
+		h := New(f.st, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone, Alerts: firing}, fstest.MapFS{})
+		_, body := call(t, h, "GET", "/api/v1/alerts", nil)
+		if got := strings.Contains(body, who); got != c.sees || !strings.Contains(body, `"acked_by"`) {
+			t.Errorf("%s: acked_by shown = %v, want %v (field present): %s", c.group, got, c.sees, body)
+		}
+	}
+}
+
 // The guard on a measurements request compared (to-from)/n against the limit in
 // int64. For a window from a very negative from to a large to, the difference
 // wraps to -1, which read as an empty window and let the widest one there is

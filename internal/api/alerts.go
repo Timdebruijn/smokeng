@@ -267,7 +267,11 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 			item["since"] = a.Since.Unix()
 		}
 		if a.Acked {
-			item["acked_by"] = a.AckedBy
+			ackedBy := ""
+			if sc.CanSeeWho(&a.TargetID) {
+				ackedBy = a.AckedBy
+			}
+			item["acked_by"] = ackedBy
 			if !a.AckedAt.IsZero() {
 				item["acked_at"] = a.AckedAt.Unix()
 			}
