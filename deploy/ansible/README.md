@@ -43,7 +43,7 @@ The ones that matter:
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `smokeng_version` | `v0.10.0` | Pin it. An unattended "latest" is an unreviewed upgrade. |
+| `smokeng_version` | see [`defaults/main.yml`](roles/smokeng/defaults/main.yml) | Pin it. An unattended "latest" is an unreviewed upgrade. Moving it is what upgrades a host on the next run: back up the database first, because a schema migration does not go back. |
 | `smokeng_listen` | `127.0.0.1:8080` | |
 | `smokeng_external_url` | `""` | The address agents and browsers reach this master at, when a proxy sits in front. Set it or the enrolment command names the listen address. |
 | `smokeng_trusted_proxies` | `""` | CIDRs whose `X-Forwarded-For` may be believed. Log accuracy only. |
