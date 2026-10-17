@@ -18,8 +18,11 @@ interface State {
  * the way to another screen, standing. Without one, React unmounts the whole
  * tree and the page is blank.
  *
- * It says what failed and shows the message, because the person reading it may
- * be the only one who can tell the operator what the page was doing.
+ * It catches errors thrown while rendering, and nothing else: one thrown in an
+ * event handler or an effect, or after an await, does not reach it. It says what
+ * failed and shows the message, because the person reading it may be the only
+ * one who can tell the operator what the page was doing. It does not say whether
+ * anything was changed: a screen can crash right after a successful save.
  */
 export default class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null }
@@ -39,7 +42,7 @@ export default class ErrorBoundary extends Component<Props, State> {
       <section className="card section-card" role="alert">
         <h2>Something went wrong showing {this.props.what}</h2>
         <p className="error">{error.message || error.name}</p>
-        <p className="hint small">The rest of the page is unaffected. The data was not changed.</p>
+        <p className="hint small">The rest of the page is unaffected.</p>
         <p>
           <button className="pill" onClick={() => this.setState({ error: null })}>
             Try again

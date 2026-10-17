@@ -1,11 +1,15 @@
 {
- "ts": null,
- "sent": null,
- "received": null,
- "flags": null,
- "samples": null,
- "icmp_error": null,
- "send_error": null,
- "series": {},
+ "ts": [],
+ "sent": [],
+ "received": [],
+ "flags": [],
+ "samples": [],
+ "icmp_error": [],
+ "send_error": [],
+ "series": {
+  "ipdv_receive": [],
+  "ipdv_send": [],
+  "server_processing": []
+ },
  "batches": 1
 }

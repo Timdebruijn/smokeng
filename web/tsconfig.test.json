@@ -1,0 +1,9 @@
+{
+  // The tests run under Node, with its types, and load testdata/ from disk. The
+  // app is checked without them (tsconfig.json), so a Node global used in browser
+  // code is an error.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["node"], "noEmit": true },
+  "include": ["src/**/*.test.ts", "src/arrow.ts", "src/api.ts", "src/util.ts"],
+  "exclude": []
+}

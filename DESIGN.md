@@ -589,6 +589,17 @@ as they are read. A month of 1-min data is ~43k rows / ~900k sample values ≈ 4
 the wire, landing in typed arrays browser-side with no parse step. Decode cost
 server-side is a linear varint walk — negligible against I/O.
 
+The browser reads exactly this and nothing else (`web/src/arrow.ts`): a schema of
+integer, timestamp and list-of-integer columns, record batches, and the end-of-stream
+marker, which it requires, so a response cut short is an error and not a shorter series.
+Every length it takes from a header is compared with the bytes it describes before
+anything is allocated from it, a column that holds fewer values than it claims rows is
+refused (it used to read as NaN, and a NaN loss as 0.0%), and a null in a column every
+interval has is refused, not read as the zero in its slot. The tests read streams the
+server's own writer produced (`web/testdata`, regenerated and checked by a Go test), and
+corrupt them byte by byte. What it cannot notice is a changed value: there is no
+checksum.
+
 ### 7.3 Config as TOML, DB as source of truth
 
 The DB is authoritative from v0.1. TOML exists for GitOps and bootstrapping:
@@ -986,10 +997,10 @@ Escape hatch `github.com/mattn/go-sqlite3` (v1.14.x) is alive but slow-cadence a
 CGO — only if the modernc benchmark gate (§6) trips. Litestream (v0.5.x, Fly.io) is
 actively maintained, so the backup story in §6 holds.
 
-**Frontend** — React 19.2 · Vite 8 (Rolldown) · TypeScript 7 · `@uwdata/flechette` 2.5
-as the Arrow IPC reader (maintained, read-only, a fraction of `apache-arrow`'s bundle —
-we only read; trade-off #4 is thereby resolved). Tailwind 4 enters with the admin UI in
-v0.2, not before.
+**Frontend** — React 19.2 · Vite 8 (Rolldown) · TypeScript 7 · a reader of its own for
+the Arrow IPC stream (`web/src/arrow.ts`, §7.2; flechette was used until a corrupt byte in
+a response was found to fill the heap and kill the tab). Tailwind 4 enters with the admin
+UI in v0.2, not before.
 
 **Browser support constraint**: `OffscreenCanvas` + 2D in workers is fine everywhere
 (Safari ≥ 16.4, Firefox ≥ 105), but Firefox still does not support *module* workers.
@@ -1036,7 +1047,7 @@ pull (§9), no multi-tenancy.
 | 1 | "probe" naming | brief's probe-as-node vs probe-mode + **agent** | agent (§2) — rename is free now, breaking later |
 | 2 | Density→alpha default | per-column max vs count-normalized `1−exp(−k·d)` | **decided**: count-normalized, `k = 14`, the only mode built — no runtime toggle |
 | 3 | SQLite driver | modernc.org/sqlite (pure Go) vs mattn (CGO) | modernc; benchmark escape hatch (§6) |
-| 4 | Arrow JS reader | apache-arrow (large) vs flechette (small, read-only) | **resolved**: flechette 2.5 — verified maintained (§11); we only read |
+| 4 | Arrow JS reader | apache-arrow (large) vs flechette (small, read-only) vs a reader of our own | **resolved, revised**: flechette 2.5 at first; replaced by a reader of the one stream the server writes (§7.2), because a general library trusts lengths in the stream that a response can lie about |
 | 5 | Sample unit | 1 µs vs 1 ns | µs — below timestamping noise; version byte keeps ns possible |
 | 6 | Probe modes modeling | inheritable `probe_mode` vs `probe_defs` table | inheritable column; `probe_type` and its per-type settings landed 2026-08-30 as the predicted additive migration, with no change to `measurements` (§3.2b) |
 | 7 | Multi-series endpoint | per-target requests vs batched | per-target now; batch only if measured overhead |

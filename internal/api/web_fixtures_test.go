@@ -7,6 +7,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+
 	"github.com/timdebruijn/smokeng/internal/store"
 )
 
@@ -54,8 +59,167 @@ func fixtureMeasurements(rows int) []store.Measurement {
 	return ms
 }
 
+// nullReceived is a stream the server never writes: a required column with a
+// null in it. The reader has to refuse it rather than read the zero in the slot,
+// which for `received` would be a hundred percent loss.
+func nullReceived() []byte {
+	var buf bytes.Buffer
+	w := ipc.NewWriter(&buf, ipc.WithSchema(measurementsSchema))
+	rb := array.NewRecordBuilder(memory.DefaultAllocator, measurementsSchema)
+	defer rb.Release()
+	for i := 0; i < 2; i++ {
+		rb.Field(0).(*array.TimestampBuilder).Append(arrow.Timestamp(1_756_400_000 + int64(i)*60))
+		rb.Field(1).(*array.Uint16Builder).Append(20)
+		if i == 1 {
+			rb.Field(2).(*array.Uint16Builder).AppendNull()
+		} else {
+			rb.Field(2).(*array.Uint16Builder).Append(18)
+		}
+		rb.Field(3).(*array.Uint8Builder).Append(0)
+		l := rb.Field(4).(*array.ListBuilder)
+		l.Append(true)
+		l.ValueBuilder().(*array.Uint32Builder).AppendValues([]uint32{1000, 2000}, nil)
+		rb.Field(5).(*array.Uint16Builder).AppendNull()
+		rb.Field(6).(*array.Uint8Builder).AppendNull()
+		for j := 0; j < len(store.KnownSeries); j++ {
+			rb.Field(7 + j).(*array.ListBuilder).AppendNull()
+		}
+	}
+	rec := rb.NewRecord()
+	defer rec.Release()
+	if err := w.Write(rec); err != nil {
+		panic(err)
+	}
+	if err := w.Close(); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
+// variant writes one row of a stream whose schema is measurementsSchema with
+// one column changed, or one added, to something the server never writes. Every
+// integer is 1 and every list is [1], so what a reader does with it depends on
+// the schema alone.
+func variant(change func(fields []arrow.Field) []arrow.Field) []byte {
+	fields := append([]arrow.Field(nil), measurementsSchema.Fields()...)
+	schema := arrow.NewSchema(change(fields), nil)
+	var buf bytes.Buffer
+	w := ipc.NewWriter(&buf, ipc.WithSchema(schema))
+	rb := array.NewRecordBuilder(memory.DefaultAllocator, schema)
+	defer rb.Release()
+	for i := range schema.Fields() {
+		switch b := rb.Field(i).(type) {
+		case *array.TimestampBuilder:
+			b.Append(1_756_400_000)
+		case *array.Uint8Builder:
+			b.Append(1)
+		case *array.Uint16Builder:
+			b.Append(1)
+		case *array.Uint32Builder:
+			b.Append(1)
+		case *array.Uint64Builder:
+			b.Append(1)
+		case *array.Int8Builder:
+			b.Append(1)
+		case *array.Int16Builder:
+			b.Append(1)
+		case *array.Int32Builder:
+			b.Append(1)
+		case *array.Int64Builder:
+			b.Append(1)
+		case *array.Float32Builder:
+			b.Append(1)
+		case *array.StringBuilder:
+			b.Append("x")
+		case *array.BinaryDictionaryBuilder:
+			if err := b.AppendString("x"); err != nil {
+				panic(err)
+			}
+		case *array.ListBuilder:
+			b.Append(true)
+			switch v := b.ValueBuilder().(type) {
+			case *array.Uint16Builder:
+				v.Append(1)
+			case *array.Uint32Builder:
+				v.Append(1)
+			case *array.Uint64Builder:
+				v.Append(1)
+			case *array.Int16Builder:
+				v.Append(1)
+			case *array.Int32Builder:
+				v.Append(1)
+			case *array.Int64Builder:
+				v.Append(1)
+			case *array.StructBuilder:
+				v.Append(true)
+				v.FieldBuilder(0).(*array.Int32Builder).Append(1)
+			default:
+				panic("variant: no filler for a list of this type")
+			}
+		default:
+			panic("variant: no filler for this column type")
+		}
+	}
+	rec := rb.NewRecord()
+	defer rec.Release()
+	if err := w.Write(rec); err != nil {
+		panic(err)
+	}
+	if err := w.Close(); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
+// withType replaces the type of the column called name.
+func withType(name string, t arrow.DataType) func([]arrow.Field) []arrow.Field {
+	return func(fields []arrow.Field) []arrow.Field {
+		for i := range fields {
+			if fields[i].Name == name {
+				fields[i].Type = t
+			}
+		}
+		return fields
+	}
+}
+
+func variants() map[string][]byte {
+	return map[string][]byte{
+		// Fine: a column the reader has no use for is skipped, whatever it holds.
+		"extra-int-column.arrow": variant(func(f []arrow.Field) []arrow.Field {
+			return append(f, arrow.Field{Name: "zz", Type: arrow.PrimitiveTypes.Uint8})
+		}),
+		// Each of these is something the reader has to refuse, because it could not
+		// put the values in the arrays it has without changing them.
+		"samples-u64.arrow":     variant(withType("samples", arrow.ListOf(arrow.PrimitiveTypes.Uint64))),
+		"samples-u16.arrow":     variant(withType("samples", arrow.ListOf(arrow.PrimitiveTypes.Uint16))),
+		"samples-flat.arrow":    variant(withType("samples", arrow.PrimitiveTypes.Uint32)),
+		"series-flat.arrow":     variant(withType("ipdv_send", arrow.PrimitiveTypes.Int32)),
+		"samples-signed.arrow":  variant(withType("samples", arrow.ListOf(arrow.PrimitiveTypes.Int32))),
+		"series-unsigned.arrow": variant(withType("ipdv_send", arrow.ListOf(arrow.PrimitiveTypes.Uint32))),
+		"sent-u64.arrow":        variant(withType("sent", arrow.PrimitiveTypes.Uint64)),
+		"sent-float.arrow":      variant(withType("sent", arrow.PrimitiveTypes.Float32)),
+		"flags-u16.arrow":       variant(withType("flags", arrow.PrimitiveTypes.Uint16)),
+		"flags-i8.arrow":        variant(withType("flags", arrow.PrimitiveTypes.Int8)),
+		"series-i16.arrow":      variant(withType("ipdv_send", arrow.ListOf(arrow.PrimitiveTypes.Int16))),
+		"extra-utf8.arrow": variant(func(f []arrow.Field) []arrow.Field {
+			return append(f, arrow.Field{Name: "zz", Type: arrow.BinaryTypes.String})
+		}),
+		"extra-dictionary.arrow": variant(func(f []arrow.Field) []arrow.Field {
+			return append(f, arrow.Field{Name: "zz", Type: &arrow.DictionaryType{
+				IndexType: arrow.PrimitiveTypes.Int8, ValueType: arrow.BinaryTypes.String}})
+		}),
+		"samples-of-structs.arrow": variant(withType("samples",
+			arrow.ListOf(arrow.StructOf(arrow.Field{Name: "a", Type: arrow.PrimitiveTypes.Int32})))),
+		"ts-in-millis.arrow": variant(withType("ts", &arrow.TimestampType{Unit: arrow.Millisecond, TimeZone: "UTC"})),
+	}
+}
+
 func fixtureFiles() map[string][]byte {
-	files := map[string][]byte{}
+	files := map[string][]byte{"null-received.arrow": nullReceived()}
+	for name, data := range variants() {
+		files[name] = data
+	}
 	for _, f := range []struct {
 		name      string
 		rows      int
@@ -65,7 +229,8 @@ func fixtureFiles() map[string][]byte {
 		{"empty", 0, 8192, true},
 		{"one", 1, 8192, false},
 		{"small", 7, 8192, true},
-		{"multi", 8, 3, true}, // three batches: 3, 3, 2
+		{"multi", 8, 3, true},    // three batches: 3, 3, 2
+		{"wide", 20, 8192, true}, // validity bitmaps of three bytes
 	} {
 		ms := fixtureMeasurements(f.rows)
 		if !f.series {
@@ -77,7 +242,15 @@ func fixtureFiles() map[string][]byte {
 		writeMeasurementsArrow(&buf, ms, f.batchRows)
 		files[f.name+".arrow"] = buf.Bytes()
 
-		want := fixtureJSON{Series: map[string][]*[]int32{}}
+		// Slices that are empty and not nil, so an empty stream reads as [] in the
+		// JSON, not null.
+		want := fixtureJSON{
+			TS: []int64{}, Sent: []int{}, Received: []int{}, Flags: []int{}, Samples: [][]uint32{},
+			ICMP: []*uint16{}, SendErr: []*uint8{}, Series: map[string][]*[]int32{},
+		}
+		for _, name := range store.KnownSeries {
+			want.Series[name] = []*[]int32{}
+		}
 		want.Batches = (f.rows + f.batchRows - 1) / f.batchRows
 		if f.rows == 0 {
 			want.Batches = 1 // the empty batch that carries the schema
