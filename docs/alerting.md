@@ -214,8 +214,10 @@ rule. It comes in two shapes: a duration from now (the quick "silence this for t
 on a firing alert), or an explicit `[from, until)` window booked ahead of time, which is a
 maintenance window. Both are managed under **Alerts → Silences & maintenance windows**, or
 over the API. Who set a silence (`created_by`), captured a baseline (`captured_by`) or
-acknowledged an alert (`acked_by`) is the e-mail address from their session; it is shown
-only to callers who may change that node, and for a global silence to administrators.
+acknowledged an alert (`acked_by`) is the e-mail address from their session (or the name
+or subject when the identity provider sends none). It is shown only to callers who may
+change that node (for an alert, the target that fired), and for a global silence only to
+administrators.
 Everyone else sees the same entry with the field empty.
 
 ```bash

@@ -268,7 +268,7 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 		if a.Acked {
 			ackedBy := ""
-			if sc.CanSeeWho(&a.Rule.TargetID) {
+			if sc.CanSeeWho(&a.TargetID) {
 				ackedBy = a.AckedBy
 			}
 			item["acked_by"] = ackedBy
