@@ -30,7 +30,7 @@ are gitignored: they name your hosts.
 | Binary | Downloads `smokeng-linux-<arch>` for the pinned version and verifies it against the release's `SHA256SUMS`. Architecture comes from the host's facts. |
 | User | System user and group, no login shell, no home. |
 | ICMP | Sets `net.ipv4.ping_group_range` to the service group's gid **only**, so unprivileged ICMP is not a machine-wide capability. |
-| Unit | `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `MemoryDenyWriteExecute`, and `ReadWritePaths` limited to the state directory. smokeng needs no privileges beyond that sysctl. |
+| Unit | `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `MemoryDenyWriteExecute`, no capabilities, the kernel, clock, hostname and proc protections, and `ReadWritePaths` limited to the state directory; see [the units](#the-systemd-units). smokeng needs no privileges beyond that sysctl. |
 | Targets | Optional: ships a `targets.toml` and imports it. The import is declarative, so it runs every play and reports a change only when it made one. |
 
 Re-running the play changes nothing. That is the point: it is safe from cron,
@@ -62,6 +62,14 @@ The ones that matter:
 | `smokeng_prober_agent_name` | `local-probe` | The name a target's `agents` must list to be measured there |
 
 Put the OIDC client secret in a vault, not in `group_vars` in the clear.
+
+## The systemd units
+
+Both units (`smokeng.service` and the prober's) carry the same hardening, listed with the
+reasons in the templates and in [../../docs/operations.md](../../docs/operations.md#hardening-and-what-was-left-out).
+If you replace unprivileged ICMP with the `CAP_NET_RAW` fallback, the unit's empty
+`CapabilityBoundingSet=` has to become `CAP_NET_RAW` as well: otherwise the ambient
+capability is dropped without an error and ICMP fails when the socket is opened.
 
 ## A note on exposure
 

@@ -1,6 +1,6 @@
 module github.com/timdebruijn/smokeng
 
-go 1.27.1
+go 1.27.2
 
 require (
 	codeberg.org/miekg/dns v0.6.117
@@ -9,9 +9,9 @@ require (
 	github.com/google/flatbuffers v25.12.19+incompatible
 	github.com/heistp/irtt v0.9.2
 	github.com/pelletier/go-toml/v2 v2.4.3
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.61.0
 	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.60.1
 )
 
@@ -31,7 +31,7 @@ require (
 	github.com/pkg/profile v1.7.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

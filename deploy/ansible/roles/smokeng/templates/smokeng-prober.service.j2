@@ -61,5 +61,42 @@ LockPersonality=true
 MemoryDenyWriteExecute=true
 ReadWritePaths={{ smokeng_state_dir }}
 
+# Tried one at a time on a Linux host under the same ping_group_range this role
+# sets: the master measuring icmp, tcp, http and dns targets with path discovery
+# running, and the prober measuring an icmp target through the master. Every
+# interval arrived and nothing was refused.
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectHostname=true
+# Needs systemd 247; an older one logs that it ignores it. Hides other users'
+# processes, and leaves /proc/net/icmp alone, which is where the kernel's drop
+# counter lives (see below).
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RemoveIPC=true
+SystemCallArchitectures=native
+UMask=0077
+# No capabilities at all. ICMP goes over unprivileged datagram sockets (the
+# sysctl this role sets), so none is needed. If you use the CAP_NET_RAW fallback
+# instead (see docs/operations.md), this must become CapabilityBoundingSet=CAP_NET_RAW
+# next to AmbientCapabilities=CAP_NET_RAW: with it empty the unit still starts, and
+# the ambient capability is dropped without an error.
+CapabilityBoundingSet=
+
+# Deliberately absent:
+#
+# ProcSubset=pid  Hides /proc/net, where the kernel's per-socket drop counter
+#   lives. smokeng still runs and still measures, but logs "drop counter
+#   unavailable" and can no longer tell a reply the kernel dropped for lack of
+#   queue space from one the network lost, so its loss figures claim more than
+#   they know.
+# SystemCallFilter=  Worked for icmp, tcp, http, dns and path discovery, but irtt,
+#   https and the alert webhook were not tried under it, and a syscall refused
+#   there fails one probe type quietly. If you add it, run with
+#   SystemCallErrorNumber=EPERM first and watch the log.
+# PrivateUsers=  Worked on one kernel; ICMP socket permission is checked against
+#   group ids, and its behaviour in a user namespace has changed between kernels.
+
 [Install]
 WantedBy=multi-user.target
