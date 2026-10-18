@@ -83,6 +83,10 @@ jobs:
     # Only the push of a tag publishes. A manual run, even one started on a tag,
     # stops after build.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # The repository's `release` environment only admits refs matching the tag
+    # pattern v*, and a ruleset lets only admins create those tags: a workflow
+    # edited on a branch cannot reach the write permissions below.
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
