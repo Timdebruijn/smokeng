@@ -103,15 +103,15 @@ func (sc *Scope) Visible(id int64) bool { return sc.RoleOn(id).AtLeast(auth.Role
 // CanWrite reports whether the caller may change a node.
 func (sc *Scope) CanWrite(id int64) bool { return sc.RoleOn(id).AtLeast(auth.RoleEditor) }
 
-// CanSeeWho reports whether the caller may see who made a change on a node
-// (silence, baseline, acknowledgement). That is an e-mail address of staff, and
-// a reader of a subtree has no business with it; whoever may change the node
+// Who returns who made a change on a node (silence, baseline, acknowledgement)
+// if the caller may see that, else "". It is an e-mail address of staff, and a
+// reader of a subtree has no business with it; whoever may change the node
 // does. A nil node is an installation-wide object: administrators only.
-func (sc *Scope) CanSeeWho(id *int64) bool {
-	if id == nil {
-		return sc.IsGlobalAdmin()
+func (sc *Scope) Who(id *int64, name string) string {
+	if id == nil && sc.IsGlobalAdmin() || id != nil && sc.CanWrite(*id) {
+		return name
 	}
-	return sc.CanWrite(*id)
+	return ""
 }
 
 // IsGlobalAdmin gates the things a grant never confers: agents, enrolment
