@@ -89,29 +89,9 @@ func probeDNS(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 	col.onRX(idx, res.RX, res.RXKernel)
 }
 
-// rrType maps the configured record type. The set is the one tree.Validate
-// accepts, kept here as a plain table so the probe does not depend on however
-// the library happens to spell its lookups.
+// rrType maps the configured record type; tree.Validate has already limited
+// it to the set smokeng asks for.
 func rrType(s string) (uint16, bool) {
-	switch strings.ToUpper(strings.TrimSpace(s)) {
-	case "A":
-		return dns.TypeA, true
-	case "AAAA":
-		return dns.TypeAAAA, true
-	case "CNAME":
-		return dns.TypeCNAME, true
-	case "MX":
-		return dns.TypeMX, true
-	case "NS":
-		return dns.TypeNS, true
-	case "PTR":
-		return dns.TypePTR, true
-	case "SOA":
-		return dns.TypeSOA, true
-	case "SRV":
-		return dns.TypeSRV, true
-	case "TXT":
-		return dns.TypeTXT, true
-	}
-	return 0, false
+	t, ok := dns.StringToType[strings.ToUpper(strings.TrimSpace(s))]
+	return t, ok
 }

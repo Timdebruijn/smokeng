@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"cmp"
 	"crypto/rand"
 	"hash/fnv"
 	"log"
@@ -406,29 +407,29 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 
 	if len(errCounts) > 0 {
 		m.Flags |= store.FlagICMPError
-		var best uint16
-		bestN := -1
-		for packed, n := range errCounts {
-			// Ties break on the lower packed value so the result is stable.
-			if n > bestN || (n == bestN && packed < best) {
-				best, bestN = packed, n
-			}
-		}
+		best := modeOf(errCounts)
 		m.ICMPErr = &best
 	}
 	// The most frequent reason represents the interval, as the ICMP tally
 	// above does: one value has to stand for it, and the common cause is the
 	// one worth acting on.
 	if len(sendCounts) > 0 {
-		var best uint8
-		bestN := -1
-		for reason, n := range sendCounts {
-			if n > bestN || (n == bestN && reason < best) {
-				best, bestN = reason, n
-			}
-		}
+		best := modeOf(sendCounts)
 		m.SendErr = &best
 	}
 	m.Series = c.series
 	return m
+}
+
+// modeOf returns the most frequent key. Ties break on the lower key so the
+// result is stable.
+func modeOf[K cmp.Ordered](counts map[K]int) K {
+	var best K
+	bestN := -1
+	for k, n := range counts {
+		if n > bestN || (n == bestN && k < best) {
+			best, bestN = k, n
+		}
+	}
+	return best
 }

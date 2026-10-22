@@ -75,15 +75,8 @@ func dnsRoundTrip(ctx context.Context, query []byte, wantID uint16, addr netip.A
 	}()
 
 	if spec.DSCP != 0 {
-		tos := spec.DSCP << 2
-		var soErr error
-		if addr.Is6() {
-			soErr = unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_TCLASS, tos)
-		} else {
-			soErr = unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_TOS, tos)
-		}
-		if soErr != nil {
-			return res, fmt.Errorf("dns: set DSCP: %w", soErr)
+		if err := setDSCP(fd, addr.Is6(), spec.DSCP); err != nil {
+			return res, fmt.Errorf("dns: set DSCP: %w", err)
 		}
 	}
 

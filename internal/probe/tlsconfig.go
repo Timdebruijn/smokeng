@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
 )
@@ -129,7 +130,7 @@ func TrustRemoteCAPEMs(pems [][]byte) error {
 	pems = cleaned
 	caMu.Lock()
 	defer caMu.Unlock()
-	if samePEMs(remoteCAs, pems) {
+	if slices.EqualFunc(remoteCAs, pems, bytes.Equal) {
 		return nil
 	}
 	for _, p := range pems {
@@ -144,9 +145,9 @@ func TrustRemoteCAPEMs(pems [][]byte) error {
 	// the rebuild succeeds. Assigning first meant that a rebuild failure (a
 	// system-pool read error, say) left remoteCAs claiming the new bytes while
 	// the pool still held the old — so the next identical push short-circuited
-	// at samePEMs and the pool was never reconciled, running indefinitely on
-	// the wrong set with the audit log saying otherwise. Validate-then-commit,
-	// as TrustCAFiles already does.
+	// at that equality check and the pool was never reconciled, running
+	// indefinitely on the wrong set with the audit log saying otherwise.
+	// Validate-then-commit, as TrustCAFiles already does.
 	prev := remoteCAs
 	remoteCAs = pems
 	if err := rebuildLocked(); err != nil {
@@ -177,18 +178,6 @@ func rebuildLocked() error {
 	}
 	trustedCAs.Store(pool)
 	return nil
-}
-
-func samePEMs(a, b [][]byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !bytes.Equal(a[i], b[i]) {
-			return false
-		}
-	}
-	return true
 }
 
 // describeCerts renders each certificate in a PEM blob as subject plus a

@@ -167,35 +167,34 @@ func dualStamped() *irtt.ClientConfig {
 // invalidates and no more.
 func TestSeriesTrustFollowsNegotiatedStamps(t *testing.T) {
 	cases := []struct {
-		name                  string
-		cfg                   *irtt.ClientConfig
-		send, receive, server bool
+		name    string
+		cfg     *irtt.ClientConfig
+		trusted bool
 	}{
-		{"both ends, both clocks", dualStamped(), true, true, true},
+		{"both ends, both clocks", dualStamped(), true},
 		// One documented server flag (--tstamp=single) restricts AtBoth to
 		// AtMidpoint, where the two server stamps hold the same value. Nothing
 		// survives that: server processing time becomes a computable zero, and
 		// both IPDV figures become differences against the midpoint, so each
 		// carries half the server's hold time. See
 		// TestMidpointLeaksServerProcessingIntoJitter.
-		{"midpoint", &irtt.ClientConfig{StampAt: irtt.AtMidpoint, Clock: irtt.BothClocks}, false, false, false},
+		{"midpoint", &irtt.ClientConfig{StampAt: irtt.AtMidpoint, Clock: irtt.BothClocks}, false},
 		// A one-sided stamp is not reachable from an AtBoth request — a server
 		// may only downgrade to AtNone, AtMidpoint, or leave it alone — but the
 		// gate is written in terms of what each figure needs rather than in
 		// terms of what this client happens to ask for.
-		{"send only", &irtt.ClientConfig{StampAt: irtt.AtSend, Clock: irtt.BothClocks}, false, false, false},
-		{"receive only", &irtt.ClientConfig{StampAt: irtt.AtReceive, Clock: irtt.BothClocks}, false, false, false},
-		{"no stamps", &irtt.ClientConfig{StampAt: irtt.AtNone, Clock: irtt.BothClocks}, false, false, false},
+		{"send only", &irtt.ClientConfig{StampAt: irtt.AtSend, Clock: irtt.BothClocks}, false},
+		{"receive only", &irtt.ClientConfig{StampAt: irtt.AtReceive, Clock: irtt.BothClocks}, false},
+		{"no stamps", &irtt.ClientConfig{StampAt: irtt.AtNone, Clock: irtt.BothClocks}, false},
 		// Without the monotonic clock, IPDV is a difference of wall-clock
 		// readings: a constant offset still cancels, an NTP step does not.
-		{"wall clock only", &irtt.ClientConfig{StampAt: irtt.AtBoth, Clock: irtt.Wall}, false, false, false},
-		{"no config", nil, false, false, false},
+		{"wall clock only", &irtt.ClientConfig{StampAt: irtt.AtBoth, Clock: irtt.Wall}, false},
+		{"no config", nil, false},
 	}
 	for _, c := range cases {
 		got := trustFrom(c.cfg)
-		if got.sendIPDV != c.send || got.receiveIPDV != c.receive || got.serverProcessing != c.server {
-			t.Errorf("%s: trust = %+v, want send=%v receive=%v server=%v",
-				c.name, got, c.send, c.receive, c.server)
+		if got != c.trusted {
+			t.Errorf("%s: trust = %v, want %v", c.name, got, c.trusted)
 		}
 	}
 }

@@ -393,7 +393,7 @@ func serve(args []string) error {
 		}()
 	}
 
-	eng, err := probe.NewEngine(st, alerterOrNil(alerts))
+	eng, err := probe.NewEngine(st, alerts)
 	if err != nil {
 		return err
 	}
@@ -450,15 +450,6 @@ func serve(args []string) error {
 		}
 	}
 	return nil
-}
-
-// A nil *alert.Manager is not a nil interface, so the conversion has to be
-// explicit or every "is alerting configured" check silently succeeds.
-func alerterOrNil(m *alert.Manager) probe.Alerter {
-	if m == nil {
-		return nil
-	}
-	return m
 }
 
 func alertViewOrNil(m *alert.Manager) api.AlertView {
