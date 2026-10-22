@@ -15,10 +15,6 @@ import (
 // silence is shown to those who can see its target, a global one to anyone who
 // can read.
 func (s *server) handleListSilences(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"silences": []any{}})
-		return
-	}
 	sc, _, ok := s.withScope(w, r)
 	if !ok {
 		return
@@ -69,10 +65,6 @@ func (s *server) handleListSilences(w http.ResponseWriter, r *http.Request) {
 // to everything; narrowing it to a target and its subtree, an agent or a rule
 // is optional.
 func (s *server) handleCreateSilence(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		notFound(w)
-		return
-	}
 	var body struct {
 		TargetID  *int64 `json:"target_id"`
 		AgentID   *int64 `json:"agent_id"`
@@ -138,10 +130,6 @@ func (s *server) handleCreateSilence(w http.ResponseWriter, r *http.Request) {
 // target it covers, so an editor of that subtree may cancel it and a viewer may
 // not.
 func (s *server) handleDeleteSilence(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		notFound(w)
-		return
-	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		badRequest(w, errors.New("bad silence id"))

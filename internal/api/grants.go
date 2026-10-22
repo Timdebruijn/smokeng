@@ -13,7 +13,7 @@ import (
 // handleGrants lists who may see what. Global admin only: a grant that could
 // widen itself would not be a boundary.
 func (s *server) handleGrants(w http.ResponseWriter, r *http.Request) {
-	grants, err := s.grants.ListGrants(r.Context())
+	grants, err := s.st.ListGrants(r.Context())
 	if err != nil {
 		internalError(w, err)
 		return
@@ -58,7 +58,7 @@ func (s *server) handleUpsertGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g := store.Grant{Group: body.Group, TargetID: body.TargetID, Role: body.Role}
-	if err := s.grants.UpsertGrant(r.Context(), &g); err != nil {
+	if err := s.st.UpsertGrant(r.Context(), &g); err != nil {
 		badRequest(w, err)
 		return
 	}
@@ -73,7 +73,7 @@ func (s *server) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
 		badRequestMsg(w, "id must be a number")
 		return
 	}
-	if err := s.grants.DeleteGrant(r.Context(), id); err != nil {
+	if err := s.st.DeleteGrant(r.Context(), id); err != nil {
 		badRequest(w, err)
 		return
 	}

@@ -14,6 +14,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/ingest"
 	"github.com/timdebruijn/smokeng/internal/store"
 	"github.com/timdebruijn/smokeng/internal/tree"
@@ -52,7 +53,7 @@ func ingestFixture(t *testing.T) (http.Handler, *store.SQLite, int64, ed25519.Pr
 			t.Fatal(err)
 		}
 	}
-	return New(st, Options{}, fstest.MapFS{}), st, rec.ID, priv, mine.ID, theirs.ID
+	return New(st, Options{Alerts: alert.NewManager(st, nil)}, fstest.MapFS{}), st, rec.ID, priv, mine.ID, theirs.ID
 }
 
 func submit(t *testing.T, h http.Handler, id int64, key ed25519.PrivateKey,

@@ -39,10 +39,6 @@ type AgentStore interface {
 // from. A rejection is answered with one generic status: telling a caller
 // which check failed hands them an oracle for guessing at the next one.
 func (s *server) agentAuth(w http.ResponseWriter, r *http.Request) (ingest.Agent, []byte, bool) {
-	if s.verifier == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return ingest.Agent{}, nil, false
-	}
 	parsed, err := ingest.Parse(r, maxIngestBody)
 	if err != nil {
 		log.Printf("ingest: rejected a request from %s: %v", s.clientIP(r), err)
@@ -147,7 +143,7 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	}
 	// Unsigned, and only display metadata about an agent whose identity the
 	// signature has already established — see TouchAgent.
-	if err := s.agents.TouchAgent(r.Context(), agent.ID, time.Now().Unix(),
+	if err := s.st.TouchAgent(r.Context(), agent.ID, time.Now().Unix(),
 		agentVersion(r)); err != nil {
 		log.Printf("ingest: recording last_seen for %q: %v", agent.Name, err)
 	}
@@ -270,7 +266,7 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	agents, err := s.agents.ListAgents(r.Context())
+	agents, err := s.st.ListAgents(r.Context())
 	if err != nil {
 		internalError(w, err)
 		return

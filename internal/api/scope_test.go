@@ -75,7 +75,7 @@ func scopedServer(t *testing.T, f fixture, group string, node int64, role string
 	sess := &auth.Session{
 		Subject: "u", Role: auth.RoleViewer, Groups: []string{group}, Expires: 1 << 40,
 	}
-	return New(f.st, Options{
+	return New(f.st, Options{Alerts: alert.NewManager(f.st, nil),
 		Auth:        &fakeAuth{session: sess},
 		DefaultRole: auth.RoleNone,
 	}, fstest.MapFS{})
@@ -218,14 +218,14 @@ func TestDefaultRoleGovernsUngrantedCallers(t *testing.T) {
 	f := twoCustomers(t)
 	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Expires: 1 << 40}
 
-	asViewer := New(f.st, Options{Auth: &fakeAuth{session: sess}}, fstest.MapFS{})
+	asViewer := New(f.st, Options{Alerts: alert.NewManager(f.st, nil), Auth: &fakeAuth{session: sess}}, fstest.MapFS{})
 	code, body := getJSON(t, asViewer, "/api/v1/targets")
 	list, _ := body["targets"].([]any)
 	if code != http.StatusOK || len(list) < 4 {
 		t.Errorf("with the default settings an authenticated user saw %d targets, want the whole tree", len(list))
 	}
 
-	asNobody := New(f.st, Options{
+	asNobody := New(f.st, Options{Alerts: alert.NewManager(f.st, nil),
 		Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone,
 	}, fstest.MapFS{})
 	_, body = getJSON(t, asNobody, "/api/v1/targets")

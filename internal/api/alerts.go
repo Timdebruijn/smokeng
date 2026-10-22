@@ -220,12 +220,6 @@ func (s *server) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 // handleFiringAlerts reports what is currently firing, as the manager sees
 // it — the same view the webhook has been told about.
 func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"alerts": []any{}, "enabled": false, "delivering": false,
-		})
-		return
-	}
 	sc, _, ok := s.withScope(w, r)
 	if !ok {
 		return
@@ -282,8 +276,7 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// EventStore is the slice of the store alert history needs. Optional, like the
-// rest: an instance whose store cannot keep history simply has no endpoint.
+// EventStore is the slice of the store alert history needs.
 type EventStore interface {
 	ListAlertEvents(ctx context.Context, limit int) ([]alert.Event, error)
 }
@@ -297,7 +290,7 @@ func (s *server) handleAlertEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	events, err := s.events.ListAlertEvents(r.Context(), limit)
+	events, err := s.st.ListAlertEvents(r.Context(), limit)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -327,10 +320,6 @@ func (s *server) handleAlertEvents(w http.ResponseWriter, r *http.Request) {
 // attention, so a person can say "seen, handling it" without editing the rule
 // or waiting for the condition to resolve.
 func (s *server) handleAckAlert(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		notFound(w)
-		return
-	}
 	var body struct {
 		RuleID   int64 `json:"rule_id"`
 		TargetID int64 `json:"target_id"`

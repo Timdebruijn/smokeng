@@ -548,7 +548,7 @@ func TestEditorMayOnlyNameAgentsInTheirScope(t *testing.T) {
 	}
 
 	// And an admin is still told what exists when they get it wrong.
-	admin := New(f.st, Options{}, fstest.MapFS{})
+	admin := New(f.st, Options{Alerts: alert.NewManager(f.st, nil)}, fstest.MapFS{})
 	code, body := call(t, admin, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"settings": map[string]any{"agents": "no-such-agent"}})
 	if code != http.StatusBadRequest || !strings.Contains(body, "enrolled agents are") {
 		t.Errorf("an admin's refusal no longer lists the enrolled agents: %d %s", code, body)
@@ -607,7 +607,7 @@ func TestARequestThatDoesNotSetAgentsIsNotRefusedForThem(t *testing.T) {
 			}
 		}
 	}
-	admin := New(f.st, Options{}, fstest.MapFS{})
+	admin := New(f.st, Options{Alerts: alert.NewManager(f.st, nil)}, fstest.MapFS{})
 	if code, body := call(t, admin, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"title": "retitled"}); code != http.StatusOK {
 		t.Errorf("retitling a node whose agent was removed = %d %s", code, body)
 	}

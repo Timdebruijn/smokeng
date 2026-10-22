@@ -7,20 +7,9 @@ import (
 	"strings"
 
 	"github.com/timdebruijn/smokeng/internal/metrics"
-	"github.com/timdebruijn/smokeng/internal/probe"
 	"github.com/timdebruijn/smokeng/internal/store"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
-
-// ProbeStats exposes the prober's own health.
-type ProbeStats interface {
-	Stats() probe.Stats
-}
-
-// IngestStats exposes how agent submissions are faring.
-type IngestStats interface {
-	Stats() (accepted, rejected int64)
-}
 
 // handleMetrics writes Prometheus text exposition about smokeng itself.
 //
@@ -83,19 +72,17 @@ func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	if s.ingest != nil {
-		accepted, rejected := s.ingest.Stats()
-		out = append(out,
-			metrics.Simple("smokeng_ingest_accepted_total",
-				"Agent submissions that passed verification.", metrics.Counter, float64(accepted)),
-			metrics.Simple("smokeng_ingest_rejected_total",
-				"Agent submissions refused. The reason is in the log, deliberately not "+
-					"in a label: a breakdown here would tell a caller which check they failed.",
-				metrics.Counter, float64(rejected)),
-		)
-	}
+	accepted, rejected := s.verifier.Stats()
+	out = append(out,
+		metrics.Simple("smokeng_ingest_accepted_total",
+			"Agent submissions that passed verification.", metrics.Counter, float64(accepted)),
+		metrics.Simple("smokeng_ingest_rejected_total",
+			"Agent submissions refused. The reason is in the log, deliberately not "+
+				"in a label: a breakdown here would tell a caller which check they failed.",
+			metrics.Counter, float64(rejected)),
+	)
 
-	if agents, err := s.agents.ListAgents(r.Context()); err == nil {
+	if agents, err := s.st.ListAgents(r.Context()); err == nil {
 		var enabled, lastSeen []metrics.Sample
 		for _, a := range agents {
 			if a.ID == store.LocalAgentID {
@@ -117,10 +104,8 @@ func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 				Kind: metrics.Gauge, Samples: lastSeen})
 	}
 
-	if s.alerts != nil {
-		out = append(out, metrics.Simple("smokeng_alerts_firing",
-			"Alert rules currently firing.", metrics.Gauge, float64(len(s.alerts.Firing()))))
-	}
+	out = append(out, metrics.Simple("smokeng_alerts_firing",
+		"Alert rules currently firing.", metrics.Gauge, float64(len(s.alerts.Firing()))))
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -143,7 +128,7 @@ func (s *server) unmeasuredTargets(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	records, err := s.agents.ListAgents(ctx)
+	records, err := s.st.ListAgents(ctx)
 	if err != nil {
 		return 0, err
 	}

@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/store"
 )
 
@@ -20,7 +22,7 @@ func newTestServer(t *testing.T) (http.Handler, *store.SQLite) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return New(st, Options{}, fstest.MapFS{}), st
+	return New(st, Options{Alerts: alert.NewManager(st, nil)}, fstest.MapFS{}), st
 }
 
 func do(t *testing.T, h http.Handler, method, path string, body any) (int, map[string]any) {
@@ -213,3 +215,16 @@ func TestResponsesAreNotCacheable(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+func TestPatchSetsClearsAndRejects(t *testing.T) {
+	var p *int
+	if err := patch("k", json.RawMessage(`7`), &p); err != nil || p == nil || *p != 7 {
+		t.Fatalf("set: %v %v", p, err)
+	}
+	if err := patch("k", json.RawMessage(`null`), &p); err != nil || p != nil {
+		t.Fatalf("null should clear: %v %v", p, err)
+	}
+	if err := patch("k", json.RawMessage(`"x"`), &p); err == nil || !strings.HasPrefix(err.Error(), "k: ") {
+		t.Fatalf("wrong type should be refused with the key: %v", err)
+	}
+}
