@@ -579,13 +579,10 @@ type ShapeRef struct {
 	HasSource bool
 }
 
-// ShapeReferenceDetail returns the distribution a shape rule is currently
-// comparing against for one series: the captured reference for a golden rule, or
-// the pooled recent history for a rolling one, with the series a golden one was
-// captured from. It is what the UI overlays against the current interval, so a
-// fired shape alert can be seen rather than taken on the word of a z-score. OK
-// is false when there is nothing to compare against yet — a golden rule with no
-// capture, or a rolling one still warming up.
+// ShapeReferenceDetail returns the distribution a shape rule is comparing
+// against for one series (captured for golden, pooled history for rolling) and,
+// for golden, the series it was captured from, read under one lock. OK is false
+// when there is nothing to compare against yet.
 func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64) ShapeRef {
 	m.mu.Lock()
 	defer m.mu.Unlock()

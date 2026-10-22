@@ -62,6 +62,8 @@ func (s *server) handleListSilences(w http.ResponseWriter, r *http.Request) {
 // to everything; narrowing it to a target and its subtree, an agent or a rule
 // is optional.
 func (s *server) handleCreateSilence(w http.ResponseWriter, r *http.Request) {
+	// id, created_by and created_at are decoded with the rest and zeroed below,
+	// so a mistyped one is a 400.
 	var body struct {
 		alert.Silence
 		DurationS int64 `json:"duration_s"`

@@ -500,9 +500,12 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 			return fmt.Errorf("name: %w", err)
 		}
 	}
-	for key, dst := range map[string]**string{"host": &n.Host, "address_family": &n.AddressFamily, "title": &n.Title, "notes": &n.Notes} {
-		if raw, ok := body[key]; ok {
-			if err := patch(key, raw, dst); err != nil {
+	for _, f := range []struct {
+		key string
+		dst **string
+	}{{"host", &n.Host}, {"address_family", &n.AddressFamily}, {"title", &n.Title}, {"notes", &n.Notes}} {
+		if raw, ok := body[f.key]; ok {
+			if err := patch(f.key, raw, f.dst); err != nil {
 				return err
 			}
 		}
