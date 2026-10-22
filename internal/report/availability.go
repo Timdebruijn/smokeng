@@ -119,10 +119,7 @@ func Availability(points []Point, intervalS int, from, to int64, downThresholdPc
 		// the window; do not let coverage read above 100%.
 		r.CoveredS = r.WindowS
 	}
-	r.UnknownS = r.WindowS - r.CoveredS
-	if r.UnknownS < 0 {
-		r.UnknownS = 0
-	}
+	r.UnknownS = max(r.WindowS-r.CoveredS, 0)
 	r.HasData = r.CoveredS > 0
 	if r.HasData {
 		r.Availability = float64(r.UpS) / float64(r.CoveredS)

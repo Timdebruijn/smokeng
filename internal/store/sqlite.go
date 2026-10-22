@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/timdebruijn/smokeng/internal/report"
+	"github.com/timdebruijn/smokeng/internal/series"
 	"github.com/timdebruijn/smokeng/internal/store/enc"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
@@ -514,8 +516,8 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 		if _, err := delSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
 			return 0, err
 		}
-		for _, name := range sortedSeries(m.Series) {
-			if !ValidSeries(name) {
+		for _, name := range slices.Sorted(maps.Keys(m.Series)) {
+			if !series.Valid(name) {
 				return 0, fmt.Errorf("store: measurement (%d,%d,%d): unknown series %q",
 					m.TargetID, m.AgentID, m.TS, name)
 			}
@@ -533,20 +535,6 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 		return 0, err
 	}
 	return inserted, nil
-}
-
-// sortedSeries returns the series names in a stable order, so a written blob
-// set does not depend on map iteration order.
-func sortedSeries(m map[string][]int32) []string {
-	if len(m) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error) {
@@ -761,10 +749,7 @@ func upsertTarget(ctx context.Context, q idRunner, t *tree.Target) error {
 		t.Settings.DNSQuery, t.Settings.DNSRRType,
 		t.Settings.HTTPPath, t.Settings.TLSSkipVerify,
 		t.Settings.RetentionS, t.Settings.GraphSeries)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // PruneMeasurements deletes one target's measurements older than cutoff (a Unix
@@ -795,10 +780,7 @@ func (s *SQLite) PruneMeasurements(ctx context.Context, targetID, cutoff, sliceS
 		if !oldest.Valid || oldest.Int64 >= cutoff {
 			return total, nil
 		}
-		end := oldest.Int64 + sliceS
-		if end > cutoff {
-			end = cutoff
-		}
+		end := min(oldest.Int64+sliceS, cutoff)
 		// The measurement and its extra series go in one transaction. Deleting
 		// them separately and dying in between would leave series rows whose
 		// measurement is gone, which is not a tidiness problem: reading a range

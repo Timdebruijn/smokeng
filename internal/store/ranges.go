@@ -11,25 +11,19 @@ import (
 // billions. These count what is actually read, rather than guessing from the
 // width, so a month-long availability report (a legitimate request, and a big
 // one) is not refused by a worst-case rule written for something else.
-const (
-	// MaxSamplesPerRead bounds the primary samples one QueryRange decodes: 80 MB of
+var (
+	// maxSamplesPerRead bounds the primary samples one QueryRange decodes: 80 MB of
 	// uint32 is far past any plot (the extra per-packet series and the rows are
 	// not counted here; the handlers bound the rows by window), and the day of 100-ping, one-second data that
 	// would reach a tenth of it is not something a browser can draw either.
-	MaxSamplesPerRead = 20_000_000
-	// MaxAvailabilityRows bounds the intervals one availability read returns:
+	// A var rather than a const so a test can lower it instead of writing
+	// twenty million samples to find out whether it is enforced.
+	maxSamplesPerRead = 20_000_000
+	// maxAvailabilityRows bounds the intervals one availability read returns:
 	// 3.8 years at 60 s, 23 days at 1 s.
-	MaxAvailabilityRows = 2_000_000
-	// MaxPathRows bounds the route changes one read returns.
-	MaxPathRows = 100_000
-)
-
-// The same limits as variables, so a test can lower them instead of writing
-// twenty million samples to find out whether they are enforced.
-var (
-	maxSamplesPerRead   = MaxSamplesPerRead
-	maxAvailabilityRows = MaxAvailabilityRows
-	maxPathRows         = MaxPathRows
+	maxAvailabilityRows = 2_000_000
+	// maxPathRows bounds the route changes one read returns.
+	maxPathRows = 100_000
 )
 
 // ErrRangeTooLarge is what a read returns when the range holds more than one

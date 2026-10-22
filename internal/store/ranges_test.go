@@ -115,16 +115,12 @@ func TestPathChangesRefusesMoreRowsThanOneReadReturns(t *testing.T) {
 // The tests above lower the limits, so the real ones are pinned here.
 func TestTheReadLimitsAreTheDocumentedNumbers(t *testing.T) {
 	for name, c := range map[string][2]int{
-		"MaxSamplesPerRead":   {MaxSamplesPerRead, 20_000_000},
-		"MaxAvailabilityRows": {MaxAvailabilityRows, 2_000_000},
-		"MaxPathRows":         {MaxPathRows, 100_000},
+		"maxSamplesPerRead":   {maxSamplesPerRead, 20_000_000},
+		"maxAvailabilityRows": {maxAvailabilityRows, 2_000_000},
+		"maxPathRows":         {maxPathRows, 100_000},
 	} {
 		if c[0] != c[1] {
 			t.Errorf("%s = %d, the documentation says %d", name, c[0], c[1])
 		}
-	}
-	// And the variables a test lowers start at them.
-	if maxSamplesPerRead != MaxSamplesPerRead || maxAvailabilityRows != MaxAvailabilityRows || maxPathRows != MaxPathRows {
-		t.Error("the working limits do not start at the documented ones")
 	}
 }
