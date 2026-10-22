@@ -14,7 +14,10 @@
 // measurement flags — reduced accuracy is observable, never silent.
 package timestamp
 
-import "time"
+import (
+	"net/netip"
+	"time"
+)
 
 // Caps reports which kernel timestamping capabilities are active on a socket.
 type Caps struct {
@@ -34,6 +37,9 @@ type TXStamp struct {
 // said why the probe failed, instead of the probe simply going unanswered.
 type ICMPError struct {
 	Type, Code uint8
+	// Offender is the router that sent the error; invalid when the kernel
+	// did not return its address.
+	Offender netip.Addr
 	// Payload is the offending datagram as the kernel returned it. For a ping
 	// socket that is our own echo request, whose sequence number is what
 	// attributes the error to a specific ping.

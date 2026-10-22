@@ -4,8 +4,6 @@ import (
 	"errors"
 	"net"
 	"syscall"
-
-	"golang.org/x/sys/unix"
 )
 
 // Helpers shared by the probe types that do not use the shared icmp socket:
@@ -43,13 +41,7 @@ func dscpControl(dscp int, family string) func(network, address string, c syscal
 	return func(_, _ string, rc syscall.RawConn) error {
 		var soErr error
 		ctlErr := rc.Control(func(fd uintptr) {
-			// DSCP occupies the top six bits of the TOS/traffic-class octet.
-			tos := dscp << 2
-			if family == "v6" {
-				soErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_TCLASS, tos)
-			} else {
-				soErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_TOS, tos)
-			}
+			soErr = setDSCP(int(fd), family == "v6", dscp)
 		})
 		if ctlErr != nil {
 			return ctlErr

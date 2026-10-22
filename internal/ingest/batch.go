@@ -280,9 +280,7 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 			if err != nil {
 				return nil, err
 			}
-			for j := lo; j < hi; j++ {
-				m.Samples = append(m.Samples, values.Value(int(j)))
-			}
+			m.Samples = slices.Clone(values.Uint32Values()[lo:hi])
 			// The store's blob codec requires ascending order, and an agent
 			// that sends otherwise would fail the whole write — taking every
 			// other measurement in the batch with it, and, because a rejected
@@ -340,10 +338,9 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 					return nil, fmt.Errorf("ingest: target %d at %d: series %q has %d values "+
 						"but only %d probes were sent", m.TargetID, m.TS, name, n, m.Sent)
 				}
-				got := make([]int32, 0, hi-lo)
-				for j := lo; j < hi; j++ {
-					got = append(got, vals.Value(int(j)))
-				}
+				// Not slices.Clone: an empty series is stored empty, which is a
+				// different fact from absent, so it must stay non-nil.
+				got := append([]int32{}, vals.Int32Values()[lo:hi]...)
 				if !slices.IsSorted(got) {
 					slices.Sort(got)
 					resorted++

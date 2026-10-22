@@ -14,7 +14,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/netip"
@@ -36,8 +35,6 @@ type Config struct {
 	Master string
 	// Name must match the enrolment on the master; the id comes back from it.
 	AgentID  int64
-	KeyPath  string
-	DBPath   string
 	Insecure bool // permit plain HTTP, for local development only
 	// NoRemoteCAs refuses the CA certificates the master hands down. They only
 	// ever reach https probes, never this agent's own connection to the
@@ -234,31 +231,23 @@ func (a *Agent) mirror(ctx context.Context, targets []assignment) error {
 				ProbeMode: &t.ProbeMode, BurstGapMS: &t.BurstGapMS,
 				TimeoutMS: &t.TimeoutMS, PacketSize: &t.PacketSize, DSCP: &t.DSCP,
 				Agents: ptr("local"),
+				// The probe-type settings are mirrored only where the master
+				// actually set one. An empty string is not "no opinion" to
+				// tree.Validate — it is an invalid value, and writing it would
+				// make every assignment fail validation on arrival and leave
+				// the agent measuring nothing at all.
+				ProbeType: nz(t.ProbeType),
+				ProbePort: nz(t.ProbePort),
+				DNSQuery:  nz(t.DNSQuery),
+				DNSRRType: nz(t.DNSRRType),
+				HTTPPath:  nz(t.HTTPPath),
+				// Unlike the others this is set unconditionally: false is a
+				// real value here, not "no opinion", and leaving it unset
+				// would make the agent's own root default decide whether a
+				// certificate is checked.
+				TLSSkipVerify: &t.TLSSkipVerify,
 			},
 		}
-		// The probe-type settings are mirrored only where the master actually
-		// set one. An empty string is not "no opinion" to tree.Validate — it
-		// is an invalid value, and writing it would make every assignment fail
-		// validation on arrival and leave the agent measuring nothing at all.
-		if t.ProbeType != "" {
-			node.Settings.ProbeType = &t.ProbeType
-		}
-		if t.ProbePort != 0 {
-			node.Settings.ProbePort = &t.ProbePort
-		}
-		if t.DNSQuery != "" {
-			node.Settings.DNSQuery = &t.DNSQuery
-		}
-		if t.DNSRRType != "" {
-			node.Settings.DNSRRType = &t.DNSRRType
-		}
-		if t.HTTPPath != "" {
-			node.Settings.HTTPPath = &t.HTTPPath
-		}
-		// Unlike the others this is set unconditionally: false is a real
-		// value here, not "no opinion", and leaving it unset would make the
-		// agent's own root default decide whether a certificate is checked.
-		node.Settings.TLSSkipVerify = &t.TLSSkipVerify
 		if err := a.st.UpsertTarget(ctx, &node); err != nil {
 			return fmt.Errorf("agent: mirror %s: %w", t.Path, err)
 		}
@@ -351,7 +340,7 @@ func (a *Agent) push(ctx context.Context) {
 
 func (a *Agent) signedRequest(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(a.cfg.Master, "/")+path,
-		bytesReader(body))
+		bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -366,13 +355,13 @@ func (a *Agent) signedRequest(ctx context.Context, method, path string, body []b
 
 func ptr[T any](v T) *T { return &v }
 
-// bytesReader avoids sending a typed-nil body for GET requests, which would
-// make net/http advertise a zero-length body where none is intended.
-func bytesReader(b []byte) io.Reader {
-	if len(b) == 0 {
+// nz points at v, or is nil when v is the zero value.
+func nz[T comparable](v T) *T {
+	var zero T
+	if v == zero {
 		return nil
 	}
-	return bytes.NewReader(b)
+	return &v
 }
 
 // masterIsLoopback reports whether the master URL names this host.

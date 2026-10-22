@@ -299,8 +299,7 @@ func agentRun(args []string) error {
 	defer st.Close()
 
 	a, err := agent.New(agent.Config{
-		Master: *master, AgentID: *agentID, KeyPath: *keyPath,
-		DBPath: *dbPath, Insecure: *insecure, Version: version,
+		Master: *master, AgentID: *agentID, Insecure: *insecure, Version: version,
 		NoRemoteCAs: *noRemoteCAs,
 	}, key, st)
 	if err != nil {

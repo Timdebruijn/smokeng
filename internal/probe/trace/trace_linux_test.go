@@ -122,7 +122,7 @@ func TestTraceDiscoversHops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !again.SameAs(path) {
+	if again.String() != path.String() {
 		t.Errorf("an unchanged path did not compare equal: %s vs %s", again, path)
 	}
 }
@@ -157,7 +157,7 @@ func TestTraceSeesARouteChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("before: %s\nafter:  %s", before, after)
-	if after.SameAs(before) {
+	if after.String() == before.String() {
 		t.Fatal("the path changed but compared equal, so no change would be recorded")
 	}
 	if got := after[0].Addr.String(); got != "10.100.0.9" {

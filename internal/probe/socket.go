@@ -64,7 +64,6 @@ type conn struct {
 	// own counter, shared so a bad packet shows up in the same metric as any
 	// other contained panic.
 	panics *atomic.Int64
-	strays atomic.Int64
 	wg     sync.WaitGroup
 
 	// Cumulative kernel drop counter, polled from /proc/net. Measurements
@@ -74,11 +73,7 @@ type conn struct {
 	dropsNode string
 
 	reportsICMPErrors bool
-	icmpErrors        atomic.Int64
 }
-
-// ICMPErrors counts ICMP errors attributed to our pings on this socket.
-func (c *conn) ICMPErrors() int64 { return c.icmpErrors.Load() }
 
 // drops returns the cumulative count of replies the kernel discarded because
 // our receive queue was full. Always 0 where the kernel cannot report it.
@@ -124,16 +119,9 @@ func openConn(family string, dscp int, late, panics *atomic.Int64) (*conn, error
 	}
 
 	if dscp != 0 {
-		tos := dscp << 2
-		var soErr error
-		if family == "v6" {
-			soErr = unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_TCLASS, tos)
-		} else {
-			soErr = unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_TOS, tos)
-		}
-		if soErr != nil {
+		if err := setDSCP(fd, family == "v6", dscp); err != nil {
 			unix.Close(fd)
-			return nil, fmt.Errorf("probe: set DSCP %d on %s socket: %w", dscp, family, soErr)
+			return nil, fmt.Errorf("probe: set DSCP %d on %s socket: %w", dscp, family, err)
 		}
 	}
 	// 1s receive timeout: the receive loop wakes to check for shutdown.
@@ -251,7 +239,7 @@ func (c *conn) send(col *collector, idx int, dst netip.Addr, packetSize int) err
 	if err != nil {
 		// The socket was never touched, so the kernel's counter did not move
 		// and ours must not either.
-		c.forgetSeqAndCounter(seq)
+		c.forgetSeq(seq, true)
 		return err
 	}
 
@@ -277,7 +265,7 @@ func (c *conn) send(col *collector, idx int, dst netip.Addr, packetSize int) err
 				"counter may be desynced, so kernel TX timestamps are abandoned for this "+
 				"socket and measurements fall back to userspace TX (flagged)", c.family, err)
 		}
-		c.forgetSeq(seq)
+		c.forgetSeq(seq, false)
 		col.markSendFailed(idx, sendReasonFor(err))
 		return err
 	}
@@ -361,7 +349,6 @@ func (c *conn) handlePacket(b []byte, rx time.Time, kernel bool) {
 	}
 	echo, ok := msg.Body.(*icmp.Echo)
 	if !ok || len(echo.Data) < minPayload {
-		c.strays.Add(1)
 		return
 	}
 	if c.raw && uint16(echo.ID) != c.rawID {
@@ -380,7 +367,6 @@ func (c *conn) handlePacket(b []byte, rx time.Time, kernel bool) {
 	}
 	if [4]byte(echo.Data[:4]) != payloadMagic ||
 		[8]byte(echo.Data[4:12]) != p.col.pings[p.idx].token {
-		c.strays.Add(1)
 		return
 	}
 	p.col.onRX(p.idx, rx, kernel)
@@ -468,32 +454,31 @@ func (c *conn) handleICMPError(e *timestamp.ICMPError) {
 	if !ok {
 		return // already timed out, or not ours
 	}
-	c.icmpErrors.Add(1)
 	p.col.onICMPError(p.idx, e.Type, e.Code)
 }
 
-// forgetSeqAndCounter drops a ping that never reached the kernel, winding the
-// transmit counter back so it keeps step with sk_tskey. Safe only while no
-// other send has been allocated since — which holds here, because the caller
-// is still inside the same send and the counter is only advanced under the
-// lock this takes.
-func (c *conn) forgetSeqAndCounter(seq uint16) {
-	c.mu.Lock()
-	if p, ok := c.pending[seq]; ok {
-		delete(c.pending, seq)
-		delete(c.byCounter, p.counter)
-		if p.counter == c.txCount-1 {
-			c.txCount--
-		}
+// setDSCP marks the socket's outgoing packets. DSCP occupies the top six bits
+// of the TOS/traffic-class octet.
+func setDSCP(fd int, v6 bool, dscp int) error {
+	if v6 {
+		return unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_TCLASS, dscp<<2)
 	}
-	c.mu.Unlock()
+	return unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_TOS, dscp<<2)
 }
 
-func (c *conn) forgetSeq(seq uint16) {
+// forgetSeq drops a ping from the pending tables. With rewind it is a ping
+// that never reached the kernel, and the transmit counter is wound back so it
+// keeps step with sk_tskey. That is safe only while no other send has been
+// allocated since — which holds here, because the caller is still inside the
+// same send and the counter is only advanced under the lock this takes.
+func (c *conn) forgetSeq(seq uint16, rewind bool) {
 	c.mu.Lock()
 	if p, ok := c.pending[seq]; ok {
 		delete(c.pending, seq)
 		delete(c.byCounter, p.counter)
+		if rewind && p.counter == c.txCount-1 {
+			c.txCount--
+		}
 	}
 	c.mu.Unlock()
 }

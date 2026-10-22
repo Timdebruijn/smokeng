@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"codeberg.org/miekg/dns"
+
 	"github.com/timdebruijn/smokeng/internal/store"
 )
 
@@ -133,5 +135,21 @@ func TestDNSRoundTripWriteFailureIsNotSent(t *testing.T) {
 	if res.TXUser.IsZero() {
 		t.Fatal("TXUser should still be stamped — the point is that Sent, not TXUser, tells the " +
 			"caller the query never went out")
+	}
+}
+
+// Every record type tree.Validate accepts must map to its code point, in any
+// case and with stray spaces.
+func TestRRType(t *testing.T) {
+	for s, want := range map[string]uint16{
+		"A": dns.TypeA, "aaaa": dns.TypeAAAA, "CNAME": dns.TypeCNAME, " mx ": dns.TypeMX,
+		"NS": dns.TypeNS, "PTR": dns.TypePTR, "SOA": dns.TypeSOA, "SRV": dns.TypeSRV, "txt": dns.TypeTXT,
+	} {
+		if got, ok := rrType(s); !ok || got != want {
+			t.Errorf("rrType(%q) = %d, %v; want %d", s, got, ok, want)
+		}
+	}
+	if _, ok := rrType(""); ok {
+		t.Error("empty rrType should not resolve")
 	}
 }

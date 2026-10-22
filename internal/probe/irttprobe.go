@@ -171,12 +171,9 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 
 	now := time.Now()
 	seen := 0
-	for i, rt := range r.RoundTrips {
-		// Never write past the collector: a server that paced differently than
-		// asked could return more results than the interval has room for.
-		if i >= spec.Pings {
-			break
-		}
+	// Never write past the collector: a server that paced differently than
+	// asked could return more results than the interval has room for.
+	for i, rt := range r.RoundTrips[:min(len(r.RoundTrips), spec.Pings)] {
 		seen++
 		if rt.RoundTripData == nil || !rt.ReplyReceived() {
 			// A send error truncates RoundTrips, so an unanswered slot below the
@@ -289,10 +286,7 @@ func irttDuration(spec TargetSpec, step time.Duration, available time.Duration) 
 		// session will be short and will say so.
 		limit = available
 	}
-	if want > limit {
-		return limit
-	}
-	return want
+	return min(want, limit)
 }
 
 // irttStep is the spacing between an irtt session's packets, paced to match the
@@ -306,20 +300,17 @@ func irttStep(spec TargetSpec) time.Duration {
 	return time.Duration(spec.BurstGapMS) * time.Millisecond
 }
 
-// seriesTrust says which of the extra series this session's negotiated
-// timestamps actually support. The client asks for both clocks and a stamp at
-// both ends; the server may restrict either, and irtt reports that with an
-// event rather than an error — the session succeeds and the numbers keep
-// arriving, quietly meaning something else.
-type seriesTrust struct{ sendIPDV, receiveIPDV, serverProcessing bool }
-
-// trustFrom reads the negotiated configuration. Every false here is a series
-// that will not be recorded at all, because for each of them the alternative is
-// not a slightly worse number but a differently-defined one wearing the label
-// of the number the operator asked for.
-func trustFrom(cfg *irtt.ClientConfig) seriesTrust {
+// trustFrom says whether this session's negotiated timestamps support the
+// extra series (both IPDV directions and server processing time). The client
+// asks for both clocks and a stamp at both ends; the server may restrict
+// either, and irtt reports that with an event rather than an error — the
+// session succeeds and the numbers keep arriving, quietly meaning something
+// else. A false here means the series are not recorded at all, because the
+// alternative is not a slightly worse number but a differently-defined one
+// wearing the label of the number the operator asked for.
+func trustFrom(cfg *irtt.ClientConfig) bool {
 	if cfg == nil {
-		return seriesTrust{}
+		return false
 	}
 	// Inter-packet delay variation cancels the offset between two hosts' clocks
 	// only because it is a difference taken on the monotonic clock. irtt falls
@@ -329,7 +320,7 @@ func trustFrom(cfg *irtt.ClientConfig) seriesTrust {
 	// a real network event. That is a measurement of NTP, and this project does
 	// not put one on a graph labelled jitter.
 	if cfg.Clock&irtt.Monotonic == 0 {
-		return seriesTrust{}
+		return false
 	}
 	// Everything here needs the server's two stamps to be two.
 	//
@@ -351,9 +342,7 @@ func trustFrom(cfg *irtt.ClientConfig) seriesTrust {
 	// An earlier version of this kept the IPDV pair at the midpoint, reasoning
 	// that each was still a difference against a real server stamp. That is
 	// true and beside the point: what matters is what the difference contains.
-	at := cfg.StampAt
-	both := at == irtt.AtBoth
-	return seriesTrust{sendIPDV: both, receiveIPDV: both, serverProcessing: both}
+	return cfg.StampAt == irtt.AtBoth
 }
 
 // recordIRTTSeries keeps the per-packet measurements irtt makes beside the
@@ -377,14 +366,11 @@ func trustFrom(cfg *irtt.ClientConfig) seriesTrust {
 func recordIRTTSeries(col *collector, r *irtt.Result, pings int) {
 	trust := trustFrom(r.Config)
 	var send, receive, processing []int32
-	for i := range r.RoundTrips {
-		// The same cap the round-trip loop applies. A server that paced
-		// differently than asked can return more results than the interval has
-		// room for, and a distribution longer than the interval's own probe
-		// count describes a packet set the stored sent/received do not.
-		if i >= pings {
-			break
-		}
+	// The same cap the round-trip loop applies: a server that paced differently
+	// than asked can return more results than the interval has room for, and a
+	// distribution longer than the interval's own probe count describes a packet
+	// set the stored sent/received do not.
+	for i := range min(len(r.RoundTrips), pings) {
 		rt := &r.RoundTrips[i]
 		if rt.RoundTripData == nil || !rt.ReplyReceived() {
 			continue
@@ -397,25 +383,22 @@ func recordIRTTSeries(col *collector, r *irtt.Result, pings int) {
 		if rt.RTT() < 0 {
 			continue
 		}
-		if trust.sendIPDV {
-			if d, ok := irttMicros(rt.SendIPDV); ok {
-				send = append(send, d)
-			}
+		if !trust {
+			continue
 		}
-		if trust.receiveIPDV {
-			if d, ok := irttMicros(rt.ReceiveIPDV); ok {
-				receive = append(receive, d)
-			}
+		if d, ok := irttMicros(rt.SendIPDV); ok {
+			send = append(send, d)
 		}
-		if trust.serverProcessing {
-			if d, ok := irttMicros(rt.ServerProcessingTime()); ok {
-				processing = append(processing, d)
-			}
+		if d, ok := irttMicros(rt.ReceiveIPDV); ok {
+			receive = append(receive, d)
+		}
+		if d, ok := irttMicros(rt.ServerProcessingTime()); ok {
+			processing = append(processing, d)
 		}
 	}
-	col.recordSeries(store.SeriesIPDVSend, send, trust.sendIPDV)
-	col.recordSeries(store.SeriesIPDVReceive, receive, trust.receiveIPDV)
-	col.recordSeries(store.SeriesServerProcessing, processing, trust.serverProcessing)
+	col.recordSeries(store.SeriesIPDVSend, send, trust)
+	col.recordSeries(store.SeriesIPDVReceive, receive, trust)
+	col.recordSeries(store.SeriesServerProcessing, processing, trust)
 }
 
 // irttMicros converts an irtt duration to microseconds, reporting whether it

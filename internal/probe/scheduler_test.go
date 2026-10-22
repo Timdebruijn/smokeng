@@ -407,3 +407,15 @@ func TestClockStepToleranceTracksSlewAndNoMore(t *testing.T) {
 		t.Error("a 50ms jump over a ten-second bucket was not flagged")
 	}
 }
+
+func TestModeOf(t *testing.T) {
+	if got := modeOf(map[uint16]int{3: 2, 11: 5, 1: 1}); got != 11 {
+		t.Errorf("modeOf = %d, want 11", got)
+	}
+	// A tie resolves to the lower key, whatever the map's iteration order.
+	for range 20 {
+		if got := modeOf(map[uint8]int{9: 2, 4: 2, 7: 2}); got != 4 {
+			t.Fatalf("tie: modeOf = %d, want 4", got)
+		}
+	}
+}

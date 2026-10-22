@@ -23,9 +23,7 @@ import (
 // which is common and not an error: many routers rate-limit or suppress
 // time-exceeded replies.
 type Hop struct {
-	TTL  int
 	Addr netip.Addr
-	RTT  time.Duration
 }
 
 // Path is the ordered hop list to a target.
@@ -45,42 +43,6 @@ func (p Path) String() string {
 		}
 	}
 	return strings.Join(parts, ",")
-}
-
-// Parse reads back a stored path. Hop RTTs are not stored: what matters is
-// which routers were on the path, not how long each took.
-func Parse(s string) Path {
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, ",")
-	out := make(Path, 0, len(parts))
-	for i, part := range parts {
-		h := Hop{TTL: i + 1}
-		if part != "*" {
-			if addr, err := netip.ParseAddr(part); err == nil {
-				h.Addr = addr
-			}
-		}
-		out = append(out, h)
-	}
-	return out
-}
-
-// SameAs reports whether two paths visit the same routers in the same order.
-// Hops that did not answer compare equal to each other: a router that stayed
-// silent twice is not evidence of a change, and treating it as one would
-// bury the real changes in noise.
-func (p Path) SameAs(other Path) bool {
-	if len(p) != len(other) {
-		return false
-	}
-	for i := range p {
-		if p[i].Addr != other[i].Addr {
-			return false
-		}
-	}
-	return true
 }
 
 // Options configure one traceroute.

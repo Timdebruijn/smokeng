@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/netip"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,21 +28,13 @@ const (
 	writerMaxBatch = 512 // measurements per transaction at most
 )
 
-// Alerter consumes finalized measurements and delivers alert notifications.
-// The engine depends on the behaviour, not the implementation, so probing
-// keeps working when alerting is not configured.
-type Alerter interface {
-	Reload(ctx context.Context) error
-	Observe(ctx context.Context, ms []alert.Input)
-}
-
 // Engine runs the local agent: it schedules every enabled leaf target whose
 // effective agent list includes "local", probes it per bucket, and batches
 // finalized measurements into the store (single writer, DESIGN.md §6).
 type Engine struct {
 	st      store.Store
 	dns     *dnscache.Cache
-	alerter Alerter
+	alerter *alert.Manager
 
 	results   chan store.Measurement
 	late      atomic.Int64 // replies that arrived after their bucket finalized
@@ -80,7 +73,7 @@ type runningTarget struct {
 
 // NewEngine builds the local prober. alerter may be nil, in which case
 // measurements are still taken and stored, just never evaluated.
-func NewEngine(st store.Store, alerter Alerter) (*Engine, error) {
+func NewEngine(st store.Store, alerter *alert.Manager) (*Engine, error) {
 	dns, err := dnscache.New()
 	if err != nil {
 		return nil, err
@@ -166,17 +159,9 @@ func (e *Engine) reload(ctx context.Context) {
 		}
 		tctx, cancel := context.WithCancel(ctx)
 		e.running[id] = &runningTarget{spec: spec, cancel: cancel}
-		e.targetWG.Add(1)
-		go func(spec TargetSpec) {
-			defer e.targetWG.Done()
-			e.runTarget(tctx, spec)
-		}(spec)
+		e.targetWG.Go(func() { e.runTarget(tctx, spec) })
 		if spec.TraceIntervalS > 0 {
-			e.targetWG.Add(1)
-			go func(spec TargetSpec) {
-				defer e.targetWG.Done()
-				e.runTracer(tctx, spec)
-			}(spec)
+			e.targetWG.Go(func() { e.runTracer(tctx, spec) })
 		}
 	}
 }
@@ -201,13 +186,7 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 		if err != nil {
 			return nil, err
 		}
-		local := false
-		for _, a := range strings.Fields(res.Agents.Effective) {
-			if a == "local" {
-				local = true
-			}
-		}
-		if !local {
+		if !slices.Contains(strings.Fields(res.Agents.Effective), "local") {
 			continue
 		}
 		spec := TargetSpec{
@@ -416,12 +395,10 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			if !sleepUntil(ctx, times[0]) {
 				aborted = true
 			} else {
-				probeWG.Add(1)
-				go func() {
-					defer probeWG.Done()
+				probeWG.Go(func() {
 					defer e.recoverProbe(spec, "irtt session")
 					probeIRTT(ctx, col, addr, spec, finalizeAt)
-				}()
+				})
 			}
 		} else {
 			for i, at := range times {
@@ -439,18 +416,14 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 				// runs on its own goroutine: waiting here would push every later
 				// probe of the interval out by however long this one took, and
 				// the schedule is what the distribution means.
-				probeWG.Add(1)
-				go func(i int) {
-					defer probeWG.Done()
+				probeWG.Go(func() {
 					defer e.recoverProbe(spec, "probe")
 					runUserspaceProbe(ctx, col, i, addr, spec)
-				}(i)
+				})
 			}
 		}
 
-		e.targetWG.Add(1)
-		go func(col *collector, bucket int64) {
-			defer e.targetWG.Done()
+		e.targetWG.Go(func() {
 			defer e.recoverProbe(spec, "finalize")
 			// On shutdown this returns early: the bucket finalizes with
 			// whatever was measured, and the writer still flushes it. What it
@@ -481,7 +454,7 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 				log.Printf("probe: results backlog full, dropping measurement for target %d", spec.TargetID)
 				e.dropped.Add(1)
 			}
-		}(col, bucket)
+		})
 		if aborted {
 			return
 		}
