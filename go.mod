@@ -3,7 +3,7 @@ module github.com/timdebruijn/smokeng
 go 1.27.2
 
 require (
-	codeberg.org/miekg/dns v0.6.118
+	codeberg.org/miekg/dns v0.6.119
 	github.com/apache/arrow-go/v18 v18.8.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/google/flatbuffers v25.12.19+incompatible
@@ -12,20 +12,20 @@ require (
 	golang.org/x/net v0.61.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.49.0
-	modernc.org/sqlite v1.60.1
+	modernc.org/sqlite v1.61.0
 )
 
 require (
-	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/felixge/fgprof v0.9.5 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
-	github.com/goccy/go-json v0.10.6 // indirect
-	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
+	github.com/goccy/go-json v0.11.2 // indirect
+	github.com/google/pprof v0.0.0-20261016150608-1facf8f91b50 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/klauspost/compress v1.19.2 // indirect
-	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
+	github.com/klauspost/cpuid/v2 v2.4.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/ogier/pflag v0.0.2-0.20160129220114-45c278ab3607 // indirect
 	github.com/pierrec/lz4/v4 v4.1.29 // indirect
 	github.com/pkg/profile v1.7.0 // indirect
@@ -33,7 +33,7 @@ require (
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
-	modernc.org/libc v1.77.1 // indirect
+	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
