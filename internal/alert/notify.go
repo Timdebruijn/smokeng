@@ -54,8 +54,7 @@ type Notifier interface {
 // Webhook posts alerts in Alertmanager's v2 format, so it can be pointed
 // straight at an Alertmanager or at anything that speaks the same shape.
 type Webhook struct {
-	URL    string
-	Client *http.Client
+	URL string
 }
 
 // amAlert mirrors Alertmanager's POST /api/v2/alerts payload.
@@ -118,10 +117,7 @@ func (w *Webhook) Notify(ctx context.Context, alerts []Alert) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := w.Client
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
-	}
+	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		// net/http words a failure with the whole URL, and the URL is often the

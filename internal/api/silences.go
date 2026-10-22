@@ -19,11 +19,7 @@ func (s *server) handleListSilences(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sils, err := s.alerts.ListSilences(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
+	sils := s.alerts.ListSilences()
 	now := time.Now().Unix()
 	out := make([]map[string]any, 0, len(sils))
 	for _, sl := range sils {
@@ -135,11 +131,7 @@ func (s *server) handleDeleteSilence(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("bad silence id"))
 		return
 	}
-	sils, err := s.alerts.ListSilences(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
+	sils := s.alerts.ListSilences()
 	var found *alert.Silence
 	for i := range sils {
 		if sils[i].ID == id {

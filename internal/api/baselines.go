@@ -27,11 +27,7 @@ func (s *server) handleListBaselines(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	bs, err := s.alerts.Baselines(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
+	bs := s.alerts.Baselines()
 	out := make([]map[string]any, 0, len(bs))
 	for _, b := range bs {
 		if !sc.Visible(b.TargetID) {

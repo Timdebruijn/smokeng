@@ -36,12 +36,12 @@ type AlertView interface {
 	Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, ack bool, by string) (bool, error)
 	// Silences: suppress delivery and attention for matching alerts over a time
 	// window, applied at once rather than at the next reload.
-	ListSilences(ctx context.Context) ([]alert.Silence, error)
+	ListSilences() []alert.Silence
 	AddSilence(ctx context.Context, s alert.Silence) (alert.Silence, error)
 	RemoveSilence(ctx context.Context, id int64) (bool, error)
 	// Golden baselines: a captured reference distribution per shape rule, and
 	// the reference a shape rule is currently comparing against.
-	Baselines(ctx context.Context) ([]alert.Baselined, error)
+	Baselines() []alert.Baselined
 	CaptureBaseline(ctx context.Context, b alert.Baselined) error
 	ClearBaseline(ctx context.Context, ruleID int64) (bool, error)
 	// ShapeReferenceDetail returns the reference with the series a golden one was
