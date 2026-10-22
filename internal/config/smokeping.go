@@ -398,8 +398,8 @@ func parseSmokePing(lines []srcLine, alsoIPv6 bool) (File, []string, error) {
 		}
 	}
 	flush()
-	if !sawTargetsHeader {
-		warnAt("(input)", "no '*** Targets ***' header found; treating the whole file as targets")
+	if !sawTargetsHeader && len(lines) > 0 {
+		warnAt(lines[0].file, "no '*** Targets ***' header found; treating the whole file as targets")
 	}
 
 	// posInt reads a positive count, or warns and leaves the setting unset.
