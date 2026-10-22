@@ -55,24 +55,20 @@ const (
 	MaxTotalProbeRate   = 5000
 )
 
+// differs reports whether an optional field of a node changed. A node being
+// created (before == nil) has changed in every field it sets.
+func differs[T comparable](before, after *Target, get func(*Target) *T) bool {
+	if before == nil {
+		return true
+	}
+	b, a := get(before), get(after)
+	return (b == nil) != (a == nil) || b != nil && *b != *a
+}
+
 // CheckLimits refuses a node whose changed fields exceed what smokeng will run.
 // before is nil for a node that is being created.
 func CheckLimits(before, after *Target) error {
-	changed := func(f func(*Target) any) bool { return before == nil || f(before) != f(after) }
-	str := func(p *string) any {
-		if p == nil {
-			return nil
-		}
-		return *p
-	}
-	num := func(p *int) any {
-		if p == nil {
-			return nil
-		}
-		return *p
-	}
-
-	if changed(func(t *Target) any { return t.Name }) {
+	if before == nil || before.Name != after.Name {
 		if err := checkText("name", after.Name, MaxNameRunes, false); err != nil {
 			return err
 		}
@@ -80,17 +76,17 @@ func CheckLimits(before, after *Target) error {
 			return fmt.Errorf("tree: name must not start or end with whitespace")
 		}
 	}
-	if after.Host != nil && changed(func(t *Target) any { return str(t.Host) }) {
+	if after.Host != nil && differs(before, after, func(t *Target) *string { return t.Host }) {
 		if err := checkHost(*after.Host); err != nil {
 			return err
 		}
 	}
-	if after.Title != nil && changed(func(t *Target) any { return str(t.Title) }) {
+	if after.Title != nil && differs(before, after, func(t *Target) *string { return t.Title }) {
 		if err := checkText("title", *after.Title, MaxTitleRunes, false); err != nil {
 			return err
 		}
 	}
-	if after.Notes != nil && changed(func(t *Target) any { return str(t.Notes) }) {
+	if after.Notes != nil && differs(before, after, func(t *Target) *string { return t.Notes }) {
 		if err := checkText("notes", *after.Notes, MaxNotesRunes, true); err != nil {
 			return err
 		}
@@ -99,7 +95,7 @@ func CheckLimits(before, after *Target) error {
 	s := &after.Settings
 	bound := func(name string, get func(*Target) *int, lo, hi int) error {
 		v := get(after)
-		if v == nil || !changed(func(t *Target) any { return num(get(t)) }) {
+		if v == nil || !differs(before, after, get) {
 			return nil
 		}
 		if *v < lo || *v > hi {
@@ -124,7 +120,7 @@ func CheckLimits(before, after *Target) error {
 	// 0 turns these off, so the floor applies to anything else.
 	zeroOr := func(name string, get func(*Target) *int, lo, hi int) error {
 		v := get(after)
-		if v == nil || *v == 0 || !changed(func(t *Target) any { return num(get(t)) }) {
+		if v == nil || *v == 0 || !differs(before, after, get) {
 			return nil
 		}
 		if *v < lo || *v > hi {
@@ -139,17 +135,17 @@ func CheckLimits(before, after *Target) error {
 		return err
 	}
 
-	if s.DNSQuery != nil && changed(func(t *Target) any { return str(t.Settings.DNSQuery) }) {
+	if s.DNSQuery != nil && differs(before, after, func(t *Target) *string { return t.Settings.DNSQuery }) {
 		if err := checkDNSName("dns_query", *s.DNSQuery, MaxDNSQueryLen); err != nil {
 			return err
 		}
 	}
-	if s.HTTPPath != nil && changed(func(t *Target) any { return str(t.Settings.HTTPPath) }) {
+	if s.HTTPPath != nil && differs(before, after, func(t *Target) *string { return t.Settings.HTTPPath }) {
 		if err := checkHTTPPath(*s.HTTPPath); err != nil {
 			return err
 		}
 	}
-	if s.Agents != nil && changed(func(t *Target) any { return str(t.Settings.Agents) }) {
+	if s.Agents != nil && differs(before, after, func(t *Target) *string { return t.Settings.Agents }) {
 		if err := checkText("agents", *s.Agents, MaxAgentsLen, false); err != nil {
 			return err
 		}
