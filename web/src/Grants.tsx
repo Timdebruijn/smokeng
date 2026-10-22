@@ -7,6 +7,8 @@ import {
   type Grant,
   type Target,
 } from './api'
+import { ConfirmButton, useAction } from './shared'
+import { orderedTargets } from './util'
 
 const ROLES: { value: Grant['role']; label: string }[] = [
   { value: 'viewer', label: 'viewer — read' },
@@ -24,41 +26,18 @@ export default function Grants({
 }) {
   const [grants, setGrants] = useState<Grant[]>([])
   const [targets, setTargets] = useState<Target[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
 
-  const reload = useCallback(async () => {
-    try {
-      const [g, t] = await Promise.all([fetchGrants(), fetchTargets()])
-      setGrants(g)
-      setTargets(t)
-    } catch (e) {
-      setError((e as Error).message)
-    }
+  const load = useCallback(async () => {
+    const [g, t] = await Promise.all([fetchGrants(), fetchTargets()])
+    setGrants(g)
+    setTargets(t)
   }, [])
+  const { error, busy, reload, run } = useAction(load)
 
   useEffect(() => {
     void reload()
   }, [reload])
-
-  const run = useCallback(
-    async (fn: () => Promise<unknown>) => {
-      setBusy(true)
-      setError(null)
-      try {
-        await fn()
-        await reload()
-        return true
-      } catch (e) {
-        setError((e as Error).message)
-        return false
-      } finally {
-        setBusy(false)
-      }
-    },
-    [reload],
-  )
 
   // Grouped by OIDC group name — the list should read as "who can reach
   // what", not as a flat table of unrelated rows.
@@ -169,7 +148,6 @@ function GrantRow({
   onRemove: () => Promise<boolean>
   onRerole: (role: Grant['role']) => void
 }) {
-  const [confirming, setConfirming] = useState(false)
   return (
     <tr>
       <td>
@@ -200,51 +178,10 @@ function GrantRow({
         )}
       </td>
       <td>
-        {!readOnly &&
-          (confirming ? (
-            <>
-              <button
-                className="pill danger"
-                disabled={busy}
-                onClick={() => void onRemove().then((ok) => ok && setConfirming(false))}
-              >
-                Confirm remove
-              </button>
-              <button className="pill" disabled={busy} onClick={() => setConfirming(false)}>
-                Cancel
-              </button>
-            </>
-          ) : (
-            <button className="pill danger" disabled={busy} onClick={() => setConfirming(true)}>
-              Remove
-            </button>
-          ))}
+        {!readOnly && <ConfirmButton busy={busy} onConfirm={onRemove} />}
       </td>
     </tr>
   )
-}
-
-// Depth-first, indented order — same idea as Admin's target tree — so the
-// picker reads as a tree even though a <select> cannot draw one directly.
-function orderedTargets(targets: Target[]): { target: Target; depth: number }[] {
-  const children = new Map<number | null, Target[]>()
-  for (const t of targets) {
-    const list = children.get(t.parent_id) ?? []
-    list.push(t)
-    children.set(t.parent_id, list)
-  }
-  for (const list of children.values()) {
-    list.sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
-  }
-  const out: { target: Target; depth: number }[] = []
-  const walk = (parent: number | null, depth: number) => {
-    for (const t of children.get(parent) ?? []) {
-      out.push({ target: t, depth })
-      walk(t.id, depth + 1)
-    }
-  }
-  walk(null, 0)
-  return out
 }
 
 function AddGrantForm({

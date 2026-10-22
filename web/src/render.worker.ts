@@ -10,7 +10,8 @@
  * All geometry arrives in CSS pixels and is scaled by devicePixelRatio here,
  * so text, line weights and the blur keep their intended size on any display.
  */
-import { AXIS_W, AXIS_H, RAIL_H, RAIL_GAP, fmtSigned, fmtUs, inferSpan } from './layout'
+import { fmtUs } from './format'
+import { AXIS_W, AXIS_H, RAIL_H, RAIL_GAP, fmtSigned, inferSpan } from './layout'
 
 interface SeriesMsg {
   ts: Float64Array
@@ -123,7 +124,7 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
 
   // y scale. Log (the default): the whole range fits, outliers and all.
   // Linear: clip the top 0.5% so a single outlier can't crush the plot.
-  const allSorted = sortedCopy(d.values)
+  const allSorted = d.values.toSorted()
   let ymax: number
   let ymin = 0
   if (signed) {
@@ -347,17 +348,4 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
     ctx.textBaseline = 'middle'
     ctx.fillText('loss', axisW - 6 * dpr, railY + railH / 2)
   }
-
-  postMessage({ type: 'rendered' })
-}
-
-// Per-row sample lists are sorted; a full ascending sort of the concatenation
-// is still cheap at these sizes and is only needed for the y scale.
-// TypedArray.sort() is numeric.
-// TypedArray.prototype.sort is numeric, not lexicographic like Array's, so
-// this orders negative values correctly as well.
-function sortedCopy<T extends Uint32Array | Int32Array>(values: T): T {
-  const copy = values.slice() as T
-  copy.sort()
-  return copy
 }

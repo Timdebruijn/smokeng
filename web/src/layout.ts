@@ -1,3 +1,5 @@
+import { fmtUs } from './format'
+
 /**
  * Plot geometry in CSS pixels, shared by the worker renderer (which scales it
  * by devicePixelRatio) and the main-thread overlay (which draws in CSS px).
@@ -13,12 +15,6 @@ export const PLOT_HEIGHT = 240
 /** Height of the density area itself, above the loss rail and time axis. */
 export function densityHeight(cssHeight: number): number {
   return cssHeight - RAIL_H - RAIL_GAP - AXIS_H
-}
-
-export function fmtUs(us: number): string {
-  if (us < 1000) return `${Math.round(us)}µs`
-  if (us < 1_000_000) return `${(us / 1000).toFixed(us < 10_000 ? 1 : 0)}ms`
-  return `${(us / 1_000_000).toFixed(1)}s`
 }
 
 /**
@@ -43,6 +39,28 @@ export function fmtClock(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000)
   const p = (n: number) => String(n).padStart(2, '0')
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+/**
+ * The last row starting at or before t, or -1: a row's ts is the start of the
+ * interval it covers, [ts, ts+span). Picking the *nearest* row instead reports
+ * the following interval's median for everything past the midpoint of each
+ * bucket, which is the number an operator reads off the graph.
+ */
+export function rowAt(ts: ArrayLike<number>, t: number): number {
+  let lo = 0
+  let hi = ts.length - 1
+  let idx = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (ts[mid] <= t) {
+      idx = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return idx
 }
 
 /** Median gap between consecutive rows: the interval, inferred from the data. */

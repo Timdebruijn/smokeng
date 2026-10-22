@@ -10,6 +10,7 @@ import {
   type AgentToken,
   type NewAgentToken,
 } from './api'
+import { ConfirmButton, useAction, useCopy } from './shared'
 
 const TTL_OPTIONS: { seconds: number; label: string }[] = [
   { seconds: 900, label: '15 minutes' },
@@ -29,44 +30,21 @@ export default function Agents({
 }) {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [tokens, setTokens] = useState<AgentToken[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
   // Holds the plaintext token right after minting. Nothing else — not even a
   // reload — can bring it back once it is dismissed.
   const [minted, setMinted] = useState<NewAgentToken | null>(null)
 
-  const reload = useCallback(async () => {
-    try {
-      const [a, t] = await Promise.all([fetchAgents(), fetchAgentTokens()])
-      setAgents(a)
-      setTokens(t)
-    } catch (e) {
-      setError((e as Error).message)
-    }
+  const load = useCallback(async () => {
+    const [a, t] = await Promise.all([fetchAgents(), fetchAgentTokens()])
+    setAgents(a)
+    setTokens(t)
   }, [])
+  const { error, busy, reload, run } = useAction(load)
 
   useEffect(() => {
     void reload()
   }, [reload])
-
-  const run = useCallback(
-    async (fn: () => Promise<unknown>) => {
-      setBusy(true)
-      setError(null)
-      try {
-        await fn()
-        await reload()
-        return true
-      } catch (e) {
-        setError((e as Error).message)
-        return false
-      } finally {
-        setBusy(false)
-      }
-    },
-    [reload],
-  )
 
   const agentName = (id: number | undefined) => {
     if (id === undefined) return undefined
@@ -112,18 +90,8 @@ export default function Agents({
               busy={busy}
               onCancel={() => setAdding(false)}
               onSubmit={async (name, ttlS) => {
-                setBusy(true)
-                setError(null)
-                try {
-                  const t = await createAgentToken(name, ttlS)
-                  setMinted(t)
-                  setAdding(false)
-                  await reload()
-                } catch (e) {
-                  setError((e as Error).message)
-                } finally {
-                  setBusy(false)
-                }
+                const ok = await run(async () => setMinted(await createAgentToken(name, ttlS)))
+                if (ok) setAdding(false)
               }}
             />
           ) : (
@@ -187,7 +155,6 @@ function AgentRow({
 }) {
   const [draft, setDraft] = useState(agent.name)
   useEffect(() => setDraft(agent.name), [agent.name])
-  const [confirming, setConfirming] = useState(false)
 
   return (
     <tr className={agent.enabled ? '' : 'disabled-row'}>
@@ -225,24 +192,7 @@ function AgentRow({
             <button className={agent.enabled ? 'pill active' : 'pill'} disabled={busy} onClick={() => void onToggle()}>
               {agent.enabled ? 'Disable' : 'Enable'}
             </button>
-            {confirming ? (
-              <>
-                <button
-                  className="pill danger"
-                  disabled={busy}
-                  onClick={() => void onRemove().then((ok) => ok && setConfirming(false))}
-                >
-                  Confirm remove
-                </button>
-                <button className="pill" disabled={busy} onClick={() => setConfirming(false)}>
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <button className="pill danger" disabled={busy} onClick={() => setConfirming(true)}>
-                Remove
-              </button>
-            )}
+            <ConfirmButton busy={busy} onConfirm={onRemove} />
           </>
         )}
       </td>
@@ -376,17 +326,7 @@ function TokenReveal({
   const command =
     `smokeng agent run --master ${origin} --token ${token.token}` +
     (overTLS ? '' : ' --insecure-allow-http')
-  const [copied, setCopied] = useState(false)
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(command)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // Clipboard access can be denied; the command below is still selectable.
-    }
-  }
+  const [copied, copy] = useCopy(command)
 
   return (
     <div className="token-reveal">

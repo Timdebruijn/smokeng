@@ -40,16 +40,9 @@ export default function Bell({
       .catch(() => undefined)
 
   useEffect(() => {
-    let cancelled = false
-    const tick = () => {
-      if (!cancelled) void poll()
-    }
-    tick()
-    const t = setInterval(tick, 30_000)
-    return () => {
-      cancelled = true
-      clearInterval(t)
-    }
+    void poll()
+    const t = setInterval(() => void poll(), 30_000)
+    return () => clearInterval(t)
     // poll closes over only setState setters, which are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

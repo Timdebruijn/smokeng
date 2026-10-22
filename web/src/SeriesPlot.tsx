@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { SERIES_LABELS, fetchSeries, type SeriesName } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
-import { AXIS_W, fmtClock, fmtSigned, fmtUs, inferSpan } from './layout'
+import { fmtUs } from './format'
+import { AXIS_W, fmtClock, fmtSigned, inferSpan, rowAt } from './layout'
+import { useRenderWorker, useWidth } from './shared'
 
 interface Props {
   targetId: number
-  targetPath: string
   agentId: number
   name: SeriesName
   from: number
   to: number
-  refreshKey: number
 }
 
 /** Shorter than the round trip's: these are secondary graphs, read alongside it. */
@@ -29,17 +29,14 @@ const HEIGHT = 150
  */
 export default function SeriesPlot({
   targetId,
-  targetPath,
   agentId,
   name,
   from,
   to,
-  refreshKey,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
-  const workerRef = useRef<Worker | null>(null)
   const rowsRef = useRef<{
     ts: Float64Array
     median: Float64Array
@@ -54,34 +51,9 @@ export default function SeriesPlot({
   // canvas kept the bitmap it was given — time axis baked in — while CSS
   // stretched it to the new width, so an excursion sat visually at one time
   // while the crosshair, which measures the live element, reported another.
-  const [width, setWidth] = useState(0)
+  const width = useWidth(wrapRef)
+  const workerRef = useRenderWorker(canvasRef, `series ${targetId}/${name}`)
   const label = SERIES_LABELS[name]
-
-  useEffect(() => {
-    const el = wrapRef.current
-    if (!el) return
-    const ro = new ResizeObserver(([entry]) => setWidth(Math.round(entry.contentRect.width)))
-    ro.observe(el)
-    setWidth(el.clientWidth)
-    return () => ro.disconnect()
-  }, [])
-
-  useEffect(() => {
-    const cv = canvasRef.current
-    if (!cv) return
-    const off = cv.transferControlToOffscreen()
-    const worker = new Worker(new URL('./render.worker.ts', import.meta.url), { type: 'module' })
-    worker.onerror = (e) => console.error(`series ${targetPath}/${name}:`, e.message || e)
-    worker.postMessage({ type: 'init', canvas: off }, [off])
-    workerRef.current = worker
-    return () => {
-      worker.terminate()
-      workerRef.current = null
-    }
-    // The canvas can only be transferred once, so this worker is created once
-    // per mounted plot and never re-created for a range change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -155,7 +127,7 @@ export default function SeriesPlot({
       })
       .catch((e: Error) => {
         if (cancelled) return
-        console.error(`series ${targetPath}/${name}:`, e)
+        console.error(`series ${targetId}/${name}:`, e)
         rowsRef.current = null
         setReadout(null)
         setState('error')
@@ -164,7 +136,7 @@ export default function SeriesPlot({
     return () => {
       cancelled = true
     }
-  }, [targetId, agentId, name, from, to, refreshKey, targetPath, width])
+  }, [targetId, agentId, name, from, to, width])
 
   // The shared cursor: one crosshair across every stacked plot.
   useEffect(() => {
@@ -205,29 +177,12 @@ export default function SeriesPlot({
         setReadout(null)
         return
       }
-      // The last row starting at or before the cursor — a row's ts is the
-      // start of the interval it covers, [ts, ts+span). Picking the *nearest*
-      // row instead reported the following interval's median for everything
-      // past the midpoint of each bucket, which is the number an operator
-      // reads off the graph. Plot.tsx has always done it this way.
-      let lo = 0
-      let hi = rows.ts.length - 1
-      let idx = -1
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1
-        if (rows.ts[mid] <= t) {
-          idx = mid
-          lo = mid + 1
-        } else {
-          hi = mid - 1
-        }
-      }
+      const idx = rowAt(rows.ts, t)
       if (idx < 0 || t > rows.ts[idx] + rows.span) {
         setReadout(null)
         return
       }
-      lo = idx
-      const v = rows.median[lo]
+      const v = rows.median[idx]
       // Three different things, and the graph used to call all of them "not
       // measured": the peer could not report it, it could but this interval
       // had nothing to difference (one reply, so no consecutive pair), and a
@@ -235,12 +190,12 @@ export default function SeriesPlot({
       let reading: string
       if (!Number.isNaN(v)) {
         reading = `median ${name === 'server_processing' ? fmtUs(v) : fmtSigned(v)}`
-      } else if (rows.measured[lo] === 1) {
+      } else if (rows.measured[idx] === 1) {
         reading = 'nothing to compare'
       } else {
         reading = 'not measured'
       }
-      setReadout(`${fmtClock(rows.ts[lo])} · ${reading}`)
+      setReadout(`${fmtClock(rows.ts[idx])} · ${reading}`)
     }
     return subscribeCursor((t) => {
       cursorRef.current = t
