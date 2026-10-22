@@ -364,6 +364,7 @@ h1 {
 .settings input,
 .add-child input,
 .add-child select,
+.rule-form input,
 .rule-form select,
 .alerts input {
   font: inherit;
@@ -504,7 +505,6 @@ h1 {
   flex-wrap: wrap;
 }
 
-.rule-form input,
 a.button {
   font-size: 0.85rem;
   padding: 0.25rem 0.7rem;
