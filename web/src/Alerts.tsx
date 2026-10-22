@@ -23,13 +23,13 @@ import {
 } from './api'
 import ShapeOverlay from './ShapeOverlay'
 
-const METRICS: { value: AlertRule['metric']; label: string; unit: string }[] = [
-  { value: 'loss', label: 'Packet loss', unit: '%' },
-  { value: 'median', label: 'Median RTT', unit: 'ms' },
-  { value: 'p95', label: 'p95 RTT', unit: 'ms' },
-  { value: 'spread', label: 'Spread (p95 − p5)', unit: 'ms' },
-  { value: 'shape', label: 'Shape shift', unit: 'ms' },
-  { value: 'bimodality', label: 'Bimodality', unit: '' },
+const METRICS: { value: AlertRule['metric']; label: string }[] = [
+  { value: 'loss', label: 'Packet loss' },
+  { value: 'median', label: 'Median RTT' },
+  { value: 'p95', label: 'p95 RTT' },
+  { value: 'spread', label: 'Spread (p95 − p5)' },
+  { value: 'shape', label: 'Shape shift' },
+  { value: 'bimodality', label: 'Bimodality' },
 ]
 
 const isShapeMetric = (m: AlertRule['metric']) => m === 'shape' || m === 'bimodality'
@@ -40,21 +40,11 @@ const isShapeMetric = (m: AlertRule['metric']) => m === 'shape' || m === 'bimoda
  * auto mode reports a z-score — both read as nonsense with "ms" appended, which
  * is what a blanket "loss is %, everything else is ms" produced.
  */
-function metricUnit(metric: string): string {
-  switch (metric) {
-    case 'loss':
-      return '%'
-    case 'bimodality':
-      return ''
-    case 'shape':
-      // A tunable shape rule is a distance in ms; an auto one is a z-score. The
-      // firing list does not carry the mode, so say neither rather than one that
-      // is wrong half the time.
-      return ''
-    default:
-      return 'ms'
-  }
-}
+// A tunable shape rule is a distance in ms; an auto one is a z-score. The firing
+// list does not carry the mode, so say neither rather than one that is wrong
+// half the time.
+const metricUnit = (metric: string) =>
+  metric === 'loss' ? '%' : metric === 'bimodality' || metric === 'shape' ? '' : 'ms'
 const REFRESH_MS = 15_000
 
 export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
@@ -94,18 +84,6 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
     return () => clearInterval(id)
   }, [reload])
 
-  const ackAlert = useCallback(
-    async (a: FiringAlert) => {
-      try {
-        await acknowledgeAlert(a, !a.acked)
-        await reload()
-      } catch (e) {
-        setError((e as Error).message)
-      }
-    },
-    [reload],
-  )
-
   const run = async (fn: () => Promise<unknown>) => {
     try {
       await fn()
@@ -116,6 +94,8 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
       return false
     }
   }
+
+  const ackAlert = (a: FiringAlert) => run(() => acknowledgeAlert(a, !a.acked))
 
   const pathOf = (id: number) => targets.find((t) => t.id === id)?.path ?? `target ${id}`
 
@@ -711,34 +691,17 @@ function RuleForm({
       className="card rule-form"
       onSubmit={(e) => {
         e.preventDefault()
-        if (shape) {
-          // A shape rule always fires on rising anomaly. In auto mode the
-          // threshold is a built-in cutoff the operator does not set: a z-score
-          // of 4 for a shift, the 0.6 bimodality mark for two clusters.
-          const auto = mode === 'auto'
-          onSubmit({
-            name,
-            target_id: targetId,
-            metric,
-            op: '>',
-            mode,
-            baseline: metric === 'shape' ? baseline : '',
-            threshold: auto
-              ? metric === 'bimodality'
-                ? 0.6
-                : 4
-              : Number(threshold),
-            for_intervals: Number(forIntervals),
-            clear_intervals: Number(clearIntervals),
-          })
-          return
-        }
+        // A shape rule always fires on rising anomaly. In auto mode the
+        // threshold is a built-in cutoff the operator does not set: a z-score
+        // of 4 for a shift, the 0.6 bimodality mark for two clusters.
+        const auto = shape && mode === 'auto'
         onSubmit({
           name,
           target_id: targetId,
           metric,
-          op,
-          threshold: Number(threshold),
+          op: shape ? '>' : op,
+          ...(shape && { mode, baseline: metric === 'shape' ? baseline : '' }),
+          threshold: auto ? (metric === 'bimodality' ? 0.6 : 4) : Number(threshold),
           for_intervals: Number(forIntervals),
           clear_intervals: Number(clearIntervals),
         })

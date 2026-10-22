@@ -11,7 +11,8 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { minMax } from './util'
+import { Stat } from './shared'
+import { minMax, resolveSeries, summarise } from './util'
 
 const WINDOW_S = 3600
 // Matches the Graphs screen's REFRESH_MS (App.tsx) — the same "live" claim
@@ -24,8 +25,8 @@ interface Row {
   // enrolled agent — there is nothing to query, not just nothing queried yet.
   agentId: number | null
   agentName?: string
-  median: number
-  p95: number
+  median: number | null
+  p95: number | null
   loss: number
   // Totals behind `loss`, kept alongside it because loss alone can't tell a
   // reader apart from "we have nothing" — see the row rendering below.
@@ -76,36 +77,17 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
         // two places is two measurements, and collapsing them here would hide
         // exactly the disagreement a second vantage point exists to reveal —
         // including its quality flags.
-        const series = leaves.flatMap((t) => {
-          const names = (t.settings.agents.effective || 'local').split(/\s+/).filter(Boolean)
-          const resolved = names
-            .map((n) => ({ name: n, id: byName.get(n) }))
-            .filter((a): a is { name: string; id: number } => a.id !== undefined)
-          // A name that never resolved to an enrolled agent is not "the local
-          // agent" — querying agent 0 here would silently show one vantage
-          // point's numbers labelled as another's. The server counts this
-          // target as smokeng_targets_unmeasured; say the same thing rather
-          // than inventing a series for it.
-          if (resolved.length === 0) {
-            return [{ target: t, agentId: null, agentName: names.join(', ') }]
-          }
-          return resolved.map((a) => ({
-            target: t,
-            agentId: a.id as number | null,
-            agentName: resolved.length > 1 ? a.name : undefined,
-          }))
-        })
+        const series = leaves.flatMap((t) => resolveSeries(t, byName, ', '))
 
         const built = await Promise.all(
           series.map(async (x) => {
-            if (x.agentId === null) {
-              return { ...x, median: 0, p95: 0, loss: 0, sent: 0, received: 0, flags: 0, spark: [] }
-            }
+            const none = { median: null, p95: null, loss: 0, sent: 0, received: 0, flags: 0, spark: [] }
+            if (x.agentId === null) return { ...x, ...none }
             try {
               const s = await fetchSeries(x.target.id, x.agentId, now - WINDOW_S, now)
-              return { ...x, ...summarise(s) }
+              return { ...x, ...summarise(s), spark: sparkOf(s) }
             } catch {
-              return { ...x, median: 0, p95: 0, loss: 0, sent: 0, received: 0, flags: 0, spark: [] }
+              return { ...x, ...none }
             }
           }),
         )
@@ -149,8 +131,8 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
       {error && <p className="error">{error}</p>}
 
       <div className="stat-grid">
-        <Kpi label="Series" value={rows ? String(rows.length) : '—'} sub={`${measured} reporting`} />
-        <Kpi
+        <Stat label="Series" value={rows ? String(rows.length) : '—'} sub={`${measured} reporting`} />
+        <Stat
           label="Firing"
           value={String(firing.length)}
           // An acknowledged alert is still firing, so it counts here — but it
@@ -166,13 +148,13 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
           }
           tone={firing.some((a) => !a.acked) ? 'bad' : undefined}
         />
-        <Kpi
+        <Stat
           label="Worst loss"
           value={rows ? `${worst.toFixed(1)}%` : '—'}
           sub="in the last hour"
           tone={worst > 0 ? 'bad' : undefined}
         />
-        <Kpi
+        <Stat
           label="Flagged"
           value={rows ? String(flagged) : '—'}
           sub="series with quality flags"
@@ -194,16 +176,13 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
           ) : (
             <>
               {rows.map((r) => {
-                // Three states, not two. `spark.length` used to stand in for
-                // "do we have anything to show", but a target with total loss
-                // has sent probes and gotten zero replies back — its spark is
-                // empty (there is no RTT to plot a shape from) even though the
-                // loss figure itself is exactly known and is the single most
-                // important thing this row can say. Read `sent`/`received`
-                // instead of the spark to tell "never measured" apart from
-                // "measured, and everything was lost".
+                // `spark.length` is not "do we have anything to show": a target
+                // with total loss has sent probes and gotten zero replies back,
+                // so its spark and latencies are empty even though the loss
+                // figure is exactly known and is the single most important
+                // thing this row can say. `sent` tells "never measured" apart
+                // from "measured, and everything was lost".
                 const noData = r.sent === 0
-                const noReplies = !noData && r.received === 0
                 return (
                   <button
                     key={`${r.target.id}-${r.agentId ?? 'unresolved'}`}
@@ -246,8 +225,8 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
                       </span>
                     </span>
                     <Spark values={r.spark} />
-                    <span className="mono">{noData || noReplies ? '—' : fmtUs(r.median)}</span>
-                    <span className="mono dimmed">{noData || noReplies ? '—' : fmtUs(r.p95)}</span>
+                    <span className="mono">{r.median === null ? '—' : fmtUs(r.median)}</span>
+                    <span className="mono dimmed">{r.p95 === null ? '—' : fmtUs(r.p95)}</span>
                     <span className={!noData && r.loss > 0 ? 'mono bad' : 'mono dimmed'}>
                       {noData ? '—' : fmtLoss(r.loss)}
                     </span>
@@ -344,28 +323,6 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
   )
 }
 
-function Kpi({
-  label,
-  value,
-  sub,
-  tone,
-}: {
-  label: string
-  value: string
-  sub: string
-  tone?: 'bad' | 'warn'
-}) {
-  return (
-    <div className="card stat">
-      <p className="stat-label">{label}</p>
-      <p className="stat-value">
-        <span className={tone ? tone : undefined}>{value}</span>
-        <span className="stat-sub">{sub}</span>
-      </p>
-    </div>
-  )
-}
-
 /** A shape, not a chart: enough to see whether the last hour was level. */
 function Spark({ values }: { values: number[] }) {
   if (values.length < 2) return <span className="spark" />
@@ -383,25 +340,8 @@ function Spark({ values }: { values: number[] }) {
   )
 }
 
-function summarise(s: {
-  values: Uint32Array
-  offsets: Uint32Array
-  sent: Float64Array
-  received: Float64Array
-  flags: Uint8Array
-}): Omit<Row, 'target' | 'agentId'> {
-  const all = Array.from(s.values).sort((a, b) => a - b)
-  const q = (p: number) =>
-    all.length ? all[Math.min(all.length - 1, Math.floor(p * all.length))] : 0
-  let sent = 0
-  let received = 0
-  let flags = 0
-  for (let i = 0; i < s.sent.length; i++) {
-    sent += s.sent[i]
-    received += s.received[i]
-    flags |= s.flags[i]
-  }
-  // One median per row, thinned to at most 40 points.
+/** One median per row, thinned to at most 40 points. */
+function sparkOf(s: { values: Uint32Array; offsets: Uint32Array }): number[] {
   const rows = s.offsets.length - 1
   const step = Math.max(1, Math.ceil(rows / 40))
   const spark: number[] = []
@@ -410,18 +350,7 @@ function summarise(s: {
     const b = s.offsets[i + 1]
     if (b > a) spark.push(s.values[a + ((b - a) >> 1)])
   }
-  return {
-    median: q(0.5),
-    p95: q(0.95),
-    loss: sent > 0 ? 100 * (1 - received / sent) : 0,
-    // Exposed alongside loss so the row rendering can tell "nothing sent"
-    // apart from "sent and lost" without going back to the spark, which is
-    // empty in both cases and can't make that distinction.
-    sent,
-    received,
-    flags,
-    spark,
-  }
+  return spark
 }
 
 /** Coarse and readable: this is a sense of when, not a timestamp. */

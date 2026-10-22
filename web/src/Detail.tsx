@@ -15,14 +15,8 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { csvCell } from './util'
-
-const RANGES: { label: string; seconds: number }[] = [
-  { label: '15m', seconds: 900 },
-  { label: '1h', seconds: 3600 },
-  { label: '6h', seconds: 21600 },
-  { label: '24h', seconds: 86400 },
-]
+import { Stat } from './shared'
+import { RANGES, csvCell, summarise } from './util'
 
 // `types` limits a row to the probe types it means something for, the same way
 // the admin form does. A packet size on an http target is not a setting with
@@ -97,8 +91,7 @@ export default function Detail({
   onEdit: () => void
 }) {
   const [rangeS, setRangeS] = useState(3600)
-  const [refreshKey] = useState(0)
-  const [stats, setStats] = useState<Stats | null>(null)
+  const [stats, setStats] = useState<ReturnType<typeof summarise> | null>(null)
   const [rules, setRules] = useState<AlertRule[]>([])
 
   const probeType = String(target.settings.probe_type.effective || 'icmp')
@@ -111,7 +104,7 @@ export default function Detail({
   const [from, to] = useMemo(() => {
     const now = Math.floor(Date.now() / 1000)
     return [now - rangeS, now]
-  }, [rangeS, refreshKey])
+  }, [rangeS])
 
   useEffect(() => {
     if (agentId === null) {
@@ -144,7 +137,10 @@ export default function Detail({
       </button>
 
       <div className="detail-head">
-        <span className="dot" style={{ background: stats?.dot ?? 'var(--dim)' }} />
+        <span
+          className="dot"
+          style={{ background: stats ? (stats.loss > 0 ? 'var(--warn)' : 'var(--good)') : 'var(--dim)' }}
+        />
         <h1>{target.title ?? target.path}</h1>
         {/* The probe type belongs on the identity line, not buried in the
             settings table: two targets with the same host and family are
@@ -215,7 +211,6 @@ export default function Detail({
             agentId={agentId}
             from={from}
             to={to}
-            refreshKey={refreshKey}
             logScale
             onZoom={() => undefined}
           />
@@ -225,12 +220,10 @@ export default function Detail({
             <SeriesPlot
               key={name}
               targetId={target.id}
-              targetPath={target.path}
               agentId={agentId}
               name={name}
               from={from}
               to={to}
-              refreshKey={refreshKey}
             />
           ))}
       </div>
@@ -265,7 +258,7 @@ export default function Detail({
                       ? 'set here'
                       : v.source === 'outside'
                         ? 'from outside your scope'
-                        : `inherited from ${v.source.path === '/' ? '/' : v.source.path}`}
+                        : `inherited from ${v.source.path}`}
                 </span>
               </div>
             )
@@ -521,58 +514,3 @@ function AvailabilityPanel({ target }: { target: Target }) {
     </section>
   )
 }
-
-function Stat({
-  label,
-  value,
-  title,
-  tone,
-}: {
-  label: string
-  value: string
-  title?: string
-  tone?: 'bad'
-}) {
-  return (
-    <div className="card stat" title={title}>
-      <p className="stat-label">{label}</p>
-      <p className={tone === 'bad' ? 'stat-value bad' : 'stat-value'}>{value}</p>
-    </div>
-  )
-}
-
-interface Stats {
-  // null when there are no replies to measure a latency from — distinct from
-  // 0µs, which is a real (if implausible) measurement.
-  median: number | null
-  p95: number | null
-  spread: number | null
-  loss: number
-  dot: string
-}
-
-/** Pooled over the whole window, from the samples themselves. */
-function summarise(s: { values: Uint32Array; sent: Float64Array; received: Float64Array }): Stats {
-  const all = Array.from(s.values).sort((a, b) => a - b)
-  // With no replies, `all` is empty and every quantile would otherwise read
-  // as 0 — not "unknown", but a specific, wrong number that looks exactly
-  // like a suspiciously fast link. Loss is still known in that case (indeed
-  // it's the whole story), so it's computed unconditionally below; the
-  // latency figures are reported as null instead of being invented.
-  const q = (p: number) => all[Math.min(all.length - 1, Math.floor(p * all.length))]
-  let sent = 0
-  let received = 0
-  for (let i = 0; i < s.sent.length; i++) {
-    sent += s.sent[i]
-    received += s.received[i]
-  }
-  const loss = sent > 0 ? 100 * (1 - received / sent) : 0
-  return {
-    median: all.length ? q(0.5) : null,
-    p95: all.length ? q(0.95) : null,
-    spread: all.length ? q(0.95) - q(0.05) : null,
-    loss,
-    dot: loss > 0 ? 'var(--warn)' : 'var(--good)',
-  }
-}
-

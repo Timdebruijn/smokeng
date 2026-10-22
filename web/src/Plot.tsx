@@ -8,7 +8,9 @@ import {
   type Target,
 } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
-import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtUs, inferSpan } from './layout'
+import { fmtUs } from './format'
+import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, inferSpan, rowAt } from './layout'
+import { useRenderWorker, useWidth } from './shared'
 
 interface Props {
   target: Target
@@ -18,7 +20,7 @@ interface Props {
   agentName?: string
   from: number
   to: number
-  refreshKey: number
+  refreshKey?: number
   logScale: boolean
   onZoom: (from: number, to: number) => void
   /** Absent on the detail screen, which is already the detail. */
@@ -80,6 +82,17 @@ const FLAGS: { bit: number; label: string; title: string }[] = [
 const FLAG_ICMP_ERROR = 1 << 4
 const FLAG_SEND_FAILED = 1 << 6
 
+/** How often each code appears on rows carrying `bit`, most frequent first. */
+function tally(flags: Uint8Array, codes: (number | null)[], bit: number): [number, number][] {
+  const counts = new Map<number, number>()
+  for (let i = 0; i < flags.length; i++) {
+    if (!(flags[i] & bit)) continue
+    const c = codes[i]
+    if (c !== null && c !== undefined) counts.set(c, (counts.get(c) ?? 0) + 1)
+  }
+  return [...counts].sort((a, b) => b[1] - a[1])
+}
+
 function flagCounts(
   flags: Uint8Array,
   icmpErrors: (number | null)[],
@@ -94,13 +107,7 @@ function flagCounts(
   // ICMP errors get named rather than lumped together: "host prohibited" and
   // "TTL exceeded" call for different responses, and both differ from
   // silence.
-  const byError = new Map<number, number>()
-  for (let i = 0; i < flags.length; i++) {
-    if (!(flags[i] & FLAG_ICMP_ERROR)) continue
-    const e = icmpErrors[i]
-    if (e !== null) byError.set(e, (byError.get(e) ?? 0) + 1)
-  }
-  for (const [packed, count] of [...byError].sort((a, b) => b[1] - a[1])) {
+  for (const [packed, count] of tally(flags, icmpErrors, FLAG_ICMP_ERROR)) {
     out.push({
       label: icmpErrorName(packed),
       title: 'Probes were refused with this ICMP error rather than going unanswered.',
@@ -111,13 +118,7 @@ function flagCounts(
   // And likewise for a failure to send. "Send failed" on its own could not
   // separate a far end refusing the traffic from this prober never getting it
   // out — a network fault and a bug here, reported identically.
-  const bySend = new Map<number, number>()
-  for (let i = 0; i < flags.length; i++) {
-    if (!(flags[i] & FLAG_SEND_FAILED)) continue
-    const e = sendErrors[i]
-    if (e !== null && e !== undefined) bySend.set(e, (bySend.get(e) ?? 0) + 1)
-  }
-  for (const [reason, count] of [...bySend].sort((a, b) => b[1] - a[1])) {
+  for (const [reason, count] of tally(flags, sendErrors, FLAG_SEND_FAILED)) {
     out.push({
       label: sendReasonName(reason),
       title: 'Why probes could not be put on the wire, as opposed to going unanswered.',
@@ -146,7 +147,6 @@ export default function Plot({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const stackRef = useRef<HTMLDivElement>(null)
-  const workerRef = useRef<Worker | null>(null)
   const rowsRef = useRef<RowIndex | null>(null)
   const cursorRef = useRef<number | null>(null)
   const brushRef = useRef<{ t0: number; t1: number } | null>(null)
@@ -160,12 +160,8 @@ export default function Plot({
   // succeeded with zero rows, which is a legitimate (and different) thing to
   // show. Cleared on the next successful fetch.
   const [fetchError, setFetchError] = useState<string | null>(null)
-  // The plot's own width, observed rather than read once. Reading clientWidth
-  // when the effect first runs can catch the element before layout and bake a
-  // zero into the render, which draws nothing at all and never recovers.
-  // Observing it also makes the density redraw when the window is resized,
-  // which it previously did not.
-  const [width, setWidth] = useState(0)
+  const width = useWidth(stackRef)
+  const workerRef = useRenderWorker(canvasRef, `plot ${target.path}`)
 
   // Pixel ↔ time mapping, in CSS pixels over the density area only.
   const xToTime = useCallback((xCss: number, widthCss: number): number | null => {
@@ -196,6 +192,12 @@ export default function Plot({
     ctx.clearRect(0, 0, cssW, cssH)
     const plotH = densityHeight(cssH)
     const dark = matchMedia('(prefers-color-scheme: dark)').matches
+    const vline = (x: number) => {
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, plotH)
+      ctx.stroke()
+    }
 
     // Brush selection
     const brush = brushRef.current
@@ -206,12 +208,8 @@ export default function Plot({
       ctx.fillRect(x0, 0, x1 - x0, plotH)
       ctx.strokeStyle = dark ? 'rgba(125,211,252,0.7)' : 'rgba(3,105,161,0.7)'
       ctx.lineWidth = 1
-      ctx.beginPath()
-      ctx.moveTo(x0 + 0.5, 0)
-      ctx.lineTo(x0 + 0.5, plotH)
-      ctx.moveTo(x1 + 0.5, 0)
-      ctx.lineTo(x1 + 0.5, plotH)
-      ctx.stroke()
+      vline(x0 + 0.5)
+      vline(x1 + 0.5)
     }
 
     // Path changes: a mark on the time axis, so "the path changed at 14:02"
@@ -222,10 +220,7 @@ export default function Plot({
       ctx.strokeStyle = dark ? 'rgba(217,119,6,0.85)' : 'rgba(180,83,9,0.8)'
       ctx.lineWidth = 1
       ctx.setLineDash([3, 3])
-      ctx.beginPath()
-      ctx.moveTo(Math.round(x) + 0.5, 0)
-      ctx.lineTo(Math.round(x) + 0.5, plotH)
-      ctx.stroke()
+      vline(Math.round(x) + 0.5)
       ctx.setLineDash([])
     }
 
@@ -236,26 +231,12 @@ export default function Plot({
     if (x < AXIS_W || x > cssW) return
     ctx.strokeStyle = dark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'
     ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(Math.round(x) + 0.5, 0)
-    ctx.lineTo(Math.round(x) + 0.5, plotH)
-    ctx.stroke()
+    vline(Math.round(x) + 0.5)
 
     // Readout for the interval under the cursor
     const rows = rowsRef.current
     if (!rows || rows.ts.length === 0) return
-    let lo = 0
-    let hi = rows.ts.length - 1
-    let idx = -1
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (rows.ts[mid] <= t) {
-        idx = mid
-        lo = mid + 1
-      } else {
-        hi = mid - 1
-      }
-    }
+    const idx = rowAt(rows.ts, t)
     if (idx < 0 || t > rows.ts[idx] + rows.span) return
 
     const lines = [
@@ -269,7 +250,7 @@ export default function Plot({
     if (se !== null && se !== undefined) lines.push(sendReasonName(se))
     // The route in force at this instant, so a step in the smoke can be read
     // against the path that carried it.
-    const inForce = pathsRef.current.filter((c) => c.ts <= t).at(-1)
+    const inForce = pathsRef.current.findLast((c) => c.ts <= t)
     if (inForce) {
       const named = inForce.hops.filter((h) => h !== '*')
       lines.push(`path: ${named.length ? named.join(' → ') : 'no hops answered'}`)
@@ -289,40 +270,6 @@ export default function Plot({
     ctx.textBaseline = 'top'
     lines.forEach((l, i) => ctx.fillText(l, bx + 7, 12 + i * 14))
   }, [timeToX])
-
-  useEffect(() => {
-    const el = stackRef.current
-    if (!el) return
-    const ro = new ResizeObserver(([entry]) => {
-      setWidth(Math.round(entry.contentRect.width))
-    })
-    ro.observe(el)
-    setWidth(el.clientWidth)
-    return () => ro.disconnect()
-  }, [])
-
-  // One worker per plot, owning its density canvas for the component's life.
-  useEffect(() => {
-    const canvas = canvasRef.current!
-    const worker = new Worker(new URL('./render.worker.ts', import.meta.url), {
-      type: 'module',
-    })
-    // A worker that dies takes the plot with it and says nothing, which is
-    // indistinguishable from "no data". Say it out loud instead.
-    worker.onerror = (e) => {
-      console.error(`plot ${target.path}: render worker failed:`, e.message || e)
-    }
-    worker.onmessageerror = () => {
-      console.error(`plot ${target.path}: render worker could not read a message`)
-    }
-    const off = canvas.transferControlToOffscreen()
-    worker.postMessage({ type: 'init', canvas: off }, [off])
-    workerRef.current = worker
-    return () => {
-      worker.terminate()
-      workerRef.current = null
-    }
-  }, [])
 
   // Redraw the overlay whenever the shared cursor moves — no React re-render.
   useEffect(() => {

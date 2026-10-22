@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { exportConfig, importConfig } from './api'
+import { useCopy } from './shared'
 
 /**
  * The target tree as text, in both directions.
@@ -22,7 +23,7 @@ export default function TomlDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
+  const [copied, copy] = useCopy(text)
 
   useEffect(() => {
     if (mode !== 'export') return
@@ -49,16 +50,6 @@ export default function TomlDialog({
       setError((e as Error).message)
     } finally {
       setBusy(false)
-    }
-  }
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // Clipboard access can be refused; the text is selectable either way.
     }
   }
 
