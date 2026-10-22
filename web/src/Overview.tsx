@@ -150,7 +150,7 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
         />
         <Stat
           label="Worst loss"
-          value={rows ? `${worst.toFixed(1)}%` : '—'}
+          value={rows ? fmtLoss(worst) : '—'}
           sub="in the last hour"
           tone={worst > 0 ? 'bad' : undefined}
         />

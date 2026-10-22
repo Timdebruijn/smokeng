@@ -21,6 +21,7 @@ import {
   clearBaseline,
   type AlertBaseline,
 } from './api'
+import { fmtLoss } from './format'
 import ShapeOverlay from './ShapeOverlay'
 
 const METRICS: { value: AlertRule['metric']; label: string }[] = [
@@ -44,7 +45,7 @@ const isShapeMetric = (m: AlertRule['metric']) => m === 'shape' || m === 'bimoda
 // list does not carry the mode, so say neither rather than one that is wrong
 // half the time.
 const metricUnit = (metric: string) =>
-  metric === 'loss' ? '%' : metric === 'bimodality' || metric === 'shape' ? '' : 'ms'
+  metric === 'bimodality' || metric === 'shape' ? '' : 'ms'
 const REFRESH_MS = 15_000
 
 export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
@@ -136,8 +137,8 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                       <code>{a.target}</code>
                     </td>
                     <td>
-                      {a.metric} is {a.value.toFixed(a.metric === 'loss' ? 0 : 2)}
-                      {metricUnit(a.metric)}
+                      {a.metric} is{' '}
+                      {a.metric === 'loss' ? fmtLoss(a.value) : `${a.value.toFixed(2)}${metricUnit(a.metric)}`}
                     </td>
                     <td className="dim">
                       {a.since ? (

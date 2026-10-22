@@ -8,7 +8,7 @@ import {
   type Target,
 } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
-import { fmtUs } from './format'
+import { fmtLoss, fmtUs } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, inferSpan, rowAt } from './layout'
 import { useRenderWorker, useWidth } from './shared'
 
@@ -242,7 +242,7 @@ export default function Plot({
     const lines = [
       fmtClock(rows.ts[idx]),
       Number.isNaN(rows.median[idx]) ? 'no reply' : `median ${fmtUs(rows.median[idx])}`,
-      `${rows.received[idx]}/${rows.sent[idx]} replies${rows.loss[idx] > 0 ? ` · ${Math.round(rows.loss[idx] * 100)}% loss` : ''}`,
+      `${rows.received[idx]}/${rows.sent[idx]} replies${rows.loss[idx] > 0 ? ` · ${fmtLoss(rows.loss[idx] * 100)} loss` : ''}`,
     ]
     const err = rows.icmpErrors[idx]
     if (err !== null && err !== undefined) lines.push(icmpErrorName(err))
