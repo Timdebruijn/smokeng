@@ -20,15 +20,6 @@ type GrantEntry struct {
 	Role  string `toml:"role"`
 }
 
-// GrantStore is the persistence grants need. It is separate from Store so an
-// import against something that cannot hold grants simply does not sync them,
-// rather than failing.
-type GrantStore interface {
-	ListGrants(ctx context.Context) ([]store.Grant, error)
-	UpsertGrant(ctx context.Context, g *store.Grant) error
-	DeleteGrant(ctx context.Context, id int64) error
-}
-
 // syncGrants applies the file's grants.
 //
 // Grants are fully declarative in a way targets are not: a grant absent from
@@ -43,10 +34,6 @@ type GrantStore interface {
 // everything.
 func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []tree.Target, sum *Summary) error {
 	if f.Grants == nil {
-		return nil
-	}
-	gs, ok := st.(GrantStore)
-	if !ok {
 		return nil
 	}
 	byPath := map[string]int64{}
@@ -79,7 +66,7 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 		wanted[key{group, id}] = e.Role
 	}
 
-	current, err := gs.ListGrants(ctx)
+	current, err := st.ListGrants(ctx)
 	if err != nil {
 		return err
 	}
@@ -104,14 +91,14 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 				continue
 			}
 			prev.Role = role
-			if err := gs.UpsertGrant(ctx, &prev); err != nil {
+			if err := st.UpsertGrant(ctx, &prev); err != nil {
 				return err
 			}
 			sum.GrantsUpdated++
 			continue
 		}
 		g := store.Grant{Group: k.group, TargetID: k.id, Role: role}
-		if err := gs.UpsertGrant(ctx, &g); err != nil {
+		if err := st.UpsertGrant(ctx, &g); err != nil {
 			return err
 		}
 		sum.GrantsCreated++
@@ -120,7 +107,7 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 		if _, ok := wanted[k]; ok {
 			continue
 		}
-		if err := gs.DeleteGrant(ctx, g.ID); err != nil {
+		if err := st.DeleteGrant(ctx, g.ID); err != nil {
 			return err
 		}
 		sum.GrantsRemoved++
@@ -131,11 +118,7 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 // exportGrants renders the grants as TOML entries, sorted so an export is
 // stable enough to keep in a repository.
 func exportGrants(ctx context.Context, st Store, tr *tree.Tree) ([]GrantEntry, error) {
-	gs, ok := st.(GrantStore)
-	if !ok {
-		return nil, nil
-	}
-	current, err := gs.ListGrants(ctx)
+	current, err := st.ListGrants(ctx)
 	if err != nil {
 		return nil, err
 	}

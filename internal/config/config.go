@@ -129,6 +129,10 @@ type Store interface {
 	ListAlertRules(ctx context.Context) ([]alert.Rule, error)
 	UpsertAlertRule(ctx context.Context, r *alert.Rule) error
 	DeleteAlertRule(ctx context.Context, id int64) error
+	ListGrants(ctx context.Context) ([]store.Grant, error)
+	UpsertGrant(ctx context.Context, g *store.Grant) error
+	DeleteGrant(ctx context.Context, id int64) error
+	ListAgents(ctx context.Context) ([]store.AgentRecord, error)
 }
 
 // Summary reports what an import changed.
