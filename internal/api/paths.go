@@ -13,26 +13,8 @@ import (
 // 14:03". That correlation is the whole reason paths are recorded; there is
 // deliberately no standalone traceroute view.
 func (s *server) handlePaths(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	targetID, err := strconv.ParseInt(q.Get("target_id"), 10, 64)
-	if err != nil {
-		badRequestMsg(w, "target_id is required")
-		return
-	}
-	agentID := store.LocalAgentID
-	if v := q.Get("agent_id"); v != "" {
-		if agentID, err = strconv.ParseInt(v, 10, 64); err != nil {
-			badRequestMsg(w, "bad agent_id")
-			return
-		}
-	}
-	from, to, err := timeRange(q.Get("from"), q.Get("to"))
-	if err != nil {
-		badRequestMsg(w, err.Error())
-		return
-	}
-
-	if !s.requireVisible(w, r, targetID) {
+	targetID, agentID, from, to, ok := s.seriesQuery(w, r)
+	if !ok {
 		return
 	}
 	changes, err := s.st.PathChanges(r.Context(), targetID, agentID, from, to)
@@ -48,4 +30,30 @@ func (s *server) handlePaths(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"changes": out})
+}
+
+// seriesQuery reads the target_id, agent_id and time range a per-series route is
+// asked for and checks the caller may see that target. It has answered the
+// request when ok is false.
+func (s *server) seriesQuery(w http.ResponseWriter, r *http.Request) (targetID, agentID, from, to int64, ok bool) {
+	q := r.URL.Query()
+	targetID, err := strconv.ParseInt(q.Get("target_id"), 10, 64)
+	if err != nil {
+		badRequestMsg(w, "target_id is required")
+		return
+	}
+	agentID = store.LocalAgentID
+	if v := q.Get("agent_id"); v != "" {
+		if agentID, err = strconv.ParseInt(v, 10, 64); err != nil {
+			badRequestMsg(w, "bad agent_id")
+			return
+		}
+	}
+	from, to, err = timeRange(q.Get("from"), q.Get("to"))
+	if err != nil {
+		badRequestMsg(w, err.Error())
+		return
+	}
+	ok = s.requireVisible(w, r, targetID)
+	return
 }

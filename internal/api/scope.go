@@ -60,12 +60,12 @@ func (s *server) scopeFor(r *http.Request, tr *tree.Tree) (*Scope, error) {
 	}
 	sc.global = s.defaultRole
 
-	if s.grants != nil && len(sess.Groups) > 0 {
+	if len(sess.Groups) > 0 {
 		held := map[string]bool{}
 		for _, g := range sess.Groups {
 			held[g] = true
 		}
-		all, err := s.grants.ListGrants(r.Context())
+		all, err := s.st.ListGrants(r.Context())
 		if err != nil {
 			return nil, err
 		}
@@ -226,9 +226,7 @@ func (sc *Scope) chain(id int64) []int64 {
 		cur = *n.ParentID
 	}
 	// Reverse: callers want root-first so "the highest grant" is the first hit.
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
+	slices.Reverse(out)
 	return out
 }
 

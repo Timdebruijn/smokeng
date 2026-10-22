@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -245,12 +245,7 @@ func (s *server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 				return store.TargetChange{}, refuse(func() { sc.deny(w, dest) })
 			}
 		}
-		idx := -1
-		for i := range targets {
-			if targets[i].ID == id {
-				idx = i
-			}
-		}
+		idx := slices.IndexFunc(targets, func(t tree.Target) bool { return t.ID == id })
 		if idx < 0 {
 			return store.TargetChange{}, refuse(func() { notFound(w) })
 		}
@@ -408,7 +403,7 @@ func (s *server) checkAgentNames(ctx context.Context, set agentSet, agents *stri
 		}
 		return nil
 	}
-	records, err := s.agents.ListAgents(ctx)
+	records, err := s.st.ListAgents(ctx)
 	if err != nil {
 		return err
 	}
@@ -429,7 +424,7 @@ func (s *server) checkAgentNames(ctx context.Context, set agentSet, agents *stri
 		}
 	}
 	if len(unknown) > 0 {
-		sort.Strings(names)
+		slices.Sort(names)
 		return fmt.Errorf("no enrolled agent named %s; enrolled agents are: %s",
 			strings.Join(unknown, ", "), strings.Join(names, ", "))
 	}
@@ -497,26 +492,23 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 		}
 		n.ParentID = &v
 	}
-	if err := patchString(body, "name", func(v *string) error {
-		if v == nil {
+	if raw, ok := body["name"]; ok {
+		if isNull(raw) {
 			return errors.New("name may not be null")
 		}
-		n.Name = *v
-		return nil
-	}); err != nil {
-		return err
+		if err := json.Unmarshal(raw, &n.Name); err != nil {
+			return fmt.Errorf("name: %w", err)
+		}
 	}
-	if err := patchString(body, "host", func(v *string) error { n.Host = v; return nil }); err != nil {
-		return err
-	}
-	if err := patchString(body, "address_family", func(v *string) error { n.AddressFamily = v; return nil }); err != nil {
-		return err
-	}
-	if err := patchString(body, "title", func(v *string) error { n.Title = v; return nil }); err != nil {
-		return err
-	}
-	if err := patchString(body, "notes", func(v *string) error { n.Notes = v; return nil }); err != nil {
-		return err
+	for _, f := range []struct {
+		key string
+		dst **string
+	}{{"host", &n.Host}, {"address_family", &n.AddressFamily}, {"title", &n.Title}, {"notes", &n.Notes}} {
+		if raw, ok := body[f.key]; ok {
+			if err := patch(f.key, raw, f.dst); err != nil {
+				return err
+			}
+		}
 	}
 	for key, dst := range map[string]*bool{"hidden": &n.Hidden, "enabled": &n.Enabled} {
 		if raw, ok := body[key]; ok {
@@ -587,39 +579,19 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 					continue
 				}
 			}
+			var err error
 			switch {
 			case ints[key] != nil:
-				if isNull(raw) {
-					*ints[key] = nil
-					continue
-				}
-				var v int
-				if err := json.Unmarshal(raw, &v); err != nil {
-					return fmt.Errorf("settings.%s: %w", key, err)
-				}
-				*ints[key] = &v
+				err = patch("settings."+key, raw, ints[key])
 			case bools[key] != nil:
-				if isNull(raw) {
-					*bools[key] = nil
-					continue
-				}
-				var v bool
-				if err := json.Unmarshal(raw, &v); err != nil {
-					return fmt.Errorf("settings.%s: %w", key, err)
-				}
-				*bools[key] = &v
+				err = patch("settings."+key, raw, bools[key])
 			case strs[key] != nil:
-				if isNull(raw) {
-					*strs[key] = nil
-					continue
-				}
-				var v string
-				if err := json.Unmarshal(raw, &v); err != nil {
-					return fmt.Errorf("settings.%s: %w", key, err)
-				}
-				*strs[key] = &v
+				err = patch("settings."+key, raw, strs[key])
 			default:
-				return fmt.Errorf("settings.%s: unknown setting", key)
+				err = fmt.Errorf("settings.%s: unknown setting", key)
+			}
+			if err != nil {
+				return err
 			}
 		}
 	}
@@ -629,19 +601,18 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 	return nil
 }
 
-func patchString(body map[string]json.RawMessage, key string, set func(*string) error) error {
-	raw, ok := body[key]
-	if !ok {
+// patch sets *dst from raw: null clears it, anything else decodes into a T.
+func patch[T any](key string, raw json.RawMessage, dst **T) error {
+	if isNull(raw) {
+		*dst = nil
 		return nil
 	}
-	if isNull(raw) {
-		return set(nil)
-	}
-	var v string
+	var v T
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return fmt.Errorf("%s: %w", key, err)
 	}
-	return set(&v)
+	*dst = &v
+	return nil
 }
 
 func isNull(raw json.RawMessage) bool {

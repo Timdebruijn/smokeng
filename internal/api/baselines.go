@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,19 +23,11 @@ const maxBaselineSamples = 2_000_000
 // golden-baseline shape rule the caller can see — what it was taken from, not
 // the samples, which are large and only meaningful drawn.
 func (s *server) handleListBaselines(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"baselines": []any{}})
-		return
-	}
 	sc, _, ok := s.withScope(w, r)
 	if !ok {
 		return
 	}
-	bs, err := s.alerts.Baselines(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
+	bs := s.alerts.Baselines()
 	out := make([]map[string]any, 0, len(bs))
 	for _, b := range bs {
 		if !sc.Visible(b.TargetID) {
@@ -56,10 +48,6 @@ func (s *server) handleListBaselines(w http.ResponseWriter, r *http.Request) {
 // from the stored measurements rather than supplied by the caller, so a baseline
 // is always something smokeng actually measured.
 func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		notFound(w)
-		return
-	}
 	ruleID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		badRequest(w, errors.New("bad rule id"))
@@ -163,7 +151,7 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("no measurements in that window: there is nothing to capture as a reference"))
 		return
 	}
-	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	slices.Sort(samples)
 
 	b := alert.Baselined{
 		RuleID: ruleID, TargetID: body.TargetID, AgentID: agentID,
@@ -202,7 +190,7 @@ func (s *server) captureAgent(r *http.Request, targetID int64, want *int64) (int
 	if err != nil {
 		return 0, err
 	}
-	records, err := s.agents.ListAgents(r.Context())
+	records, err := s.st.ListAgents(r.Context())
 	if err != nil {
 		return 0, err
 	}
@@ -222,10 +210,6 @@ func (s *server) captureAgent(r *http.Request, targetID int64, want *int64) (int
 // handleClearBaseline drops a rule's captured reference. The rule then has
 // nothing to compare against and stops firing, which is the honest outcome.
 func (s *server) handleClearBaseline(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		notFound(w)
-		return
-	}
 	ruleID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		badRequest(w, errors.New("bad rule id"))
@@ -251,10 +235,6 @@ func (s *server) handleClearBaseline(w http.ResponseWriter, r *http.Request) {
 // z-score is a claim; these are the evidence, and the UI draws them together so
 // a person can see what changed rather than take the number on faith.
 func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		notFound(w)
-		return
-	}
 	q := r.URL.Query()
 	ruleID, err := strconv.ParseInt(q.Get("rule_id"), 10, 64)
 	if err != nil {

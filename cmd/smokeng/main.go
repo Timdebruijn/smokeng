@@ -416,7 +416,7 @@ func serve(args []string) error {
 	}
 	srv := newHTTPServer(*listen,
 		api.New(st, api.Options{
-			Alerts: alertViewOrNil(alerts), Auth: authOrNil(authenticator),
+			Alerts: alerts, Auth: authOrNil(authenticator),
 			Probe: eng, Version: version, MetricsPublic: *metricsPublic,
 			AgentCAs:    probe.LocalCAPEMs(),
 			DefaultRole: auth.Role(*defaultRole), ExternalURL: *externalURL,
@@ -451,13 +451,6 @@ func serve(args []string) error {
 // A nil *alert.Manager is not a nil interface, so the conversion has to be
 // explicit or every "is alerting configured" check silently succeeds.
 func alerterOrNil(m *alert.Manager) probe.Alerter {
-	if m == nil {
-		return nil
-	}
-	return m
-}
-
-func alertViewOrNil(m *alert.Manager) api.AlertView {
 	if m == nil {
 		return nil
 	}

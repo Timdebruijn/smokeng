@@ -74,15 +74,6 @@ func (rt *router) handle(class routeClass, pattern string, h http.HandlerFunc) {
 	rt.mux.HandleFunc(pattern, h)
 }
 
-// classified returns every registered route and its class, sorted.
-func (rt *router) classified() map[string]routeClass {
-	out := make(map[string]routeClass, len(rt.classes))
-	for k, v := range rt.classes {
-		out[k] = v
-	}
-	return out
-}
-
 // handler is what New returns. It is an http.Handler like any other; the
 // reference to the server exists so the route-coverage test can assert on the
 // table the router actually built, rather than on a copy of it in the test.

@@ -13,6 +13,7 @@ import (
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/auth"
 	"github.com/timdebruijn/smokeng/internal/ingest"
+	"github.com/timdebruijn/smokeng/internal/probe"
 	"github.com/timdebruijn/smokeng/internal/store"
 )
 
@@ -24,8 +25,7 @@ type AlertStore interface {
 	DeleteAlertRule(ctx context.Context, id int64) error
 }
 
-// AlertView exposes what is currently firing. Nil when alerting is not
-// configured, which the API reports rather than pretending nothing is wrong.
+// AlertView is what the API needs of the alert manager.
 type AlertView interface {
 	Firing() []alert.Alert
 	// Delivering reports whether transitions go anywhere beyond the log.
@@ -36,12 +36,12 @@ type AlertView interface {
 	Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, ack bool, by string) (bool, error)
 	// Silences: suppress delivery and attention for matching alerts over a time
 	// window, applied at once rather than at the next reload.
-	ListSilences(ctx context.Context) ([]alert.Silence, error)
+	ListSilences() []alert.Silence
 	AddSilence(ctx context.Context, s alert.Silence) (alert.Silence, error)
 	RemoveSilence(ctx context.Context, id int64) (bool, error)
 	// Golden baselines: a captured reference distribution per shape rule, and
 	// the reference a shape rule is currently comparing against.
-	Baselines(ctx context.Context) ([]alert.Baselined, error)
+	Baselines() []alert.Baselined
 	CaptureBaseline(ctx context.Context, b alert.Baselined) error
 	ClearBaseline(ctx context.Context, ruleID int64) (bool, error)
 	// ShapeReferenceDetail returns the reference with the series a golden one was
@@ -55,17 +55,15 @@ type Store interface {
 	AlertStore
 	AgentStore
 	PathStore
+	EnrolStore
+	GrantStore
+	EventStore
 }
 
 type server struct {
 	st     Store
 	alerts AlertView
 	auth   Authenticator
-	agents AgentStore
-	enrol  EnrolStore
-	grants GrantStore
-	events EventStore
-	config ConfigStore
 	routes *router
 	// defaultRole is what an authenticated caller with no grant gets. It is a
 	// setting rather than a consequence, so that adding the first grant does
@@ -79,8 +77,7 @@ type server struct {
 	// decodeSlots admits a few ingest decodes at a time; see handleIngest.
 	decodeSlots chan struct{}
 	verifier    *ingest.Verifier
-	probe       ProbeStats
-	ingest      IngestStats
+	probe       *probe.Engine
 	version     string
 	// agentCAs are the PEM blocks this master was given on the command line,
 	// handed down to agents so a CA rotates in one place. Never anything an
@@ -93,7 +90,7 @@ type Options struct {
 	Alerts AlertView
 	Auth   Authenticator
 	// Probe is the local engine, absent on an instance that only serves.
-	Probe   ProbeStats
+	Probe   *probe.Engine
 	Version string
 	// MetricsPublic serves /metrics without a session even when
 	// authentication is enabled, so Prometheus can scrape it. Off by default:
@@ -132,23 +129,8 @@ type Options struct {
 func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	authenticator := opts.Auth
 	s := &server{
-		st: st, alerts: opts.Alerts, auth: authenticator, agents: st,
+		st: st, alerts: opts.Alerts, auth: authenticator,
 		probe: opts.Probe, version: opts.Version, agentCAs: opts.AgentCAs,
-	}
-	// Enrolment is optional in the same way the local prober is: a store that
-	// cannot mint tokens simply does not get the routes, rather than forcing
-	// every implementation of Store to grow seven methods it may not want.
-	if es, ok := st.(EnrolStore); ok {
-		s.enrol = es
-	}
-	if gs, ok := st.(GrantStore); ok {
-		s.grants = gs
-	}
-	if es, ok := st.(EventStore); ok {
-		s.events = es
-	}
-	if cs, ok := st.(ConfigStore); ok {
-		s.config = cs
 	}
 	s.externalURL = opts.ExternalURL
 	s.trusted = opts.TrustedProxies
@@ -177,7 +159,6 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 		}
 		return ingest.Agent{}, false
 	}}
-	s.ingest = s.verifier
 	rt := newRouter(s)
 	mux := rt.mux
 
@@ -218,32 +199,24 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	rt.handle(classScopedRead, "GET /api/v1/silences", s.handleListSilences)
 	rt.handle(classScopedWrite, "POST /api/v1/silences", s.handleCreateSilence)
 	rt.handle(classScopedWrite, "DELETE /api/v1/silences/{id}", s.handleDeleteSilence)
-	if s.events != nil {
-		rt.handle(classScopedRead, "GET /api/v1/alert-events", s.handleAlertEvents)
-	}
+	rt.handle(classScopedRead, "GET /api/v1/alert-events", s.handleAlertEvents)
 	rt.handle(classScopedRead, "GET /api/v1/agents", s.handleAgents)
 	rt.handle(classScopedRead, "GET /api/v1/paths", s.handlePaths)
-	if s.enrol != nil {
-		rt.handle(classGlobalAdmin, "PATCH /api/v1/agents/{id}", s.handleUpdateAgent)
-		rt.handle(classGlobalAdmin, "DELETE /api/v1/agents/{id}", s.handleDeleteAgent)
-		rt.handle(classGlobalAdmin, "GET /api/v1/agent-tokens", s.handleListEnrolTokens)
-		rt.handle(classGlobalAdmin, "POST /api/v1/agent-tokens", s.handleMintEnrolToken)
-		rt.handle(classGlobalAdmin, "DELETE /api/v1/agent-tokens/{id}", s.handleRevokeEnrolToken)
-		// Enrolment carries its own credential, so like the signed agent
-		// endpoints it sits outside the session middleware.
-		rt.handle(classAgentSigned, "POST /api/v1/agent/enrol", s.handleEnrol)
-	}
-	if s.config != nil {
-		// Declarative over the whole tree, so there is no scoped form of
-		// either: global admin, the same as the command line.
-		rt.handle(classGlobalAdmin, "GET /api/v1/config", s.handleConfigExport)
-		rt.handle(classGlobalAdmin, "PUT /api/v1/config", s.handleConfigImport)
-	}
-	if s.grants != nil {
-		rt.handle(classGlobalAdmin, "GET /api/v1/grants", s.handleGrants)
-		rt.handle(classGlobalAdmin, "POST /api/v1/grants", s.handleUpsertGrant)
-		rt.handle(classGlobalAdmin, "DELETE /api/v1/grants/{id}", s.handleDeleteGrant)
-	}
+	rt.handle(classGlobalAdmin, "PATCH /api/v1/agents/{id}", s.handleUpdateAgent)
+	rt.handle(classGlobalAdmin, "DELETE /api/v1/agents/{id}", s.handleDeleteAgent)
+	rt.handle(classGlobalAdmin, "GET /api/v1/agent-tokens", s.handleListEnrolTokens)
+	rt.handle(classGlobalAdmin, "POST /api/v1/agent-tokens", s.handleMintEnrolToken)
+	rt.handle(classGlobalAdmin, "DELETE /api/v1/agent-tokens/{id}", s.handleRevokeEnrolToken)
+	// Enrolment carries its own credential, so like the signed agent
+	// endpoints it sits outside the session middleware.
+	rt.handle(classAgentSigned, "POST /api/v1/agent/enrol", s.handleEnrol)
+	// Declarative over the whole tree, so there is no scoped form of
+	// either: global admin, the same as the command line.
+	rt.handle(classGlobalAdmin, "GET /api/v1/config", s.handleConfigExport)
+	rt.handle(classGlobalAdmin, "PUT /api/v1/config", s.handleConfigImport)
+	rt.handle(classGlobalAdmin, "GET /api/v1/grants", s.handleGrants)
+	rt.handle(classGlobalAdmin, "POST /api/v1/grants", s.handleUpsertGrant)
+	rt.handle(classGlobalAdmin, "DELETE /api/v1/grants/{id}", s.handleDeleteGrant)
 	// Signed agent endpoints (§9). These carry their own authentication, so
 	// they are deliberately outside the session middleware.
 	rt.handle(classAgentSigned, "POST /api/v1/ingest", s.handleIngest)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -15,19 +16,11 @@ import (
 // silence is shown to those who can see its target, a global one to anyone who
 // can read.
 func (s *server) handleListSilences(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"silences": []any{}})
-		return
-	}
 	sc, _, ok := s.withScope(w, r)
 	if !ok {
 		return
 	}
-	sils, err := s.alerts.ListSilences(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
+	sils := s.alerts.ListSilences()
 	now := time.Now().Unix()
 	out := make([]map[string]any, 0, len(sils))
 	for _, sl := range sils {
@@ -69,18 +62,11 @@ func (s *server) handleListSilences(w http.ResponseWriter, r *http.Request) {
 // to everything; narrowing it to a target and its subtree, an agent or a rule
 // is optional.
 func (s *server) handleCreateSilence(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		notFound(w)
-		return
-	}
+	// id, created_by and created_at are decoded with the rest and zeroed below,
+	// so a mistyped one is a 400.
 	var body struct {
-		TargetID  *int64 `json:"target_id"`
-		AgentID   *int64 `json:"agent_id"`
-		RuleID    *int64 `json:"rule_id"`
-		StartsAt  int64  `json:"starts_at"`
-		EndsAt    int64  `json:"ends_at"`
-		DurationS int64  `json:"duration_s"`
-		Reason    string `json:"reason"`
+		alert.Silence
+		DurationS int64 `json:"duration_s"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
 		badRequest(w, err)
@@ -88,14 +74,9 @@ func (s *server) handleCreateSilence(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().Unix()
-	sil := alert.Silence{
-		TargetID: body.TargetID,
-		AgentID:  body.AgentID,
-		RuleID:   body.RuleID,
-		StartsAt: body.StartsAt,
-		EndsAt:   body.EndsAt,
-		Reason:   body.Reason,
-	}
+	// The caller names the scope, window and reason; identity is the server's.
+	sil := body.Silence
+	sil.ID, sil.CreatedBy, sil.CreatedAt = 0, "", 0
 	if sil.StartsAt == 0 {
 		sil.StartsAt = now
 	}
@@ -138,26 +119,15 @@ func (s *server) handleCreateSilence(w http.ResponseWriter, r *http.Request) {
 // target it covers, so an editor of that subtree may cancel it and a viewer may
 // not.
 func (s *server) handleDeleteSilence(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		notFound(w)
-		return
-	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		badRequest(w, errors.New("bad silence id"))
 		return
 	}
-	sils, err := s.alerts.ListSilences(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
+	sils := s.alerts.ListSilences()
 	var found *alert.Silence
-	for i := range sils {
-		if sils[i].ID == id {
-			found = &sils[i]
-			break
-		}
+	if i := slices.IndexFunc(sils, func(sl alert.Silence) bool { return sl.ID == id }); i >= 0 {
+		found = &sils[i]
 	}
 	sc, targets, ok := s.withScope(w, r)
 	if !ok {

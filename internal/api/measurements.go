@@ -58,26 +58,8 @@ const (
 )
 
 func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	targetID, err := strconv.ParseInt(q.Get("target_id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target_id is required"})
-		return
-	}
-	agentID := store.LocalAgentID
-	if v := q.Get("agent_id"); v != "" {
-		if agentID, err = strconv.ParseInt(v, 10, 64); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad agent_id"})
-			return
-		}
-	}
-	from, to, err := timeRange(q.Get("from"), q.Get("to"))
-	if err != nil {
-		badRequestMsg(w, err.Error())
-		return
-	}
-
-	if !s.requireVisible(w, r, targetID) {
+	targetID, agentID, from, to, ok := s.seriesQuery(w, r)
+	if !ok {
 		return
 	}
 	// QueryRange materialises every row, samples decoded, before a byte is

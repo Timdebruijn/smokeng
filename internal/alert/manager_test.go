@@ -247,7 +247,7 @@ func TestSilenceSuppressesDeliveryNotTheFact(t *testing.T) {
 	}
 
 	// Lift it: what is still firing now delivers.
-	sils, _ := m.ListSilences(ctx)
+	sils := m.ListSilences()
 	if len(sils) != 1 {
 		t.Fatalf("ListSilences = %+v", sils)
 	}
@@ -382,16 +382,16 @@ func TestGoldenBaselineNeedsACaptureAndThenFires(t *testing.T) {
 	}
 
 	// The reference is what the UI overlays, and it is the captured one.
-	ref, kind, ok := m.ShapeReference(rule.ID, leafID, store.LocalAgentID)
-	if !ok || kind != "golden" || len(ref) != len(good) {
-		t.Fatalf("ShapeReference = (%d samples, %q, %v), want the captured golden reference", len(ref), kind, ok)
+	ref := m.ShapeReferenceDetail(rule.ID, leafID, store.LocalAgentID)
+	if !ref.OK || ref.Kind != "golden" || len(ref.Samples) != len(good) {
+		t.Fatalf("ShapeReferenceDetail = (%d samples, %q, %v), want the captured golden reference", len(ref.Samples), ref.Kind, ref.OK)
 	}
 
 	// Clearing it takes the rule back to having nothing to compare against.
 	if ok, err := m.ClearBaseline(ctx, rule.ID); err != nil || !ok {
 		t.Fatalf("ClearBaseline = %v, %v", ok, err)
 	}
-	if _, _, ok := m.ShapeReference(rule.ID, leafID, store.LocalAgentID); ok {
+	if m.ShapeReferenceDetail(rule.ID, leafID, store.LocalAgentID).OK {
 		t.Fatal("reference still available after clearing it")
 	}
 }

@@ -56,48 +56,35 @@ func ruleJSON(r *alert.Rule) map[string]any {
 // created without hysteresis would flap, so `for` and `clear_for` default to
 // three intervals rather than one.
 type rulePayload struct {
-	TargetID  *int64   `json:"target_id"`
-	Name      *string  `json:"name"`
-	Metric    *string  `json:"metric"`
-	Op        *string  `json:"op"`
-	Threshold *float64 `json:"threshold"`
-	For       *int     `json:"for_intervals"`
-	ClearFor  *int     `json:"clear_intervals"`
-	Enabled   *bool    `json:"enabled"`
-	Mode      *string  `json:"mode"`
-	Baseline  *string  `json:"baseline"`
+	TargetID  *int64          `json:"target_id"`
+	Name      *string         `json:"name"`
+	Metric    *alert.Metric   `json:"metric"`
+	Op        *alert.Op       `json:"op"`
+	Threshold *float64        `json:"threshold"`
+	For       *int            `json:"for_intervals"`
+	ClearFor  *int            `json:"clear_intervals"`
+	Enabled   *bool           `json:"enabled"`
+	Mode      *alert.Mode     `json:"mode"`
+	Baseline  *alert.Baseline `json:"baseline"`
 }
 
 func (p *rulePayload) applyTo(r *alert.Rule) {
-	if p.TargetID != nil {
-		r.TargetID = *p.TargetID
-	}
-	if p.Name != nil {
-		r.Name = *p.Name
-	}
-	if p.Metric != nil {
-		r.Metric = alert.Metric(*p.Metric)
-	}
-	if p.Op != nil {
-		r.Op = alert.Op(*p.Op)
-	}
-	if p.Threshold != nil {
-		r.Threshold = *p.Threshold
-	}
-	if p.For != nil {
-		r.For = *p.For
-	}
-	if p.ClearFor != nil {
-		r.ClearFor = *p.ClearFor
-	}
-	if p.Enabled != nil {
-		r.Enabled = *p.Enabled
-	}
-	if p.Mode != nil {
-		r.Mode = alert.Mode(*p.Mode)
-	}
-	if p.Baseline != nil {
-		r.Baseline = alert.Baseline(*p.Baseline)
+	set(&r.TargetID, p.TargetID)
+	set(&r.Name, p.Name)
+	set(&r.Metric, p.Metric)
+	set(&r.Op, p.Op)
+	set(&r.Threshold, p.Threshold)
+	set(&r.For, p.For)
+	set(&r.ClearFor, p.ClearFor)
+	set(&r.Enabled, p.Enabled)
+	set(&r.Mode, p.Mode)
+	set(&r.Baseline, p.Baseline)
+}
+
+// set overwrites *dst with *src when the payload carried the field.
+func set[T any](dst *T, src *T) {
+	if src != nil {
+		*dst = *src
 	}
 }
 
@@ -220,12 +207,6 @@ func (s *server) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 // handleFiringAlerts reports what is currently firing, as the manager sees
 // it — the same view the webhook has been told about.
 func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"alerts": []any{}, "enabled": false, "delivering": false,
-		})
-		return
-	}
 	sc, _, ok := s.withScope(w, r)
 	if !ok {
 		return
@@ -282,8 +263,7 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// EventStore is the slice of the store alert history needs. Optional, like the
-// rest: an instance whose store cannot keep history simply has no endpoint.
+// EventStore is the slice of the store alert history needs.
 type EventStore interface {
 	ListAlertEvents(ctx context.Context, limit int) ([]alert.Event, error)
 }
@@ -297,7 +277,7 @@ func (s *server) handleAlertEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	events, err := s.events.ListAlertEvents(r.Context(), limit)
+	events, err := s.st.ListAlertEvents(r.Context(), limit)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -327,10 +307,6 @@ func (s *server) handleAlertEvents(w http.ResponseWriter, r *http.Request) {
 // attention, so a person can say "seen, handling it" without editing the rule
 // or waiting for the condition to resolve.
 func (s *server) handleAckAlert(w http.ResponseWriter, r *http.Request) {
-	if s.alerts == nil {
-		notFound(w)
-		return
-	}
 	var body struct {
 		RuleID   int64 `json:"rule_id"`
 		TargetID int64 `json:"target_id"`
