@@ -55,7 +55,8 @@
 
 /* Accessibility menu and the firing bell, both in the header. */
 .a11y,
-.bell {
+.bell,
+.usermenu {
   position: relative;
 }
 
@@ -73,7 +74,11 @@
   cursor: pointer;
 }
 
-.a11y-row:hover {
+.a11y-row:hover,
+.bell-row:hover,
+.popover-item:hover,
+.side-leaf:hover,
+.health-row:hover {
   background: var(--card2);
 }
 
@@ -128,10 +133,6 @@
   color: var(--fg);
   cursor: pointer;
   font: inherit;
-}
-
-.bell-row:hover {
-  background: var(--card2);
 }
 
 .bell-rule {
@@ -194,27 +195,6 @@ h1 {
   margin: 0.5rem 0;
 }
 
-.controls {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.controls button {
-  font: inherit;
-  font-size: 0.85rem;
-  padding: 0.25rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dim);
-  cursor: pointer;
-}
-
-.controls button.active {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
 .plot {
   margin-top: 1.25rem;
 }
@@ -247,7 +227,8 @@ h1 {
   cursor: help;
 }
 
-.plot-stack {
+.plot-stack,
+.series-canvas {
   position: relative;
   cursor: crosshair;
 }
@@ -258,37 +239,17 @@ h1 {
   border-radius: 6px;
 }
 
-.plot-stack .overlay {
+.plot-stack .overlay,
+.series-canvas .series-overlay {
   position: absolute;
   inset: 0;
   border-color: transparent;
   pointer-events: none;
 }
 
-.range {
-  margin: 0.35rem 0 0;
-  font-size: 0.8rem;
-  color: var(--dim);
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.range .hint {
-  opacity: 0.65;
-}
-
-button.link {
-  font: inherit;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--accent);
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-.error {
+.error,
+.mono.bad,
+.stat-value .bad {
   color: var(--bad);
 }
 
@@ -297,15 +258,6 @@ button.link {
 .danger {
   color: var(--bad);
   border-color: color-mix(in srgb, var(--bad) 40%, transparent);
-}
-
-.subbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.25rem;
 }
 
 /* Admin: tree on the left, detail on the right. */
@@ -345,7 +297,8 @@ button.link {
   cursor: pointer;
 }
 
-.tree-row:last-child {
+.tree-row:last-child,
+.setting-line:last-child {
   border-bottom: none;
 }
 
@@ -353,7 +306,8 @@ button.link {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-.tree-row .group {
+.tree-row .group,
+.rule-name {
   font-weight: 600;
 }
 
@@ -409,7 +363,9 @@ button.link {
 .field select,
 .settings input,
 .add-child input,
-.add-child select {
+.add-child select,
+.rule-form select,
+.alerts input {
   font: inherit;
   font-size: 0.85rem;
   padding: 0.2rem 0.4rem;
@@ -549,16 +505,6 @@ button.link {
 }
 
 .rule-form input,
-.rule-form select {
-  font: inherit;
-  font-size: 0.85rem;
-  padding: 0.2rem 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--fg);
-}
-
 a.button {
   font-size: 0.85rem;
   padding: 0.25rem 0.7rem;
@@ -566,16 +512,6 @@ a.button {
   border-radius: 6px;
   color: var(--accent);
   text-decoration: none;
-}
-
-.alerts input {
-  font: inherit;
-  font-size: 0.85rem;
-  padding: 0.2rem 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--fg);
 }
 
 /* Agents: the minted token is shown once, so this box is deliberately louder
@@ -735,10 +671,6 @@ a.button {
   flex: 1;
 }
 
-.usermenu {
-  position: relative;
-}
-
 .chip-button {
   display: flex;
   align-items: center;
@@ -811,10 +743,6 @@ a.button {
   font-size: 13px;
 }
 
-.popover-item:hover {
-  background: var(--card2);
-}
-
 /* ── Cards, the surface everything else sits on ────────────────────────── */
 
 .card {
@@ -849,7 +777,8 @@ a.button {
   margin-bottom: 10px;
 }
 
-.section-card-title {
+.section-card-title,
+.plot-title {
   font-size: 14px;
   font-weight: 600;
 }
@@ -957,10 +886,6 @@ a.button {
   cursor: pointer;
 }
 
-.side-leaf:hover {
-  background: var(--card2);
-}
-
 .side-leaf input {
   margin: 0;
   accent-color: var(--accent);
@@ -991,7 +916,8 @@ a.button {
   cursor: pointer;
 }
 
-.icon-button:hover {
+.icon-button:hover,
+.search-button:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -1067,11 +993,6 @@ a.button {
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 8px;
-}
-
-.plot-title {
-  font-size: 14px;
-  font-weight: 600;
 }
 
 .dot {
@@ -1163,10 +1084,6 @@ a.button {
   font-family: var(--mono);
 }
 
-.stat-value.bad {
-  color: var(--bad);
-}
-
 .detail-plot {
   padding: 12px 14px 4px;
 }
@@ -1201,12 +1118,14 @@ a.button {
   align-items: start;
 }
 
-.detail-side {
+.detail-side,
+.overview-side {
   display: grid;
   gap: 12px;
 }
 
-.panel {
+.panel,
+.panel-pad {
   padding: 14px 16px;
 }
 
@@ -1229,17 +1148,9 @@ a.button {
   border-bottom: 1px solid var(--border);
 }
 
-.setting-line:last-child {
-  border-bottom: none;
-}
-
 .setting-label {
   flex: 0 0 10em;
   color: var(--dim);
-}
-
-.rule-name {
-  font-weight: 600;
 }
 
 .pill-row {
@@ -1301,10 +1212,6 @@ a.button {
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
 }
 
-.stat-value .bad {
-  color: var(--bad);
-}
-
 .stat-value .warn {
   color: var(--warn);
 }
@@ -1314,11 +1221,6 @@ a.button {
   grid-template-columns: repeat(auto-fit, minmax(min(430px, 100%), 1fr));
   gap: 12px;
   align-items: start;
-}
-
-.overview-side {
-  display: grid;
-  gap: 12px;
 }
 
 .panel-head {
@@ -1333,10 +1235,6 @@ a.button {
   font-size: 14px;
   margin: 0;
   font-weight: 600;
-}
-
-.panel-pad {
-  padding: 14px 16px;
 }
 
 .health-row,
@@ -1358,10 +1256,6 @@ a.button {
   cursor: pointer;
   color: var(--fg);
   font: inherit;
-}
-
-.health-row:hover {
-  background: var(--card2);
 }
 
 .health-name {
@@ -1400,10 +1294,6 @@ a.button {
 
 .mono.dimmed {
   color: var(--dim);
-}
-
-.mono.bad {
-  color: var(--bad);
 }
 
 .quiet-line {
@@ -1463,7 +1353,8 @@ a.button {
   font-size: 13px;
 }
 
-.activity-what {
+.activity-what,
+.bell-item .bell-row {
   flex: 1;
   min-width: 0;
 }
@@ -1521,7 +1412,8 @@ a.button {
   margin-top: 8px;
 }
 
-.modal textarea:focus {
+.modal textarea:focus,
+.palette input:focus {
   border-color: var(--accent);
 }
 
@@ -1553,11 +1445,6 @@ a.button {
   color: var(--dim);
   cursor: pointer;
   font-size: 13px;
-}
-
-.search-button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 .search-button kbd {
@@ -1593,10 +1480,6 @@ a.button {
   font-size: 14px;
   outline: none;
   margin-bottom: 8px;
-}
-
-.palette input:focus {
-  border-color: var(--accent);
 }
 
 .palette-item {
@@ -1681,11 +1564,6 @@ a.button {
   gap: 0.4rem;
 }
 
-.bell-item .bell-row {
-  flex: 1;
-  min-width: 0;
-}
-
 /* An acknowledged alert is still firing, so it stays visible — just dimmed, to
    say "seen, not gone". */
 .bell-item.acked {
@@ -1727,24 +1605,12 @@ a.button {
   white-space: nowrap;
 }
 
-.series-canvas {
-  position: relative;
-  cursor: crosshair;
-}
-
 .series-canvas canvas {
   display: block;
   width: 100%;
   height: 100%;
   border: 1px solid var(--border);
   border-radius: 6px;
-}
-
-.series-canvas .series-overlay {
-  position: absolute;
-  inset: 0;
-  border-color: transparent;
-  pointer-events: none;
 }
 
 /* Sits over the empty canvas rather than replacing it, so the axis frame still
