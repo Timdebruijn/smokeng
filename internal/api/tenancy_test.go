@@ -839,6 +839,7 @@ func TestAuthorIsShownOnlyToWhoMayChangeTheNode(t *testing.T) {
 	rule := alert.Rule{ID: f.ruleA, TargetID: f.groupA, Name: "shape"}
 	acked := alert.Alert{Rule: &rule, TargetID: f.hostA, Firing: true, Since: time.Now(), Acked: true, AckedBy: who, AckedAt: time.Now()}
 	firing := firingOverride{Manager: f.mgr, fire: []alert.Alert{acked}}
+	// The alert is only listed to someone who can see the rule's node.
 	viewOnParent := store.Grant{Group: "team-a-mixed", TargetID: f.groupA, Role: "viewer"}
 	if err := f.st.UpsertGrant(ctx, &viewOnParent); err != nil {
 		t.Fatal(err)
