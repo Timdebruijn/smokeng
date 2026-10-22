@@ -103,8 +103,8 @@ func (s *SQLite) DeleteAlertRule(ctx context.Context, id int64) error {
 // ListAlertStates returns the standing of every rule that has been evaluated.
 func (s *SQLite) ListAlertStates(ctx context.Context) ([]alert.State, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT rule_id, target_id, agent_id, firing, since, streak, last_ts, value,
-			acked_since, acked_at, acked_by
+		SELECT rule_id, target_id, agent_id, firing, COALESCE(since, 0), streak, COALESCE(last_ts, 0), value,
+			COALESCE(acked_since, 0), COALESCE(acked_at, 0), COALESCE(acked_by, '')
 		FROM alert_state`)
 	if err != nil {
 		return nil, err
@@ -113,15 +113,11 @@ func (s *SQLite) ListAlertStates(ctx context.Context) ([]alert.State, error) {
 	var out []alert.State
 	for rows.Next() {
 		var st alert.State
-		var since, lastTS, ackedSince, ackedAt sql.NullInt64
-		var ackedBy sql.NullString
 		if err := rows.Scan(&st.RuleID, &st.TargetID, &st.AgentID, &st.Firing,
-			&since, &st.Streak, &lastTS, &st.Value,
-			&ackedSince, &ackedAt, &ackedBy); err != nil {
+			&st.Since, &st.Streak, &st.LastTS, &st.Value,
+			&st.AckedSince, &st.AckedAt, &st.AckedBy); err != nil {
 			return nil, err
 		}
-		st.Since, st.LastTS = since.Int64, lastTS.Int64
-		st.AckedSince, st.AckedAt, st.AckedBy = ackedSince.Int64, ackedAt.Int64, ackedBy.String
 		out = append(out, st)
 	}
 	return out, rows.Err()

@@ -499,7 +499,7 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 			return 0, err
 		}
 		res, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.TS, m.Sent, m.Received,
-			m.Flags, blob, ptrOrNil(m.ICMPErr), ptrOrNil(m.SendErr))
+			m.Flags, blob, m.ICMPErr, m.SendErr)
 		if err != nil {
 			return 0, err
 		}
@@ -563,22 +563,13 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 	for rows.Next() {
 		m := Measurement{TargetID: targetID, AgentID: agentID}
 		var blob []byte
-		var icmpErr, sendErr sql.NullInt64
-		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &icmpErr, &sendErr); err != nil {
+		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &m.ICMPErr, &m.SendErr); err != nil {
 			return nil, err
 		}
 		// Counted from the column, before the blob is decoded, so the row that
 		// would cross the limit is never allocated.
 		if samples += m.Received; samples > maxSamplesPerRead {
 			return nil, tooLarge("samples", maxSamplesPerRead)
-		}
-		if icmpErr.Valid {
-			v := uint16(icmpErr.Int64)
-			m.ICMPErr = &v
-		}
-		if sendErr.Valid {
-			v := uint8(sendErr.Int64)
-			m.SendErr = &v
 		}
 		if m.Samples, err = enc.Decode(blob); err != nil {
 			return nil, fmt.Errorf("store: measurement (%d,%d,%d): %w", targetID, agentID, m.TS, err)
@@ -706,46 +697,13 @@ func listTargets(ctx context.Context, q queryer) ([]tree.Target, error) {
 
 func scanTarget(rows *sql.Rows) (tree.Target, error) {
 	var t tree.Target
-	var parentID sql.NullInt64
-	var host, af, title, notes, probeMode, agents sql.NullString
-	var probeType, dnsQuery, dnsRRType, httpPath, graphSeries sql.NullString
-	var intervalS, pings, burstGap, timeout, packetSize, dscp, traceInterval sql.NullInt64
-	var probePort, tlsSkipVerify, retention sql.NullInt64
-	err := rows.Scan(&t.ID, &parentID, &t.Name, &host, &af, &title, &notes,
-		&t.Hidden, &t.Enabled, &t.SortOrder, &intervalS, &pings, &probeMode,
-		&burstGap, &timeout, &packetSize, &dscp, &agents, &traceInterval,
-		&probeType, &probePort, &dnsQuery, &dnsRRType, &httpPath, &tlsSkipVerify, &retention,
-		&graphSeries)
-	if err != nil {
-		return t, err
-	}
-	if parentID.Valid {
-		t.ParentID = &parentID.Int64
-	}
-	t.Host = nullStr(host)
-	t.AddressFamily = nullStr(af)
-	t.Title = nullStr(title)
-	t.Notes = nullStr(notes)
-	t.Settings = tree.Settings{
-		IntervalS:        nullInt(intervalS),
-		PingsPerInterval: nullInt(pings),
-		ProbeMode:        nullStr(probeMode),
-		BurstGapMS:       nullInt(burstGap),
-		TimeoutMS:        nullInt(timeout),
-		PacketSize:       nullInt(packetSize),
-		DSCP:             nullInt(dscp),
-		Agents:           nullStr(agents),
-		TraceIntervalS:   nullInt(traceInterval),
-		ProbeType:        nullStr(probeType),
-		ProbePort:        nullInt(probePort),
-		DNSQuery:         nullStr(dnsQuery),
-		DNSRRType:        nullStr(dnsRRType),
-		HTTPPath:         nullStr(httpPath),
-		TLSSkipVerify:    nullBool(tlsSkipVerify),
-		RetentionS:       nullInt(retention),
-		GraphSeries:      nullStr(graphSeries),
-	}
-	return t, nil
+	st := &t.Settings
+	err := rows.Scan(&t.ID, &t.ParentID, &t.Name, &t.Host, &t.AddressFamily, &t.Title, &t.Notes,
+		&t.Hidden, &t.Enabled, &t.SortOrder, &st.IntervalS, &st.PingsPerInterval, &st.ProbeMode,
+		&st.BurstGapMS, &st.TimeoutMS, &st.PacketSize, &st.DSCP, &st.Agents, &st.TraceIntervalS,
+		&st.ProbeType, &st.ProbePort, &st.DNSQuery, &st.DNSRRType, &st.HTTPPath, &st.TLSSkipVerify,
+		&st.RetentionS, &st.GraphSeries)
+	return t, err
 }
 
 func (s *SQLite) UpsertTarget(ctx context.Context, t *tree.Target) error {
@@ -792,17 +750,17 @@ func upsertTarget(ctx context.Context, q idRunner, t *tree.Target) error {
 			tls_skip_verify = excluded.tls_skip_verify,
 			retention_s = excluded.retention_s,
 			graph_series = excluded.graph_series`,
-		t.ID, ptrOrNil(t.ParentID), t.Name, ptrOrNil(t.Host), ptrOrNil(t.AddressFamily),
-		ptrOrNil(t.Title), ptrOrNil(t.Notes), t.Hidden, t.Enabled, t.SortOrder,
-		ptrOrNil(t.Settings.IntervalS), ptrOrNil(t.Settings.PingsPerInterval),
-		ptrOrNil(t.Settings.ProbeMode), ptrOrNil(t.Settings.BurstGapMS),
-		ptrOrNil(t.Settings.TimeoutMS), ptrOrNil(t.Settings.PacketSize),
-		ptrOrNil(t.Settings.DSCP), ptrOrNil(t.Settings.Agents),
-		ptrOrNil(t.Settings.TraceIntervalS),
-		ptrOrNil(t.Settings.ProbeType), ptrOrNil(t.Settings.ProbePort),
-		ptrOrNil(t.Settings.DNSQuery), ptrOrNil(t.Settings.DNSRRType),
-		ptrOrNil(t.Settings.HTTPPath), ptrOrNil(t.Settings.TLSSkipVerify),
-		ptrOrNil(t.Settings.RetentionS), ptrOrNil(t.Settings.GraphSeries))
+		t.ID, t.ParentID, t.Name, t.Host, t.AddressFamily,
+		t.Title, t.Notes, t.Hidden, t.Enabled, t.SortOrder,
+		t.Settings.IntervalS, t.Settings.PingsPerInterval,
+		t.Settings.ProbeMode, t.Settings.BurstGapMS,
+		t.Settings.TimeoutMS, t.Settings.PacketSize,
+		t.Settings.DSCP, t.Settings.Agents,
+		t.Settings.TraceIntervalS,
+		t.Settings.ProbeType, t.Settings.ProbePort,
+		t.Settings.DNSQuery, t.Settings.DNSRRType,
+		t.Settings.HTTPPath, t.Settings.TLSSkipVerify,
+		t.Settings.RetentionS, t.Settings.GraphSeries)
 	if err != nil {
 		return err
 	}
@@ -896,40 +854,4 @@ func (s *SQLite) LastResolution(ctx context.Context, targetID int64) (string, er
 		return "", nil
 	}
 	return addr, err
-}
-
-func nullStr(v sql.NullString) *string {
-	if !v.Valid {
-		return nil
-	}
-	s := v.String
-	return &s
-}
-
-func nullInt(v sql.NullInt64) *int {
-	if !v.Valid {
-		return nil
-	}
-	i := int(v.Int64)
-	return &i
-}
-
-// nullBool reads a boolean stored the way SQLite stores one: as an integer.
-// Scanning into sql.NullBool would work with today's driver, but going through
-// the integer the column actually holds keeps the mapping explicit and does
-// not depend on a driver's willingness to convert.
-func nullBool(v sql.NullInt64) *bool {
-	if !v.Valid {
-		return nil
-	}
-	b := v.Int64 != 0
-	return &b
-}
-
-// ptrOrNil converts a *T into a driver value: the pointee, or SQL NULL.
-func ptrOrNil[T any](p *T) any {
-	if p == nil {
-		return nil
-	}
-	return *p
 }
