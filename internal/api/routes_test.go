@@ -20,7 +20,7 @@ import (
 func TestEveryRouteIsClassified(t *testing.T) {
 	st := seededStore(t)
 	h := New(st, Options{Alerts: alert.NewManager(st, nil), Auth: &fakeAuth{}}, fstest.MapFS{})
-	built := h.(*handler).srv.routes.classified()
+	built := h.(*handler).srv.routes.classes
 
 	want := map[string]routeClass{
 		"GET /healthz":                             classPublic,
@@ -87,7 +87,7 @@ func TestEveryRouteIsClassified(t *testing.T) {
 func TestPublicRoutesAreOnlyTheHarmlessOnes(t *testing.T) {
 	st := seededStore(t)
 	h := New(st, Options{Alerts: alert.NewManager(st, nil), Auth: &fakeAuth{}}, fstest.MapFS{})
-	built := h.(*handler).srv.routes.classified()
+	built := h.(*handler).srv.routes.classes
 
 	var public []string
 	for pattern, class := range built {
@@ -113,11 +113,11 @@ func TestPublicRoutesAreOnlyTheHarmlessOnes(t *testing.T) {
 func TestMetricsIsAdminUnlessOpened(t *testing.T) {
 	st := seededStore(t)
 	closed := New(st, Options{Alerts: alert.NewManager(st, nil), Auth: &fakeAuth{}}, fstest.MapFS{})
-	if got := closed.(*handler).srv.routes.classified()["GET /metrics"]; got != classGlobalAdmin {
+	if got := closed.(*handler).srv.routes.classes["GET /metrics"]; got != classGlobalAdmin {
 		t.Errorf("GET /metrics = %q, want %q", got, classGlobalAdmin)
 	}
 	open := New(st, Options{Alerts: alert.NewManager(st, nil), Auth: &fakeAuth{}, MetricsPublic: true}, fstest.MapFS{})
-	if got := open.(*handler).srv.routes.classified()["GET /metrics"]; got != classMetricsPublic {
+	if got := open.(*handler).srv.routes.classes["GET /metrics"]; got != classMetricsPublic {
 		t.Errorf("GET /metrics with MetricsPublic = %q, want %q", got, classMetricsPublic)
 	}
 }

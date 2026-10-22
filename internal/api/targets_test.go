@@ -228,3 +228,21 @@ func TestPatchSetsClearsAndRejects(t *testing.T) {
 		t.Fatalf("wrong type should be refused with the key: %v", err)
 	}
 }
+
+// Paths and measurements share seriesQuery, so both refuse the same bad input.
+func TestSeriesRoutesRefuseBadQuery(t *testing.T) {
+	h, _ := newTestServer(t)
+	for _, route := range []string{"/api/v1/measurements", "/api/v1/paths"} {
+		for query, want := range map[string]string{
+			"":                        "target_id is required",
+			"?target_id=1&agent_id=x": "bad agent_id",
+			"?target_id=1&from=nope":  "",
+		} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("GET", route+query, nil))
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
+				t.Errorf("%s%s = %d %s, want 400 %q", route, query, rec.Code, rec.Body, want)
+			}
+		}
+	}
+}

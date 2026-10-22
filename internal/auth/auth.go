@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -234,20 +235,8 @@ func roleFromClaims(claims map[string]any, claimName, adminValue string) Role {
 	if adminValue == "" {
 		return RoleAdmin
 	}
-	switch v := claims[claimName].(type) {
-	case string:
-		// Some providers send a space- or comma-separated string.
-		for _, item := range strings.FieldsFunc(v, func(r rune) bool { return r == ' ' || r == ',' }) {
-			if item == adminValue {
-				return RoleAdmin
-			}
-		}
-	case []any:
-		for _, item := range v {
-			if s, ok := item.(string); ok && s == adminValue {
-				return RoleAdmin
-			}
-		}
+	if slices.Contains(groupsFromClaims(claims, claimName), adminValue) {
+		return RoleAdmin
 	}
 	return RoleViewer
 }

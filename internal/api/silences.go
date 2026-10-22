@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -62,13 +63,8 @@ func (s *server) handleListSilences(w http.ResponseWriter, r *http.Request) {
 // is optional.
 func (s *server) handleCreateSilence(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		TargetID  *int64 `json:"target_id"`
-		AgentID   *int64 `json:"agent_id"`
-		RuleID    *int64 `json:"rule_id"`
-		StartsAt  int64  `json:"starts_at"`
-		EndsAt    int64  `json:"ends_at"`
-		DurationS int64  `json:"duration_s"`
-		Reason    string `json:"reason"`
+		alert.Silence
+		DurationS int64 `json:"duration_s"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
 		badRequest(w, err)
@@ -76,14 +72,9 @@ func (s *server) handleCreateSilence(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().Unix()
-	sil := alert.Silence{
-		TargetID: body.TargetID,
-		AgentID:  body.AgentID,
-		RuleID:   body.RuleID,
-		StartsAt: body.StartsAt,
-		EndsAt:   body.EndsAt,
-		Reason:   body.Reason,
-	}
+	// The caller names the scope, window and reason; identity is the server's.
+	sil := body.Silence
+	sil.ID, sil.CreatedBy, sil.CreatedAt = 0, "", 0
 	if sil.StartsAt == 0 {
 		sil.StartsAt = now
 	}
@@ -133,11 +124,8 @@ func (s *server) handleDeleteSilence(w http.ResponseWriter, r *http.Request) {
 	}
 	sils := s.alerts.ListSilences()
 	var found *alert.Silence
-	for i := range sils {
-		if sils[i].ID == id {
-			found = &sils[i]
-			break
-		}
+	if i := slices.IndexFunc(sils, func(sl alert.Silence) bool { return sl.ID == id }); i >= 0 {
+		found = &sils[i]
 	}
 	sc, targets, ok := s.withScope(w, r)
 	if !ok {

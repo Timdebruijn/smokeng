@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -120,7 +121,7 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	if len(skipped) > 0 {
 		log.Printf("ingest: agent %q submitted %d measurement(s) for targets not assigned to it "+
 			"(%v); those were discarded and the rest of the batch accepted",
-			agent.Name, len(skipped), uniqueIDs(skipped))
+			agent.Name, len(skipped), slices.Compact(slices.Sorted(slices.Values(skipped))))
 	}
 	if future > 0 {
 		log.Printf("ingest: agent %q submitted %d measurement(s) timestamped in the future; "+
@@ -246,12 +247,7 @@ func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int
 }
 
 func assignedTo(list, name string) bool {
-	for _, a := range strings.Fields(list) {
-		if a == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(list), name)
 }
 
 // handleAgents lists enrolled agents for the UI.
@@ -330,17 +326,4 @@ func agentVersion(r *http.Request) string {
 		}
 	}
 	return v
-}
-
-// uniqueIDs keeps a log line short when a whole batch names the same target.
-func uniqueIDs(ids []int64) []int64 {
-	seen := map[int64]bool{}
-	out := make([]int64, 0, len(ids))
-	for _, id := range ids {
-		if !seen[id] {
-			seen[id] = true
-			out = append(out, id)
-		}
-	}
-	return out
 }

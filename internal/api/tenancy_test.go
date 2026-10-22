@@ -469,7 +469,7 @@ func TestNoReadRouteNamesAnythingOutsideTheScope(t *testing.T) {
 		"GET /api/v1/paths":           {{"/api/v1/paths?target_id=" + num(f.hostA), "10.99.0.1"}},
 	}
 
-	built := New(f.st, Options{Alerts: f.mgr}, fstest.MapFS{}).(*handler).srv.routes.classified()
+	built := New(f.st, Options{Alerts: f.mgr}, fstest.MapFS{}).(*handler).srv.routes.classes
 	for pattern, class := range built {
 		if class == classScopedRead && strings.HasPrefix(pattern, "GET ") && requests[pattern] == nil {
 			t.Errorf("%s is a scoped read route with no request in this test: add it, so that what it says is checked", pattern)

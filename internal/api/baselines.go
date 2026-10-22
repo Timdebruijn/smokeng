@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -151,7 +151,7 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("no measurements in that window: there is nothing to capture as a reference"))
 		return
 	}
-	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	slices.Sort(samples)
 
 	b := alert.Baselined{
 		RuleID: ruleID, TargetID: body.TargetID, AgentID: agentID,

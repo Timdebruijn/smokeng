@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -245,12 +245,7 @@ func (s *server) handleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 				return store.TargetChange{}, refuse(func() { sc.deny(w, dest) })
 			}
 		}
-		idx := -1
-		for i := range targets {
-			if targets[i].ID == id {
-				idx = i
-			}
-		}
+		idx := slices.IndexFunc(targets, func(t tree.Target) bool { return t.ID == id })
 		if idx < 0 {
 			return store.TargetChange{}, refuse(func() { notFound(w) })
 		}
@@ -429,7 +424,7 @@ func (s *server) checkAgentNames(ctx context.Context, set agentSet, agents *stri
 		}
 	}
 	if len(unknown) > 0 {
-		sort.Strings(names)
+		slices.Sort(names)
 		return fmt.Errorf("no enrolled agent named %s; enrolled agents are: %s",
 			strings.Join(unknown, ", "), strings.Join(names, ", "))
 	}

@@ -226,9 +226,7 @@ func (sc *Scope) chain(id int64) []int64 {
 		cur = *n.ParentID
 	}
 	// Reverse: callers want root-first so "the highest grant" is the first hit.
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
+	slices.Reverse(out)
 	return out
 }
 

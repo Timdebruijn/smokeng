@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -152,14 +153,7 @@ func (s *server) unmeasuredTargets(ctx context.Context) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		measured := false
-		for _, name := range strings.Fields(res.Agents.Effective) {
-			if known[name] {
-				measured = true
-				break
-			}
-		}
-		if !measured {
+		if !slices.ContainsFunc(strings.Fields(res.Agents.Effective), func(name string) bool { return known[name] }) {
 			n++
 		}
 	}
