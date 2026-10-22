@@ -64,7 +64,6 @@ type server struct {
 	st     Store
 	alerts AlertView
 	auth   Authenticator
-	config ConfigStore
 	routes *router
 	// defaultRole is what an authenticated caller with no grant gets. It is a
 	// setting rather than a consequence, so that adding the first grant does
@@ -130,7 +129,7 @@ type Options struct {
 func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	authenticator := opts.Auth
 	s := &server{
-		st: st, alerts: opts.Alerts, auth: authenticator, config: st,
+		st: st, alerts: opts.Alerts, auth: authenticator,
 		probe: opts.Probe, version: opts.Version, agentCAs: opts.AgentCAs,
 	}
 	s.externalURL = opts.ExternalURL
