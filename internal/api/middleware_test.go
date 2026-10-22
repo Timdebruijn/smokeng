@@ -33,7 +33,7 @@ func (f *fakeAuth) Routes(*http.ServeMux) {}
 func authedServer(t *testing.T, sess *auth.Session) http.Handler {
 	t.Helper()
 	st := seededStore(t)
-	return New(st, Options{Auth: &fakeAuth{session: sess}}, fstest.MapFS{})
+	return New(st, Options{Alerts: alert.NewManager(st, nil), Auth: &fakeAuth{session: sess}}, fstest.MapFS{})
 }
 
 // seededStore has a target and a rule to act on. A refusal only proves
@@ -160,7 +160,7 @@ func TestUnauthenticatedModeReportsItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	h := New(st, Options{}, fstest.MapFS{})
+	h := New(st, Options{Alerts: alert.NewManager(st, nil)}, fstest.MapFS{})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/me", nil))
@@ -184,14 +184,14 @@ func TestMetricsAccess(t *testing.T) {
 	}
 	defer st.Close()
 
-	guarded := New(st, Options{Auth: &fakeAuth{}}, fstest.MapFS{})
+	guarded := New(st, Options{Alerts: alert.NewManager(st, nil), Auth: &fakeAuth{}}, fstest.MapFS{})
 	rec := httptest.NewRecorder()
 	guarded.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("anonymous /metrics = %d, want 401 by default", rec.Code)
 	}
 
-	open := New(st, Options{Auth: &fakeAuth{}, MetricsPublic: true}, fstest.MapFS{})
+	open := New(st, Options{Alerts: alert.NewManager(st, nil), Auth: &fakeAuth{}, MetricsPublic: true}, fstest.MapFS{})
 	rec = httptest.NewRecorder()
 	open.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	if rec.Code != http.StatusOK {
@@ -214,7 +214,7 @@ func TestMetricsCarryNoMeasurementData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := New(st, Options{Version: "test"}, fstest.MapFS{})
+	h := New(st, Options{Alerts: alert.NewManager(st, nil), Version: "test"}, fstest.MapFS{})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	body := rec.Body.String()

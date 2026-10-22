@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchSeries, type Series } from './api'
 import { fmtUs } from './format'
+import { useWidth } from './shared'
 
 /**
  * Several series' pooled medians on one axis.
@@ -84,7 +85,7 @@ export default function Compare({
   // or the "Larger text" a11y zoom. Observe the box and feed it back in, or
   // the backing store keeps its old pixel size and the browser stretches a
   // stale bitmap. Plot.tsx does exactly this; Compare must too.
-  const [boxW, setBoxW] = useState(0)
+  const boxW = useWidth(canvasRef)
   // The axis reads --dim/--border via getComputedStyle at draw time, so a
   // change to the accessibility contrast or colour-blind setting — which
   // rewrites those tokens on the root — leaves the gridlines their old colour
@@ -120,23 +121,12 @@ export default function Compare({
   }, [keys, from, to, refreshKey])
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ro = new ResizeObserver(([entry]) => {
-      setBoxW(Math.round(entry.contentRect.width))
-    })
-    ro.observe(canvas)
-    setBoxW(canvas.clientWidth)
-
     const mo = new MutationObserver(() => setTheme((t) => t + 1))
     mo.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-contrast', 'data-cb', 'data-theme'],
     })
-    return () => {
-      ro.disconnect()
-      mo.disconnect()
-    }
+    return () => mo.disconnect()
   }, [])
 
   useEffect(() => {

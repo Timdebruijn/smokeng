@@ -28,11 +28,7 @@ type Store interface {
 	ListAlertBaselines(ctx context.Context) ([]Baselined, error)
 	SaveAlertBaseline(ctx context.Context, b *Baselined) error
 	DeleteAlertBaseline(ctx context.Context, ruleID int64) (bool, error)
-}
-
-// EventLog records transitions. It is optional so a store that cannot keep
-// history still alerts; the manager simply has nothing to write to.
-type EventLog interface {
+	// RecordAlertEvents appends the transition log.
 	RecordAlertEvents(ctx context.Context, events []Event) error
 }
 
@@ -539,14 +535,14 @@ func (m *Manager) ClearBaseline(ctx context.Context, ruleID int64) (bool, error)
 
 // Baselines reports the captured references, for the API to show what each
 // golden rule is comparing against.
-func (m *Manager) Baselines(context.Context) ([]Baselined, error) {
+func (m *Manager) Baselines() []Baselined {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Baselined, 0, len(m.goldenMeta))
 	for _, b := range m.goldenMeta {
 		out = append(out, b)
 	}
-	return out, nil
+	return out
 }
 
 // NearestRuleNode returns the node whose rules apply to a target: the target
@@ -583,8 +579,10 @@ type ShapeRef struct {
 	HasSource bool
 }
 
-// ShapeReferenceDetail is ShapeReference with the provenance of a golden
-// reference, taken under the same lock so the two cannot disagree.
+// ShapeReferenceDetail returns the distribution a shape rule is comparing
+// against for one series (captured for golden, pooled history for rolling) and,
+// for golden, the series it was captured from, read under one lock. OK is false
+// when there is nothing to compare against yet.
 func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64) ShapeRef {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -608,45 +606,16 @@ func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64) ShapeRef
 	return ShapeRef{Samples: s, Kind: "rolling", OK: len(s) > 0}
 }
 
-// ShapeReference returns the distribution a shape rule is currently comparing
-// against for one series: the captured reference for a golden rule, or the
-// pooled recent history for a rolling one. It is what the UI overlays against
-// the current interval, so a fired shape alert can be seen rather than taken on
-// the word of a z-score. ok is false when there is nothing to compare against
-// yet — a golden rule with no capture, or a rolling one still warming up.
-func (m *Manager) ShapeReference(ruleID, targetID, agentID int64) (samples []uint32, kind string, ok bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	r, exists := m.rules[ruleID]
-	if !exists || r.Metric != MetricShape {
-		return nil, "", false
-	}
-	if r.Baseline == BaselineGolden {
-		s := m.golden[ruleID]
-		return s, "golden", len(s) > 0
-	}
-	ss := m.shapes[stateKey{ruleID, targetID, agentID}]
-	if ss == nil {
-		return nil, "rolling", false
-	}
-	s := ss.pooled()
-	return s, "rolling", len(s) > 0
-}
-
 // ListSilences returns every silence, past and future, for the API to show.
-func (m *Manager) ListSilences(context.Context) ([]Silence, error) {
+func (m *Manager) ListSilences() []Silence {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Silence, len(m.silences))
 	copy(out, m.silences)
-	return out, nil
+	return out
 }
 
 func (m *Manager) record(ctx context.Context, alerts []Alert) {
-	sink, ok := m.st.(EventLog)
-	if !ok {
-		return
-	}
 	now := time.Now().Unix()
 	events := make([]Event, 0, len(alerts))
 	for _, a := range alerts {
@@ -660,7 +629,7 @@ func (m *Manager) record(ctx context.Context, alerts []Alert) {
 			Firing: a.Firing, RuleName: a.Rule.Name, Describes: a.Rule.Describe(), Value: a.Value,
 		})
 	}
-	if err := sink.RecordAlertEvents(ctx, events); err != nil {
+	if err := m.st.RecordAlertEvents(ctx, events); err != nil {
 		stdlog.Printf("alert: record %d transition(s): %v", len(events), err)
 	}
 }

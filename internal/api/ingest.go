@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,10 +40,6 @@ type AgentStore interface {
 // from. A rejection is answered with one generic status: telling a caller
 // which check failed hands them an oracle for guessing at the next one.
 func (s *server) agentAuth(w http.ResponseWriter, r *http.Request) (ingest.Agent, []byte, bool) {
-	if s.verifier == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return ingest.Agent{}, nil, false
-	}
 	parsed, err := ingest.Parse(r, maxIngestBody)
 	if err != nil {
 		log.Printf("ingest: rejected a request from %s: %v", s.clientIP(r), err)
@@ -124,7 +121,7 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	if len(skipped) > 0 {
 		log.Printf("ingest: agent %q submitted %d measurement(s) for targets not assigned to it "+
 			"(%v); those were discarded and the rest of the batch accepted",
-			agent.Name, len(skipped), uniqueIDs(skipped))
+			agent.Name, len(skipped), slices.Compact(slices.Sorted(slices.Values(skipped))))
 	}
 	if future > 0 {
 		log.Printf("ingest: agent %q submitted %d measurement(s) timestamped in the future; "+
@@ -147,7 +144,7 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	}
 	// Unsigned, and only display metadata about an agent whose identity the
 	// signature has already established — see TouchAgent.
-	if err := s.agents.TouchAgent(r.Context(), agent.ID, time.Now().Unix(),
+	if err := s.st.TouchAgent(r.Context(), agent.ID, time.Now().Unix(),
 		agentVersion(r)); err != nil {
 		log.Printf("ingest: recording last_seen for %q: %v", agent.Name, err)
 	}
@@ -250,12 +247,7 @@ func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int
 }
 
 func assignedTo(list, name string) bool {
-	for _, a := range strings.Fields(list) {
-		if a == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(list), name)
 }
 
 // handleAgents lists enrolled agents for the UI.
@@ -270,7 +262,7 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	agents, err := s.agents.ListAgents(r.Context())
+	agents, err := s.st.ListAgents(r.Context())
 	if err != nil {
 		internalError(w, err)
 		return
@@ -334,17 +326,4 @@ func agentVersion(r *http.Request) string {
 		}
 	}
 	return v
-}
-
-// uniqueIDs keeps a log line short when a whole batch names the same target.
-func uniqueIDs(ids []int64) []int64 {
-	seen := map[int64]bool{}
-	out := make([]int64, 0, len(ids))
-	for _, id := range ids {
-		if !seen[id] {
-			seen[id] = true
-			out = append(out, id)
-		}
-	}
-	return out
 }

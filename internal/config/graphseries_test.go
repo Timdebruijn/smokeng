@@ -30,7 +30,7 @@ address_family = "v4"
 probe_type = "irtt"
 graph_series = "ipdv_send ipdv_receive"
 `)
-	if _, err := Import(ctx, st, data, false, AllowUnknownAgents()); err != nil {
+	if _, err := Import(ctx, st, data, false, true); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 	tr, byPath := mustTree(t, st)
@@ -64,7 +64,7 @@ graph_series = "ipdv_send ipdv_receive"
 	// that wrote it under the wrong key, or dropped it from [defaults] while
 	// keeping it on target entries, passed.
 	st2 := open(t)
-	if _, err := Import(ctx, st2, out, false, AllowUnknownAgents()); err != nil {
+	if _, err := Import(ctx, st2, out, false, true); err != nil {
 		t.Fatalf("re-importing our own export: %v", err)
 	}
 	tr2, byPath2 := mustTree(t, st2)
@@ -102,7 +102,7 @@ func TestGraphSeriesRejectsUnknownName(t *testing.T) {
 host = "10.0.0.1"
 address_family = "v4"
 graph_series = "ipdv_sideways"
-`), false, AllowUnknownAgents())
+`), false, true)
 	if err == nil {
 		t.Fatal("an unknown series name was accepted")
 	}

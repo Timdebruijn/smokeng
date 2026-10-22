@@ -14,6 +14,8 @@ import {
   type SettingValue,
   type Target,
 } from './api'
+import { useAction } from './shared'
+import { orderedTargets } from './util'
 
 interface SettingDef {
   key: SettingKey
@@ -169,69 +171,23 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
   const [targets, setTargets] = useState<Target[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
   const [toml, setToml] = useState<'export' | 'import' | null>(null)
+  const load = useCallback(async () => {
+    const [list, enrolled] = await Promise.all([fetchTargets(), fetchAgents()])
+    setTargets(list)
+    setAgents(enrolled)
+    setSelectedId((cur) => (cur !== null && list.some((t) => t.id === cur) ? cur : (list[0]?.id ?? null)))
+  }, [])
+  const { error, busy: saving, reload, run } = useAction(load)
   // A viewer may look at the tree but not change it. The server enforces this
   // regardless; disabling the controls only saves them a refused request.
   const busy = saving || readOnly
-
-  const reload = useCallback(async () => {
-    try {
-      const [list, enrolled] = await Promise.all([fetchTargets(), fetchAgents()])
-      setTargets(list)
-      setAgents(enrolled)
-      setSelectedId((cur) => (cur !== null && list.some((t) => t.id === cur) ? cur : (list[0]?.id ?? null)))
-    } catch (e) {
-      setError((e as Error).message)
-    }
-  }, [])
 
   useEffect(() => {
     void reload()
   }, [reload])
 
-  // Runs a mutation, surfaces its validation message, and refreshes — the
-  // server is the authority on what the tree now looks like.
-  const run = useCallback(
-    async (fn: () => Promise<unknown>) => {
-      setSaving(true)
-      setError(null)
-      try {
-        await fn()
-        await reload()
-        return true
-      } catch (e) {
-        setError((e as Error).message)
-        return false
-      } finally {
-        setSaving(false)
-      }
-    },
-    [reload],
-  )
-
-  // Depth-first order with indentation, so the tree reads as a tree.
-  const ordered = useMemo(() => {
-    const children = new Map<number | null, Target[]>()
-    for (const t of targets) {
-      const list = children.get(t.parent_id) ?? []
-      list.push(t)
-      children.set(t.parent_id, list)
-    }
-    for (const list of children.values()) {
-      list.sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
-    }
-    const out: { target: Target; depth: number }[] = []
-    const walk = (parent: number | null, depth: number) => {
-      for (const t of children.get(parent) ?? []) {
-        out.push({ target: t, depth })
-        walk(t.id, depth + 1)
-      }
-    }
-    walk(null, 0)
-    return out
-  }, [targets])
+  const ordered = useMemo(() => orderedTargets(targets), [targets])
 
   const selected = targets.find((t) => t.id === selectedId) ?? null
 
@@ -606,7 +562,7 @@ function SettingRow({
           <span className="chip">inherited from outside your scope</span>
         ) : (
           <span className="chip">
-            inherited from <code>{value.source.path === '/' ? '/' : value.source.path}</code>
+            inherited from <code>{value.source.path}</code>
           </span>
         )}
       </td>

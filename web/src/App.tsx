@@ -12,29 +12,28 @@ import Compare, { type CompareSeries } from './Compare'
 import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
+import { RANGES, resolveSeries, type PlotSeries } from './util'
 
-const RANGES: { label: string; seconds: number }[] = [
-  { label: '15m', seconds: 15 * 60 },
-  { label: '1h', seconds: 3600 },
-  { label: '6h', seconds: 6 * 3600 },
-  { label: '24h', seconds: 24 * 3600 },
-]
 const REFRESH_MS = 10_000
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
+type HeaderMenu = 'user' | 'a11y' | 'bell' | null
 
 export default function App() {
   const [view, setView] = useState<View>('overview')
-  const [userMenuOpen, setUserMenuOpen] = useState(false)
   // One popover at a time. Two open at once overlap in the corner they share,
   // and the one underneath cannot be reached without closing the other.
-  const [headerMenu, setHeaderMenu] = useState<'a11y' | 'bell' | null>(null)
+  const [menu, setMenu] = useState<HeaderMenu>(null)
   const [a11y, toggleA11y] = useA11y()
   // Which target the detail screen is showing. Detail is reached from a plot,
   // never from the tab bar, so it is not one of the tabs.
   const [detailId, setDetailId] = useState<number | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
+  const openDetail = (id: number) => {
+    setDetailId(id)
+    setView('detail')
+  }
 
   useEffect(() => {
     fetchMe()
@@ -73,18 +72,10 @@ export default function App() {
         view={view}
         views={views}
         onView={setView}
-        userMenuOpen={userMenuOpen}
-        onToggleUser={() => {
-          setUserMenuOpen((v) => !v)
-          setHeaderMenu(null)
-        }}
+        menu={menu}
+        onMenu={setMenu}
         a11y={a11y}
         onToggleA11y={toggleA11y}
-        headerMenu={headerMenu}
-        onHeaderMenu={(m) => {
-          setHeaderMenu(m)
-          if (m !== null) setUserMenuOpen(false)
-        }}
         onOpenPalette={() => setPaletteOpen(true)}
       />
       {paletteOpen && (
@@ -96,22 +87,14 @@ export default function App() {
             run: () => setView(v),
           }))}
           onClose={() => setPaletteOpen(false)}
-          onOpenDetail={(id) => {
-            setDetailId(id)
-            setView('detail')
-          }}
+          onOpenDetail={openDetail}
         />
       )}
       <main>
       {/* Keyed by what is shown, so after a failure the next screen starts clean. */}
       <ErrorBoundary key={view === 'detail' ? `detail-${detailId}` : view} what={view === 'detail' ? 'this target' : `the ${view} screen`}>
       {view === 'overview' ? (
-        <Overview
-          onOpenDetail={(id) => {
-            setDetailId(id)
-            setView('detail')
-          }}
-        />
+        <Overview onOpenDetail={openDetail} />
       ) : view === 'detail' && detailId !== null ? (
         <DetailRoute
           targetId={detailId}
@@ -119,12 +102,7 @@ export default function App() {
           onEdit={() => setView('targets')}
         />
       ) : view === 'graphs' ? (
-        <Graphs
-          onOpenDetail={(id) => {
-            setDetailId(id)
-            setView('detail')
-          }}
-        />
+        <Graphs onOpenDetail={openDetail} />
       ) : view === 'targets' ? (
         <Admin readOnly={!isAdmin} />
       ) : view === 'alerts' ? (
@@ -175,25 +153,21 @@ function AppHeader({
   view,
   views,
   onView,
-  userMenuOpen,
-  onToggleUser,
   onOpenPalette,
   a11y,
   onToggleA11y,
-  headerMenu,
-  onHeaderMenu,
+  menu,
+  onMenu,
 }: {
   me: Me | null
   view: View
   views: View[]
   onView: (v: View) => void
-  userMenuOpen: boolean
-  onToggleUser: () => void
   onOpenPalette: () => void
   a11y: A11yState
   onToggleA11y: (k: keyof A11yState) => void
-  headerMenu: 'a11y' | 'bell' | null
-  onHeaderMenu: (m: 'a11y' | 'bell' | null) => void
+  menu: HeaderMenu
+  onMenu: (m: HeaderMenu) => void
 }) {
   const who = me?.name ?? me?.email ?? me?.subject ?? ''
   return (
@@ -219,25 +193,25 @@ function AppHeader({
         <A11yMenu
           state={a11y}
           onToggle={onToggleA11y}
-          open={headerMenu === 'a11y'}
-          onOpenChange={(o) => onHeaderMenu(o ? 'a11y' : null)}
+          open={menu === 'a11y'}
+          onOpenChange={(o) => onMenu(o ? 'a11y' : null)}
         />
         <Bell
-          open={headerMenu === 'bell'}
-          onOpenChange={(o) => onHeaderMenu(o ? 'bell' : null)}
+          open={menu === 'bell'}
+          onOpenChange={(o) => onMenu(o ? 'bell' : null)}
           onOpenAlerts={() => {
-            onHeaderMenu(null)
+            onMenu(null)
             onView('alerts')
           }}
         />
         {me?.auth_enabled && me.authenticated && (
           <div className="usermenu">
-            <button className="chip-button" onClick={onToggleUser}>
+            <button className="chip-button" onClick={() => onMenu(menu === 'user' ? null : 'user')}>
               <span className="avatar">{(who || '?').slice(0, 1).toUpperCase()}</span>
               <span className="who">{who}</span>
               <span className="role-tag">{me.role}</span>
             </button>
-            {userMenuOpen && (
+            {menu === 'user' && (
               <div className="popover">
                 <p className="popover-title">{me.email ?? me.subject}</p>
                 <p className="hint small">Signed in via OIDC · {me.role}</p>
@@ -255,17 +229,6 @@ function AppHeader({
       </div>
     </header>
   )
-}
-
-interface PlotSeries {
-  target: Target
-  /**
-   * Null when the target's configured agent name(s) name nobody enrolled:
-   * there is no series to draw, and that absence is itself the thing to show.
-   */
-  agentId: number | null
-  /** The agent to attribute the series to, or the unresolved names verbatim. */
-  agentName?: string
 }
 
 function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
@@ -342,32 +305,8 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
     })
   const spanLabel = `${fmtSpan(to - from)} · ${new Date(from * 1000).toLocaleTimeString()} → ${new Date(to * 1000).toLocaleTimeString()}`
 
-  // One plot per (target, agent) pair: the same target seen from two vantage
-  // points is two different measurements, and averaging them would destroy
-  // the very thing that makes a second vantage point worth having.
-  const byID = new Map(agents.map((a) => [a.name, a.id]))
-  const series = shown.flatMap((t): PlotSeries[] => {
-    const names = (t.settings.agents.effective || 'local').split(/\s+/).filter(Boolean)
-    const resolved = names.map((n) => ({ name: n, id: byID.get(n) })).filter((a) => a.id !== undefined)
-    // No fallback to the local agent. Querying agent 0 for a target assigned
-    // to someone else attributes one vantage point's measurements to another,
-    // which is the one thing this project will not do — and it made a target
-    // nobody measures look measured. The server counts these in
-    // smokeng_targets_unmeasured; the screen should agree with it.
-    //
-    // Dropping the target instead would only move the lie: a missing plot
-    // reads as "not selected", and the misconfiguration that nothing measures
-    // this target is precisely what the operator needs to see. So it keeps its
-    // place in the stack, with no series and a reason.
-    if (resolved.length === 0) {
-      return [{ target: t, agentId: null, agentName: names.join(' ') }]
-    }
-    return resolved.map((a) => ({
-      target: t,
-      agentId: a.id as number,
-      agentName: resolved.length > 1 ? a.name : undefined,
-    }))
-  })
+  const byName = new Map(agents.map((a) => [a.name, a.id]))
+  const series = shown.flatMap((t) => resolveSeries(t, byName))
 
   // A series with no enrolled agent has nothing to draw, and a legend entry
   // for an empty line would be a target that looks compared and is not.

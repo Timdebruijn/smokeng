@@ -469,7 +469,7 @@ func TestNoReadRouteNamesAnythingOutsideTheScope(t *testing.T) {
 		"GET /api/v1/paths":           {{"/api/v1/paths?target_id=" + num(f.hostA), "10.99.0.1"}},
 	}
 
-	built := New(f.st, Options{Alerts: f.mgr}, fstest.MapFS{}).(*handler).srv.routes.classified()
+	built := New(f.st, Options{Alerts: f.mgr}, fstest.MapFS{}).(*handler).srv.routes.classes
 	for pattern, class := range built {
 		if class == classScopedRead && strings.HasPrefix(pattern, "GET ") && requests[pattern] == nil {
 			t.Errorf("%s is a scoped read route with no request in this test: add it, so that what it says is checked", pattern)
@@ -548,7 +548,7 @@ func TestEditorMayOnlyNameAgentsInTheirScope(t *testing.T) {
 	}
 
 	// And an admin is still told what exists when they get it wrong.
-	admin := New(f.st, Options{}, fstest.MapFS{})
+	admin := New(f.st, Options{Alerts: alert.NewManager(f.st, nil)}, fstest.MapFS{})
 	code, body := call(t, admin, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"settings": map[string]any{"agents": "no-such-agent"}})
 	if code != http.StatusBadRequest || !strings.Contains(body, "enrolled agents are") {
 		t.Errorf("an admin's refusal no longer lists the enrolled agents: %d %s", code, body)
@@ -607,7 +607,7 @@ func TestARequestThatDoesNotSetAgentsIsNotRefusedForThem(t *testing.T) {
 			}
 		}
 	}
-	admin := New(f.st, Options{}, fstest.MapFS{})
+	admin := New(f.st, Options{Alerts: alert.NewManager(f.st, nil)}, fstest.MapFS{})
 	if code, body := call(t, admin, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"title": "retitled"}); code != http.StatusOK {
 		t.Errorf("retitling a node whose agent was removed = %d %s", code, body)
 	}
@@ -899,7 +899,7 @@ type staleProvenance struct {
 }
 
 func (s staleProvenance) ShapeReferenceDetail(int64, int64, int64) alert.ShapeRef { return s.ref }
-func (s staleProvenance) Baselines(context.Context) ([]alert.Baselined, error)    { return s.stale, nil }
+func (s staleProvenance) Baselines() []alert.Baselined                            { return s.stale }
 
 // A golden reference and the series it came from are read together. The source
 // used to be looked up afterwards, and a recapture or a clear between the two

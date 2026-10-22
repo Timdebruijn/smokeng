@@ -61,7 +61,7 @@ func (s *server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 	// Which vantage points to report. Default is every agent the target is
 	// assigned to, so an assigned-but-silent one shows as coverage 0 rather than
 	// vanishing; a single agent_id narrows it to one.
-	agentRecords, err := s.agents.ListAgents(r.Context())
+	agentRecords, err := s.st.ListAgents(r.Context())
 	if err != nil {
 		internalError(w, err)
 		return

@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
 
+	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
@@ -284,5 +286,45 @@ func TestPoolIsBounded(t *testing.T) {
 	}
 	if got := s.db.Stats().Idle; got != limit {
 		t.Fatalf("after releasing %d connections, Idle = %d, want %d", limit, got, limit)
+	}
+}
+
+// Optional columns round-trip through database/sql's own NULL handling: a nil
+// pointer stores NULL, and a pointer to a zero value (false, 0) stays distinct
+// from it.
+func TestNullableColumnsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "null.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	set := &tree.Target{ID: 10, Name: "set", Enabled: true,
+		Host: ptr("h"), Title: ptr(""), ParentID: ptr(int64(1)),
+		Settings: tree.Settings{IntervalS: ptr(0), ProbeMode: ptr("burst"), TLSSkipVerify: ptr(false)}}
+	unset := &tree.Target{ID: 11, Name: "unset", Enabled: true,
+		Settings: tree.Settings{TLSSkipVerify: ptr(true)}}
+	empty := &tree.Target{ID: 12, Name: "empty"}
+	for _, tg := range []*tree.Target{set, unset, empty} {
+		if err := s.UpsertTarget(ctx, tg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.ListTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got[1:], []tree.Target{*set, *unset, *empty}) {
+		t.Errorf("targets did not round-trip:\n got %+v\nwant %+v", got[1:], []tree.Target{*set, *unset, *empty})
+	}
+
+	sil := &alert.Silence{TargetID: ptr(int64(1)), StartsAt: 1, EndsAt: 2}
+	if err := s.CreateSilence(ctx, sil); err != nil {
+		t.Fatal(err)
+	}
+	sils, err := s.ListSilences(ctx)
+	if err != nil || len(sils) != 1 || !reflect.DeepEqual(sils[0], *sil) {
+		t.Errorf("silence = %+v, %v; want %+v", sils, err, *sil)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/auth"
 	"github.com/timdebruijn/smokeng/internal/report"
 	"github.com/timdebruijn/smokeng/internal/store"
@@ -22,7 +23,7 @@ import (
 func TestWritingATargetIsHeldToTheLimits(t *testing.T) {
 	f := tenants(t)
 	editor := f.server(t, "team-a", f.groupA, "editor")
-	admin := New(f.st, Options{}, fstest.MapFS{})
+	admin := New(f.st, Options{Alerts: alert.NewManager(f.st, nil)}, fstest.MapFS{})
 
 	create := func(h http.Handler, name string, extra map[string]any) (int, string) {
 		body := map[string]any{"parent_id": f.groupA, "name": name, "host": "198.51.100.9", "address_family": "v4"}
@@ -107,7 +108,7 @@ func TestEditingANodeThatPredatesALimitIsNotRefusedForIt(t *testing.T) {
 // depth is bounded where it is created.
 func TestTheTreeCannotBeNestedWithoutLimit(t *testing.T) {
 	f := tenants(t)
-	admin := New(f.st, Options{}, fstest.MapFS{})
+	admin := New(f.st, Options{Alerts: alert.NewManager(f.st, nil)}, fstest.MapFS{})
 	parent := f.groupA // /Klanten/GemeenteA is already at depth 2
 	var last int
 	for d := 3; d <= tree.MaxDepth+3; d++ {
@@ -181,7 +182,7 @@ func TestAGroupSettingThatPushesALeafOverALimitIsRefused(t *testing.T) {
 // unserialised this fails on the first rounds in practice.
 func TestTwoMovesThatWouldMakeACycleCannotBothSucceed(t *testing.T) {
 	f := tenants(t)
-	admin := New(f.st, Options{}, fstest.MapFS{})
+	admin := New(f.st, Options{Alerts: alert.NewManager(f.st, nil)}, fstest.MapFS{})
 	mk := func(name string) int64 {
 		code, body := call(t, admin, "POST", "/api/v1/targets", map[string]any{"parent_id": f.groupA, "name": name})
 		if code != http.StatusCreated {
@@ -226,7 +227,7 @@ func TestTwoMovesThatWouldMakeACycleCannotBothSucceed(t *testing.T) {
 // foreign key, the handler answering 500, and nothing to say what was left.
 func TestDeletingASubtreeWithRulesIsAllOrNothing(t *testing.T) {
 	f := tenants(t) // GemeenteA carries a rule, and so does GemeenteB
-	admin := New(f.st, Options{}, fstest.MapFS{})
+	admin := New(f.st, Options{Alerts: alert.NewManager(f.st, nil)}, fstest.MapFS{})
 	code, body := call(t, admin, "DELETE", "/api/v1/targets/"+num(f.groupA)+"?recursive=true", nil)
 	if code != http.StatusOK {
 		t.Fatalf("deleting a subtree with a rule = %d %s", code, body)
@@ -293,7 +294,7 @@ func TestAMoveIsAuthorisedAgainstTheTreeItIsAppliedTo(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{"team-a"}, Expires: 1 << 40}
-	editor := New(g, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone}, fstest.MapFS{})
+	editor := New(g, Options{Alerts: alert.NewManager(g, nil), Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone}, fstest.MapFS{})
 
 	type result struct {
 		code int
@@ -346,7 +347,7 @@ func TestTheGatedServerAnswersAnEditorNormally(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Groups: []string{"team-a"}, Expires: 1 << 40}
-	editor := New(g, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone}, fstest.MapFS{})
+	editor := New(g, Options{Alerts: alert.NewManager(g, nil), Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleNone}, fstest.MapFS{})
 	done := make(chan int, 1)
 	go func() {
 		code, _ := call(t, editor, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"title": "still mine"})
@@ -411,7 +412,7 @@ func TestARangeThatIsTooLargeIsA400OnEveryReadRoute(t *testing.T) {
 func TestOnlyAGlobalAdminMaySetDSCPAndRetention(t *testing.T) {
 	f := tenants(t)
 	editor := f.server(t, "team-a", f.groupA, "editor")
-	admin := New(f.st, Options{}, fstest.MapFS{})
+	admin := New(f.st, Options{Alerts: alert.NewManager(f.st, nil)}, fstest.MapFS{})
 	for setting, value := range map[string]int{"dscp": 46, "retention_s": 604800} {
 		// Update.
 		code, body := call(t, editor, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"settings": map[string]any{setting: value}})

@@ -2,7 +2,7 @@ package alert
 
 import (
 	"math"
-	"sort"
+	"slices"
 
 	"github.com/timdebruijn/smokeng/internal/shape"
 )
@@ -85,21 +85,15 @@ func (ss *shapeState) value(r *Rule, m *Input, golden []uint32) (float64, bool) 
 // pooled concatenates the buffered intervals into one baseline distribution.
 // Wasserstein1 sorts internally, so order does not matter here.
 func (ss *shapeState) pooled() []uint32 {
-	n := 0
-	for _, s := range ss.samples {
-		n += len(s)
-	}
-	out := make([]uint32, 0, n)
-	for _, s := range ss.samples {
-		out = append(out, s...)
+	out := slices.Concat(ss.samples...)
+	if out == nil {
+		out = []uint32{} // JSON `[]`, not `null`
 	}
 	return out
 }
 
 func (ss *shapeState) push(samples []uint32) {
-	cp := make([]uint32, len(samples))
-	copy(cp, samples)
-	ss.samples = append(ss.samples, cp)
+	ss.samples = append(ss.samples, slices.Clone(samples))
 	if len(ss.samples) > shapeWindow {
 		ss.samples = ss.samples[len(ss.samples)-shapeWindow:]
 	}
@@ -141,9 +135,8 @@ func median(x []float64) float64 {
 	if len(x) == 0 {
 		return 0
 	}
-	c := make([]float64, len(x))
-	copy(c, x)
-	sort.Float64s(c)
+	c := slices.Clone(x)
+	slices.Sort(c)
 	n := len(c)
 	if n%2 == 1 {
 		return c[n/2]

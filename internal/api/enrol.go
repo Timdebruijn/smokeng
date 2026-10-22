@@ -34,7 +34,7 @@ const defaultTokenTTL = time.Hour
 const maxTokenTTL = 24 * time.Hour
 
 func (s *server) handleListEnrolTokens(w http.ResponseWriter, r *http.Request) {
-	tokens, err := s.enrol.ListEnrolmentTokens(r.Context())
+	tokens, err := s.st.ListEnrolmentTokens(r.Context())
 	if err != nil {
 		internalError(w, err)
 		return
@@ -76,7 +76,7 @@ func (s *server) handleMintEnrolToken(w http.ResponseWriter, r *http.Request) {
 		badRequestMsg(w, "an enrolment token may not live longer than 24 hours")
 		return
 	}
-	tok, err := s.enrol.MintEnrolmentToken(r.Context(), body.Name, ttl, time.Now())
+	tok, err := s.st.MintEnrolmentToken(r.Context(), body.Name, ttl, time.Now())
 	if errors.Is(err, store.ErrNameTaken) {
 		badRequestMsg(w, "an agent named "+strconv.Quote(body.Name)+" already exists")
 		return
@@ -99,7 +99,7 @@ func (s *server) handleRevokeEnrolToken(w http.ResponseWriter, r *http.Request) 
 		badRequestMsg(w, "id must be a number")
 		return
 	}
-	if err := s.enrol.RevokeEnrolmentToken(r.Context(), id); err != nil {
+	if err := s.st.RevokeEnrolmentToken(r.Context(), id); err != nil {
 		badRequest(w, err)
 		return
 	}
@@ -124,7 +124,7 @@ func (s *server) handleEnrol(w http.ResponseWriter, r *http.Request) {
 		badRequestMsg(w, "pubkey must be a base64-encoded Ed25519 public key")
 		return
 	}
-	agent, err := s.enrol.RedeemEnrolmentToken(r.Context(), body.Token, pub, time.Now())
+	agent, err := s.st.RedeemEnrolmentToken(r.Context(), body.Token, pub, time.Now())
 	switch {
 	case errors.Is(err, store.ErrTokenInvalid):
 		// One answer for every reason a token does not work. Distinguishing
@@ -164,13 +164,13 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Name != nil {
-		if _, err := s.enrol.RenameAgent(r.Context(), id, *body.Name); err != nil {
+		if _, err := s.st.RenameAgent(r.Context(), id, *body.Name); err != nil {
 			badRequest(w, err)
 			return
 		}
 	}
 	if body.Enabled != nil {
-		if err := s.enrol.SetAgentEnabled(r.Context(), id, *body.Enabled); err != nil {
+		if err := s.st.SetAgentEnabled(r.Context(), id, *body.Enabled); err != nil {
 			badRequest(w, err)
 			return
 		}
@@ -188,7 +188,7 @@ func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 		badRequestMsg(w, "the built-in local agent cannot be removed")
 		return
 	}
-	if err := s.enrol.RemoveAgent(r.Context(), id); err != nil {
+	if err := s.st.RemoveAgent(r.Context(), id); err != nil {
 		if errors.Is(err, store.ErrAgentHasHistory) {
 			badRequestMsg(w, "this agent has reported measurements; removing it would leave "+
 				"a series nothing can name. Disable it instead — probing stops, the history stays.")

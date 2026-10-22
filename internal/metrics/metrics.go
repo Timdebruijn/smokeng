@@ -15,7 +15,8 @@ package metrics
 import (
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -64,7 +65,7 @@ func Write(w io.Writer, ms []Metric) error {
 		for _, s := range m.Samples {
 			lines = append(lines, m.Name+renderLabels(s.Labels)+" "+formatValue(s.Value))
 		}
-		sort.Strings(lines)
+		slices.Sort(lines)
 		for _, line := range lines {
 			b.WriteString(line)
 			b.WriteByte('\n')
@@ -78,13 +79,8 @@ func renderLabels(labels map[string]string) string {
 	if len(labels) == 0 {
 		return ""
 	}
-	keys := make([]string, 0, len(labels))
-	for k := range labels {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
+	parts := make([]string, 0, len(labels))
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
 		parts = append(parts, k+`="`+escapeLabel(labels[k])+`"`)
 	}
 	return "{" + strings.Join(parts, ",") + "}"

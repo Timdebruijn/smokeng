@@ -116,11 +116,7 @@ func configCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		var opts []config.Option
-		if *allowUnknownAgents {
-			opts = append(opts, config.AllowUnknownAgents())
-		}
-		sum, err := config.Import(ctx, st, data, *prune, opts...)
+		sum, err := config.Import(ctx, st, data, *prune, *allowUnknownAgents)
 		if err != nil {
 			return err
 		}
@@ -156,7 +152,7 @@ func configCmd(args []string) error {
 		// Slaves named in a SmokePing file are by definition not enrolled here
 		// yet — the importer warns about each one — so the unknown-agent check
 		// would refuse every migration it is meant to enable.
-		sum, err := config.Apply(ctx, st, f, *prune, config.AllowUnknownAgents())
+		sum, err := config.Apply(ctx, st, f, *prune, true)
 		if err != nil {
 			return err
 		}
@@ -420,7 +416,7 @@ func serve(args []string) error {
 	}
 	srv := newHTTPServer(*listen,
 		api.New(st, api.Options{
-			Alerts: alertViewOrNil(alerts), Auth: authOrNil(authenticator),
+			Alerts: alerts, Auth: authOrNil(authenticator),
 			Probe: eng, Version: version, MetricsPublic: *metricsPublic,
 			AgentCAs:    probe.LocalCAPEMs(),
 			DefaultRole: auth.Role(*defaultRole), ExternalURL: *externalURL,
@@ -450,13 +446,6 @@ func serve(args []string) error {
 		}
 	}
 	return nil
-}
-
-func alertViewOrNil(m *alert.Manager) api.AlertView {
-	if m == nil {
-		return nil
-	}
-	return m
 }
 
 func authOrNil(a *auth.Authenticator) api.Authenticator {

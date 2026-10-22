@@ -59,28 +59,24 @@ export default function ShapeOverlay({
     <div className="shape-overlay">
       <svg viewBox={`0 0 ${W} ${H + 18}`} width="100%" height={H + 18} role="img"
         aria-label="The reference distribution and the current one, overlaid">
-        {bins.ref.map((v, i) => (
-          <rect
-            key={`r${i}`}
-            x={i * bw}
-            y={H - (v / max) * H}
-            width={Math.max(bw - 1, 1)}
-            height={(v / max) * H}
-            fill="var(--dim)"
-            opacity={0.55}
-          />
-        ))}
-        {bins.cur.map((v, i) => (
-          <rect
-            key={`c${i}`}
-            x={i * bw}
-            y={H - (v / max) * H}
-            width={Math.max(bw - 1, 1)}
-            height={(v / max) * H}
-            fill="var(--accent)"
-            opacity={0.55}
-          />
-        ))}
+        {(
+          [
+            ['r', bins.ref, 'var(--dim)'],
+            ['c', bins.cur, 'var(--accent)'],
+          ] as const
+        ).map(([k, vs, fill]) =>
+          vs.map((v, i) => (
+            <rect
+              key={`${k}${i}`}
+              x={i * bw}
+              y={H - (v / max) * H}
+              width={Math.max(bw - 1, 1)}
+              height={(v / max) * H}
+              fill={fill}
+              opacity={0.55}
+            />
+          )),
+        )}
         <text x={0} y={H + 14} className="axis-label" fontSize="10" fill="currentColor">
           {fmtMs(bins.lo)}
         </text>

@@ -9,6 +9,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/auth"
 	"github.com/timdebruijn/smokeng/internal/store"
 )
@@ -132,7 +133,7 @@ func TestEveryResponseCarriesTheSecurityHeaders(t *testing.T) {
 // such a page cannot choose.
 func TestAnUnauthenticatedLoopbackServerAnswersOnlyItsOwnNames(t *testing.T) {
 	st := seededStore(t)
-	h := New(st, Options{RestrictHosts: true, ExternalURL: "https://smokeng.example.org"}, fstest.MapFS{})
+	h := New(st, Options{Alerts: alert.NewManager(st, nil), RestrictHosts: true, ExternalURL: "https://smokeng.example.org"}, fstest.MapFS{})
 	get := func(host string) int {
 		req := httptest.NewRequest("GET", "/api/v1/targets", nil)
 		req.Host = host
@@ -151,7 +152,7 @@ func TestAnUnauthenticatedLoopbackServerAnswersOnlyItsOwnNames(t *testing.T) {
 		}
 	}
 	// Off, as when authentication is on, every name is served.
-	open := New(st, Options{}, fstest.MapFS{})
+	open := New(st, Options{Alerts: alert.NewManager(st, nil)}, fstest.MapFS{})
 	req := httptest.NewRequest("GET", "/api/v1/targets", nil)
 	req.Host = "attacker.example"
 	rec := httptest.NewRecorder()
@@ -201,7 +202,7 @@ func TestADecodeSlotIsHeldWhileBatchIsHandledAndThenReleased(t *testing.T) {
 	_, st, agentID, key, mine, _ := ingestFixture(t)
 	var srv *server
 	probe := &slotProbe{SQLite: st, srv: &srv}
-	h := New(probe, Options{}, fstest.MapFS{})
+	h := New(probe, Options{Alerts: alert.NewManager(probe, nil)}, fstest.MapFS{})
 	srv = h.(*handler).srv
 	for i := 0; i <= cap(srv.decodeSlots)+1; i++ { // more batches than slots: a leaked slot runs out
 		rec := submit(t, h, agentID, key, []store.Measurement{measurement(mine, 1_756_400_000+int64(i)*60)}, time.Now())
@@ -227,9 +228,9 @@ func TestTheOriginFallbackComparesSchemeHostAndPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain := New(st, Options{Auth: &fakeAuth{session: adminSession()}, TrustedProxies: trusted}, fstest.MapFS{})
-	https := New(st, Options{Auth: &fakeAuth{session: adminSession()}, ExternalURL: "https://smokeng.example.org"}, fstest.MapFS{})
-	http80 := New(st, Options{Auth: &fakeAuth{session: adminSession()}, ExternalURL: "http://smokeng.example.org:80"}, fstest.MapFS{})
+	plain := New(st, Options{Alerts: alert.NewManager(st, nil), Auth: &fakeAuth{session: adminSession()}, TrustedProxies: trusted}, fstest.MapFS{})
+	https := New(st, Options{Alerts: alert.NewManager(st, nil), Auth: &fakeAuth{session: adminSession()}, ExternalURL: "https://smokeng.example.org"}, fstest.MapFS{})
+	http80 := New(st, Options{Alerts: alert.NewManager(st, nil), Auth: &fakeAuth{session: adminSession()}, ExternalURL: "http://smokeng.example.org:80"}, fstest.MapFS{})
 	try := func(h http.Handler, host, origin, peer, proto string) bool {
 		req := httptest.NewRequest("POST", "/api/v1/targets", strings.NewReader("{}"))
 		req.Host = host
