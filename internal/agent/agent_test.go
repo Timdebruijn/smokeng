@@ -326,3 +326,15 @@ func TestDrainSubmitsTheBacklog(t *testing.T) {
 		t.Fatalf("%d measurements stranded by Drain", len(pending))
 	}
 }
+
+func TestNZ(t *testing.T) {
+	if nz("") != nil || nz(0) != nil {
+		t.Error("zero value should give a nil pointer")
+	}
+	if p := nz("dns"); p == nil || *p != "dns" {
+		t.Errorf("nz(\"dns\") = %v", p)
+	}
+	if p := nz(53); p == nil || *p != 53 {
+		t.Errorf("nz(53) = %v", p)
+	}
+}

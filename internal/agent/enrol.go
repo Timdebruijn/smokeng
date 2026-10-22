@@ -98,15 +98,10 @@ func Enrol(ctx context.Context, master, token string, key ed25519.PrivateKey, in
 	return out.AgentID, out.Name, nil
 }
 
-// EnrolOnce enrols only if this key has not been enrolled before, so a service
-// that restarts with --token in its unit file does not try to spend a token it
-// already spent.
+// EnrolOnce enrols and records the id next to the key, so a service that
+// restarts with --token in its unit file finds it (LoadAgentID) instead of
+// spending the token again. The caller checks for a recorded id first.
 func EnrolOnce(ctx context.Context, master, token, keyPath string, key ed25519.PrivateKey, insecure bool) (int64, error) {
-	if id, ok, err := LoadAgentID(keyPath); err != nil {
-		return 0, err
-	} else if ok {
-		return id, nil
-	}
 	id, name, err := Enrol(ctx, master, token, key, insecure)
 	if err != nil {
 		return 0, err
