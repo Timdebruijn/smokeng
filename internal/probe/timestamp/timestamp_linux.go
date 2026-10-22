@@ -3,6 +3,7 @@
 package timestamp
 
 import (
+	"net/netip"
 	"time"
 	"unsafe"
 
@@ -51,13 +52,10 @@ func fromOOB(oob []byte) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	for _, m := range cmsgs {
-		if m.Header.Level == unix.SOL_SOCKET && m.Header.Type == unix.SCM_TIMESTAMPING &&
-			len(m.Data) >= int(unsafe.Sizeof(scmTimestamping{})) {
-			ts := (*scmTimestamping)(unsafe.Pointer(&m.Data[0])).TS[0]
-			if ts.Sec == 0 && ts.Nsec == 0 {
-				continue
+		if m.Header.Level == unix.SOL_SOCKET && m.Header.Type == unix.SCM_TIMESTAMPING {
+			if t, ok := fromOOBCmsg(m.Data); ok {
+				return t, true
 			}
-			return time.Unix(int64(ts.Sec), int64(ts.Nsec)), true
 		}
 	}
 	return time.Time{}, false
@@ -94,6 +92,7 @@ func readErrQueue(fd int) ([]ErrQueueEntry, error) {
 		var at time.Time
 		var haveTS bool
 		var se *unix.SockExtendedErr
+		var offender netip.Addr
 		for _, m := range cmsgs {
 			switch {
 			case m.Header.Level == unix.SOL_SOCKET && m.Header.Type == unix.SCM_TIMESTAMPING:
@@ -104,6 +103,7 @@ func readErrQueue(fd int) ([]ErrQueueEntry, error) {
 				(m.Header.Level == unix.IPPROTO_IPV6 && m.Header.Type == unix.IPV6_RECVERR):
 				if len(m.Data) >= int(unsafe.Sizeof(unix.SockExtendedErr{})) {
 					se = (*unix.SockExtendedErr)(unsafe.Pointer(&m.Data[0]))
+					offender = offenderAddr(m.Data, m.Header.Level == unix.IPPROTO_IPV6)
 				}
 			}
 		}
@@ -120,7 +120,7 @@ func readErrQueue(fd int) ([]ErrQueueEntry, error) {
 			payload := make([]byte, n)
 			copy(payload, buf[:n])
 			out = append(out, ErrQueueEntry{
-				ICMPError: &ICMPError{Type: se.Type, Code: se.Code, Payload: payload},
+				ICMPError: &ICMPError{Type: se.Type, Code: se.Code, Offender: offender, Payload: payload},
 			})
 		}
 	}
@@ -135,4 +135,22 @@ func fromOOBCmsg(data []byte) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return time.Unix(int64(ts.Sec), int64(ts.Nsec)), true
+}
+
+// offenderAddr reads the router address that follows sock_extended_err in the
+// IP_RECVERR control message.
+func offenderAddr(data []byte, v6 bool) netip.Addr {
+	off := int(unsafe.Sizeof(unix.SockExtendedErr{}))
+	if v6 {
+		if len(data) < off+int(unsafe.Sizeof(unix.RawSockaddrInet6{})) {
+			return netip.Addr{}
+		}
+		sa := (*unix.RawSockaddrInet6)(unsafe.Pointer(&data[off]))
+		return netip.AddrFrom16(sa.Addr)
+	}
+	if len(data) < off+int(unsafe.Sizeof(unix.RawSockaddrInet4{})) {
+		return netip.Addr{}
+	}
+	sa := (*unix.RawSockaddrInet4)(unsafe.Pointer(&data[off]))
+	return netip.AddrFrom4(sa.Addr)
 }
