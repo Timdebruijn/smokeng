@@ -46,17 +46,14 @@ func (s *server) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 		badRequestMsg(w, "could not read the request body")
 		return
 	}
-	var opts []config.Option
-	if r.URL.Query().Get("allow_unknown_agents") == "1" {
-		opts = append(opts, config.AllowUnknownAgents())
-	}
+	allowUnknown := r.URL.Query().Get("allow_unknown_agents") == "1"
 
 	// Deliberately never prunes. Absence disables here, which is recoverable
 	// by importing the file again; pruning deletes, which is not. That switch
 	// stays on the command line, where the operator is looking at the file
 	// they are about to apply and can read the summary before running it
 	// again.
-	sum, err := config.Import(r.Context(), s.config, body, false, opts...)
+	sum, err := config.Import(r.Context(), s.config, body, false, allowUnknown)
 	if err != nil {
 		badRequest(w, err)
 		return

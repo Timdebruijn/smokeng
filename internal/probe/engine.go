@@ -25,9 +25,6 @@ const (
 	specRefresh    = 30 * time.Second
 	writerFlush    = time.Second
 	writerMaxBatch = 512 // measurements per transaction at most
-	// Alertmanager expires an alert it stops hearing about, so a firing alert
-	// is repeated rather than announced once.
-	alertRepeat = time.Minute
 )
 
 // Alerter consumes finalized measurements and delivers alert notifications.
@@ -36,7 +33,6 @@ const (
 type Alerter interface {
 	Reload(ctx context.Context) error
 	Observe(ctx context.Context, ms []alert.Input)
-	Repeat(ctx context.Context)
 }
 
 // Engine runs the local agent: it schedules every enabled leaf target whose
@@ -114,8 +110,6 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.reload(ctx)
 	tick := time.NewTicker(specRefresh)
 	defer tick.Stop()
-	repeat := time.NewTicker(alertRepeat)
-	defer repeat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -139,10 +133,6 @@ func (e *Engine) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-tick.C:
 			e.reload(ctx)
-		case <-repeat.C:
-			if e.alerter != nil {
-				e.alerter.Repeat(ctx)
-			}
 		}
 	}
 }

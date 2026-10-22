@@ -67,7 +67,7 @@ func mustTree(t *testing.T, s store.Store) (*tree.Tree, map[string]tree.Target) 
 func TestImport(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
-	sum, err := Import(ctx, s, []byte(sample), false)
+	sum, err := Import(ctx, s, []byte(sample), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestImport(t *testing.T) {
 func TestImportIdempotentAndRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
-	if _, err := Import(ctx, s, []byte(sample), false); err != nil {
+	if _, err := Import(ctx, s, []byte(sample), false, false); err != nil {
 		t.Fatal(err)
 	}
 	exported, err := Export(ctx, s)
@@ -119,7 +119,7 @@ func TestImportIdempotentAndRoundTrip(t *testing.T) {
 	// Importing the export into a fresh database yields a semantically
 	// identical export.
 	s2 := open(t)
-	if _, err := Import(ctx, s2, exported, false); err != nil {
+	if _, err := Import(ctx, s2, exported, false, false); err != nil {
 		t.Fatalf("re-import of export: %v\n%s", err, exported)
 	}
 	exported2, err := Export(ctx, s2)
@@ -138,7 +138,7 @@ func TestImportIdempotentAndRoundTrip(t *testing.T) {
 	}
 
 	// Re-importing the same file into the same database changes nothing.
-	sum, err := Import(ctx, s, []byte(sample), false)
+	sum, err := Import(ctx, s, []byte(sample), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestImportIdempotentAndRoundTrip(t *testing.T) {
 func TestAbsenceDisablesAndPruneDeletes(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
-	if _, err := Import(ctx, s, []byte(sample), false); err != nil {
+	if _, err := Import(ctx, s, []byte(sample), false, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,7 +159,7 @@ func TestAbsenceDisablesAndPruneDeletes(t *testing.T) {
 host = "1.1.1.1"
 address_family = "v4"
 `
-	sum, err := Import(ctx, s, []byte(smaller), false)
+	sum, err := Import(ctx, s, []byte(smaller), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ address_family = "v4"
 		t.Fatal("kept ancestor was disabled")
 	}
 
-	sum, err = Import(ctx, s, []byte(smaller), true)
+	sum, err = Import(ctx, s, []byte(smaller), true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestImportRejectsInvalid(t *testing.T) {
 		"bad dscp":            "[targets.\"x\"]\nhost = \"1.1.1.1\"\naddress_family = \"v4\"\ndscp = 99\n",
 	} {
 		s := open(t)
-		if _, err := Import(ctx, s, []byte(body), false); err == nil {
+		if _, err := Import(ctx, s, []byte(body), false, false); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
 	}
@@ -229,7 +229,7 @@ clear_intervals = 2
 func TestAlertRulesImportAndRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
-	sum, err := Import(ctx, s, []byte(withAlerts), false)
+	sum, err := Import(ctx, s, []byte(withAlerts), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestAlertRulesImportAndRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	s2 := open(t)
-	if _, err := Import(ctx, s2, exported, false); err != nil {
+	if _, err := Import(ctx, s2, exported, false, false); err != nil {
 		t.Fatalf("re-import: %v\n%s", err, exported)
 	}
 	again, err := s2.ListAlertRules(ctx)
@@ -315,7 +315,7 @@ op = ">"
 threshold = 0.6
 mode = "auto"
 `
-	if _, err := Import(ctx, s, []byte(withShape), false); err != nil {
+	if _, err := Import(ctx, s, []byte(withShape), false, false); err != nil {
 		t.Fatalf("importing a shape rule: %v", err)
 	}
 	rules, err := s.ListAlertRules(ctx)
@@ -341,7 +341,7 @@ mode = "auto"
 		t.Fatal(err)
 	}
 	s2 := open(t)
-	if _, err := Import(ctx, s2, exported, false); err != nil {
+	if _, err := Import(ctx, s2, exported, false, false); err != nil {
 		t.Fatalf("re-importing the export: %v\n%s", err, exported)
 	}
 	again, err := s2.ListAlertRules(ctx)
@@ -357,7 +357,7 @@ mode = "auto"
 
 	// A rule still in the file survives a re-import rather than being disabled,
 	// which is the failure this whole test exists to prevent.
-	if _, err := Import(ctx, s, []byte(withShape), false); err != nil {
+	if _, err := Import(ctx, s, []byte(withShape), false, false); err != nil {
 		t.Fatal(err)
 	}
 	after, err := s.ListAlertRules(ctx)
@@ -376,7 +376,7 @@ mode = "auto"
 func TestAlertRuleAbsenceDisablesAndPruneDeletes(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
-	if _, err := Import(ctx, s, []byte(withAlerts), false); err != nil {
+	if _, err := Import(ctx, s, []byte(withAlerts), false, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -385,7 +385,7 @@ func TestAlertRuleAbsenceDisablesAndPruneDeletes(t *testing.T) {
 host = "1.1.1.1"
 address_family = "v4"
 `
-	sum, err := Import(ctx, s, []byte(onlyTargets), false)
+	sum, err := Import(ctx, s, []byte(onlyTargets), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +405,7 @@ address_family = "v4"
 		}
 	}
 
-	sum, err = Import(ctx, s, []byte(onlyTargets), true)
+	sum, err = Import(ctx, s, []byte(onlyTargets), true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func TestAlertRuleValidationRejects(t *testing.T) {
 		"loss over 100":  "[default_alerts.\"x\"]\nmetric = \"loss\"\nop = \">\"\nthreshold = 400\n",
 	} {
 		s := open(t)
-		if _, err := Import(ctx, s, []byte(body), false); err == nil {
+		if _, err := Import(ctx, s, []byte(body), false, false); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
@@ -439,7 +439,7 @@ func TestReimportReportsNoChange(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
 
-	first, err := Import(ctx, s, []byte(sample), false)
+	first, err := Import(ctx, s, []byte(sample), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestReimportReportsNoChange(t *testing.T) {
 		t.Fatalf("the first import created nothing: %s", first)
 	}
 
-	again, err := Import(ctx, s, []byte(sample), false)
+	again, err := Import(ctx, s, []byte(sample), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +463,7 @@ func TestReimportReportsNoChange(t *testing.T) {
 func TestReimportReportsAnActualChange(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
-	if _, err := Import(ctx, s, []byte(sample), false); err != nil {
+	if _, err := Import(ctx, s, []byte(sample), false, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -471,7 +471,7 @@ func TestReimportReportsAnActualChange(t *testing.T) {
 	if edited == sample {
 		t.Fatal("the fixture no longer contains the value this test edits")
 	}
-	got, err := Import(ctx, s, []byte(edited), false)
+	got, err := Import(ctx, s, []byte(edited), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +496,7 @@ func TestImportRejectsUnknownAgent(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
 
-	_, err := Import(ctx, s, []byte(agentSample), false)
+	_, err := Import(ctx, s, []byte(agentSample), false, false)
 	if err == nil {
 		t.Fatal("an agents list naming an unenrolled agent was accepted")
 	}
@@ -518,7 +518,7 @@ func TestImportAcceptsEnrolledAgent(t *testing.T) {
 	if _, err := s.AddAgent(ctx, "ams-01", pub); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Import(ctx, s, []byte(agentSample), false); err != nil {
+	if _, err := Import(ctx, s, []byte(agentSample), false, false); err != nil {
 		t.Fatalf("an enrolled agent was refused: %v", err)
 	}
 }
@@ -527,7 +527,7 @@ func TestImportAcceptsEnrolledAgent(t *testing.T) {
 func TestAllowUnknownAgentsDowngradesToAWarning(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
-	sum, err := Import(ctx, s, []byte(agentSample), false, AllowUnknownAgents())
+	sum, err := Import(ctx, s, []byte(agentSample), false, true)
 	if err != nil {
 		t.Fatalf("with AllowUnknownAgents: %v", err)
 	}
@@ -554,10 +554,10 @@ address_family = "v4"
 	stringForm := strings.Replace(arrayForm, `agents = ["local"]`, `agents = "local"`, 1)
 
 	s1, s2 := open(t), open(t)
-	if _, err := Import(ctx, s1, []byte(arrayForm), false); err != nil {
+	if _, err := Import(ctx, s1, []byte(arrayForm), false, false); err != nil {
 		t.Fatalf("array form: %v", err)
 	}
-	if _, err := Import(ctx, s2, []byte(stringForm), false); err != nil {
+	if _, err := Import(ctx, s2, []byte(stringForm), false, false); err != nil {
 		t.Fatalf("string form: %v", err)
 	}
 	e1, err := Export(ctx, s1)
@@ -596,7 +596,7 @@ func TestGrantsImportAndRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
 
-	sum, err := Import(ctx, s, []byte(grantSample), false)
+	sum, err := Import(ctx, s, []byte(grantSample), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +613,7 @@ func TestGrantsImportAndRoundTrip(t *testing.T) {
 
 	// Re-importing the same file changes nothing, and the export re-imports
 	// into an identical state.
-	again, err := Import(ctx, s, []byte(grantSample), false)
+	again, err := Import(ctx, s, []byte(grantSample), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -628,7 +628,7 @@ func TestGrantsImportAndRoundTrip(t *testing.T) {
 		t.Errorf("export lost the grants:\n%s", exported)
 	}
 	s2 := open(t)
-	if _, err := Import(ctx, s2, exported, false); err != nil {
+	if _, err := Import(ctx, s2, exported, false, false); err != nil {
 		t.Fatalf("re-import of export: %v\n%s", err, exported)
 	}
 	round, err := s2.ListGrants(ctx)
@@ -646,11 +646,11 @@ func TestGrantsImportAndRoundTrip(t *testing.T) {
 func TestAbsentGrantIsRemoved(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
-	if _, err := Import(ctx, s, []byte(grantSample), false); err != nil {
+	if _, err := Import(ctx, s, []byte(grantSample), false, false); err != nil {
 		t.Fatal(err)
 	}
 	withoutGrant := strings.Split(grantSample, "[[grants]]")[0] + "\n[[grants]]\ngroup = \"other\"\npath = \"Klanten\"\nrole = \"editor\"\n"
-	sum, err := Import(ctx, s, []byte(withoutGrant), false)
+	sum, err := Import(ctx, s, []byte(withoutGrant), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,11 +671,11 @@ func TestAbsentGrantIsRemoved(t *testing.T) {
 func TestFileWithoutGrantsLeavesThemAlone(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
-	if _, err := Import(ctx, s, []byte(grantSample), false); err != nil {
+	if _, err := Import(ctx, s, []byte(grantSample), false, false); err != nil {
 		t.Fatal(err)
 	}
 	targetsOnly := strings.Split(grantSample, "[[grants]]")[0]
-	if _, err := Import(ctx, s, []byte(targetsOnly), false); err != nil {
+	if _, err := Import(ctx, s, []byte(targetsOnly), false, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.ListGrants(ctx)
@@ -691,11 +691,11 @@ func TestGrantRejectsUnknownPathAndRole(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
 	bad := strings.Replace(grantSample, `path = "Klanten/GemeenteX"`, `path = "Klanten/Nope"`, 1)
-	if _, err := Import(ctx, s, []byte(bad), false); err == nil {
+	if _, err := Import(ctx, s, []byte(bad), false, false); err == nil {
 		t.Error("a grant on a nonexistent path was accepted")
 	}
 	bad = strings.Replace(grantSample, `role = "viewer"`, `role = "admin"`, 1)
-	if _, err := Import(ctx, s, []byte(bad), false); err == nil {
+	if _, err := Import(ctx, s, []byte(bad), false, false); err == nil {
 		t.Error("a grant of the global admin role was accepted")
 	}
 }
@@ -713,7 +713,7 @@ host = "1.1.1.1"
 address_family = "v4"
 dns_rrtype = "A"
 `
-	_, err := Import(ctx, s, []byte(bad), false)
+	_, err := Import(ctx, s, []byte(bad), false, false)
 	if err == nil {
 		t.Fatal("a misspelled setting was accepted")
 	}
@@ -738,7 +738,7 @@ probe_port = 5353
 dns_query = "example.org"
 dns_rr_type = "AAAA"
 `
-	if _, err := Import(ctx, s, []byte(src), false); err != nil {
+	if _, err := Import(ctx, s, []byte(src), false, false); err != nil {
 		t.Fatal(err)
 	}
 	exported, err := Export(ctx, s)
@@ -752,7 +752,7 @@ dns_rr_type = "AAAA"
 		}
 	}
 	s2 := open(t)
-	if _, err := Import(ctx, s2, exported, false); err != nil {
+	if _, err := Import(ctx, s2, exported, false, false); err != nil {
 		t.Fatalf("re-import of export: %v", err)
 	}
 	targets, err := s2.ListTargets(ctx)
@@ -793,7 +793,7 @@ host = "192.0.2.9"
 address_family = "v4"
 probe_type = "https"
 `
-	if _, err := Import(ctx, s, []byte(cfg), false); err != nil {
+	if _, err := Import(ctx, s, []byte(cfg), false, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -820,7 +820,7 @@ probe_type = "https"
 		t.Fatal(err)
 	}
 	s2 := open(t)
-	if _, err := Import(ctx, s2, data, false); err != nil {
+	if _, err := Import(ctx, s2, data, false, false); err != nil {
 		t.Fatalf("re-import of exported config: %v", err)
 	}
 	_, byPath2 := mustTree(t, s2)
@@ -849,13 +849,13 @@ func TestImportIsHeldToTheLimits(t *testing.T) {
 		"a title with an override":    entry("title = \"a\\u202eb\"\n"),
 	} {
 		s := open(t)
-		if _, err := Import(ctx, s, []byte(body), false); err == nil {
+		if _, err := Import(ctx, s, []byte(body), false, false); err == nil {
 			t.Errorf("%s: the import was accepted", name)
 		}
 	}
 	// The control: a file inside every limit.
 	s := open(t)
-	if _, err := Import(ctx, s, []byte(entry("pings_per_interval = 50\n")), false); err != nil {
+	if _, err := Import(ctx, s, []byte(entry("pings_per_interval = 50\n")), false, false); err != nil {
 		t.Errorf("an ordinary file was refused: %v", err)
 	}
 }
@@ -867,7 +867,7 @@ func TestImportDoesNotRefuseWhatItLeavesAlone(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
 	body := "[targets.\"x\"]\nhost = \"1.1.1.1\"\naddress_family = \"v4\"\n"
-	if _, err := Import(ctx, s, []byte(body), false); err != nil {
+	if _, err := Import(ctx, s, []byte(body), false, false); err != nil {
 		t.Fatal(err)
 	}
 	// Written before the limit existed, directly.
@@ -884,11 +884,11 @@ func TestImportDoesNotRefuseWhatItLeavesAlone(t *testing.T) {
 		}
 	}
 	restated := body + "packet_size = 20000\n"
-	if _, err := Import(ctx, s, []byte(restated), false); err != nil {
+	if _, err := Import(ctx, s, []byte(restated), false, false); err != nil {
 		t.Errorf("restating a stored value that is over a limit was refused: %v", err)
 	}
 	// Changing it to another value over the limit is checked.
-	if _, err := Import(ctx, s, []byte(body+"packet_size = 30000\n"), false); err == nil {
+	if _, err := Import(ctx, s, []byte(body+"packet_size = 30000\n"), false, false); err == nil {
 		t.Error("changing a legacy value to another one over the limit was accepted")
 	}
 }
@@ -901,7 +901,7 @@ func TestImportDoesNotRefuseALoadItLeavesAlone(t *testing.T) {
 	s := open(t)
 	fast := "[targets.\"x\"]\nhost = \"1.1.1.1\"\naddress_family = \"v4\"\n"
 	load := "pings_per_interval = 900\ninterval_s = 2\nburst_gap_ms = 1\n" // 450 a second
-	if _, err := Import(ctx, s, []byte(fast), false); err != nil {
+	if _, err := Import(ctx, s, []byte(fast), false, false); err != nil {
 		t.Fatal(err)
 	}
 	targets, err := s.ListTargets(ctx)
@@ -918,10 +918,10 @@ func TestImportDoesNotRefuseALoadItLeavesAlone(t *testing.T) {
 			}
 		}
 	}
-	if _, err := Import(ctx, s, []byte(fast+load), false); err != nil {
+	if _, err := Import(ctx, s, []byte(fast+load), false, false); err != nil {
 		t.Errorf("restating a load that is already stored was refused: %v", err)
 	}
-	if _, err := Import(ctx, s, []byte(fast+"pings_per_interval = 950\ninterval_s = 2\nburst_gap_ms = 1\n"), false); err == nil {
+	if _, err := Import(ctx, s, []byte(fast+"pings_per_interval = 950\ninterval_s = 2\nburst_gap_ms = 1\n"), false, false); err == nil {
 		t.Error("raising a load that was already over the limit was accepted")
 	}
 }
@@ -935,10 +935,10 @@ func TestPruningATargetCountsItsRules(t *testing.T) {
 	s := open(t)
 	const withRule = "[targets.\"x\"]\nhost = \"1.1.1.1\"\naddress_family = \"v4\"\n" +
 		"[targets.\"x\".alerts.loss]\nmetric = \"loss\"\nop = \">\"\nthreshold = 5\n"
-	if _, err := Import(ctx, s, []byte(withRule), false); err != nil {
+	if _, err := Import(ctx, s, []byte(withRule), false, false); err != nil {
 		t.Fatal(err)
 	}
-	sum, err := Import(ctx, s, []byte(""), true)
+	sum, err := Import(ctx, s, []byte(""), true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -947,5 +947,19 @@ func TestPruningATargetCountsItsRules(t *testing.T) {
 	}
 	if rules, err := s.ListAlertRules(ctx); err != nil || len(rules) != 0 {
 		t.Errorf("rules after pruning their target = %v (err %v)", rules, err)
+	}
+}
+
+// Defaults overlay the root: a provided key replaces, an absent one leaves the
+// root's value alone, and agents given as an array arrive as the tree's string.
+func TestOverlayValuesKeepsWhatIsNotProvided(t *testing.T) {
+	one, two := 1, 2
+	dst := tree.Settings{IntervalS: &one, PingsPerInterval: &one}
+	overlayValues(&dst, Values{PingsPerInterval: &two, Agents: AgentList{"local", "ams-01"}})
+	if *dst.IntervalS != 1 || *dst.PingsPerInterval != 2 {
+		t.Errorf("interval_s=%d pings=%d, want 1 and 2", *dst.IntervalS, *dst.PingsPerInterval)
+	}
+	if dst.Agents == nil || *dst.Agents != "local ams-01" {
+		t.Errorf("agents = %v, want \"local ams-01\"", dst.Agents)
 	}
 }

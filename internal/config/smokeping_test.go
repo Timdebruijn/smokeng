@@ -2,6 +2,8 @@ package config
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -52,7 +54,7 @@ slaves = ams rtm
 `
 
 func TestParseSmokePing(t *testing.T) {
-	f, warnings, err := ParseSmokePing([]byte(smokepingTargets), false)
+	f, warnings, err := parseSmokePingText(t, smokepingTargets, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +122,7 @@ func TestParseSmokePing(t *testing.T) {
 }
 
 func TestParseSmokePingAlsoIPv6(t *testing.T) {
-	f, _, err := ParseSmokePing([]byte(smokepingTargets), true)
+	f, _, err := parseSmokePingText(t, smokepingTargets, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,11 +144,11 @@ func TestParseSmokePingAlsoIPv6(t *testing.T) {
 func TestSmokePingImportApplies(t *testing.T) {
 	ctx := context.Background()
 	st := open(t)
-	f, _, err := ParseSmokePing([]byte(smokepingTargets), false)
+	f, _, err := parseSmokePingText(t, smokepingTargets, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum, err := Apply(ctx, st, f, false, AllowUnknownAgents())
+	sum, err := Apply(ctx, st, f, false, true)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -174,10 +176,10 @@ func TestSmokePingImportApplies(t *testing.T) {
 }
 
 func TestParseSmokePingErrors(t *testing.T) {
-	if _, _, err := ParseSmokePing([]byte("*** Targets ***\n"), false); err == nil {
+	if _, _, err := parseSmokePingText(t, "*** Targets ***\n", false); err == nil {
 		t.Error("expected an error for a file with no targets")
 	}
-	if _, _, err := ParseSmokePing([]byte("*** Targets ***\n+++ deep\nhost = 1.1.1.1\n"), false); err == nil {
+	if _, _, err := parseSmokePingText(t, "*** Targets ***\n+++ deep\nhost = 1.1.1.1\n", false); err == nil {
 		t.Error("expected an error when a level is skipped")
 	}
 }
@@ -232,7 +234,7 @@ probe = FPing
 probe = IRTT
 host = irtt.example.org
 `
-	f, warnings, err := ParseSmokePing([]byte(cfg), false)
+	f, warnings, err := parseSmokePingText(t, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +287,7 @@ probe = IRTT
 host = irtt.example.org
 hmac = deadbeefcafe
 `
-	f, warnings, err := ParseSmokePing([]byte(cfg), false)
+	f, warnings, err := parseSmokePingText(t, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +338,7 @@ metric = send_ipdv
 host = irtt.example.org
 metric = receive_ipdv
 `
-	f, warnings, err := ParseSmokePing([]byte(cfg), false)
+	f, warnings, err := parseSmokePingText(t, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +378,7 @@ remark = Meet met UDP. <b>Burst</b> is de klassieke meting, \
          en <b>Continu</b> pingt door.<br><br>Wijken die af, \
          dan zit het in korte pieken.
 `
-	f, _, err := ParseSmokePing([]byte(cfg), false)
+	f, _, err := parseSmokePingText(t, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +419,7 @@ probe = FPing
 host = 10.0.0.1
 title = literally &lt;b&gt; and &amp; itself
 `
-	f, _, err := ParseSmokePing([]byte(cfg), false)
+	f, _, err := parseSmokePingText(t, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +495,7 @@ host = 10.0.0.2
 title = continued \
 even without indentation
 `
-	f, warnings, err := ParseSmokePing([]byte(cfg), false)
+	f, warnings, err := parseSmokePingText(t, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +542,7 @@ host = 10.0.0.2
 # a comment before the value
 title = b's title
 `
-	f, _, err := ParseSmokePing([]byte(cfg), false)
+	f, _, err := parseSmokePingText(t, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +573,7 @@ remark = also its own key
 host = 10.0.0.2
 title = trailing comment removed   # like this
 `
-	f, _, err := ParseSmokePing([]byte(cfg), false)
+	f, _, err := parseSmokePingText(t, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,4 +586,14 @@ title = trailing comment removed   # like this
 	if got := derefOr(f.Targets["b"].Title); got != "trailing comment removed" {
 		t.Errorf("b.title = %q; a trailing comment became part of the value", got)
 	}
+}
+
+// parseSmokePingText parses a config held in a string, through a temporary file.
+func parseSmokePingText(t *testing.T, cfg string, alsoIPv6 bool) (File, []string, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "smokeping.conf")
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return ParseSmokePingFile(path, alsoIPv6)
 }

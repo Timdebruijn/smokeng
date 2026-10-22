@@ -204,21 +204,12 @@ func (s *SQLite) PendingMeasurements(ctx context.Context, limit int) ([]Measurem
 	for rows.Next() {
 		var m Measurement
 		var blob []byte
-		var icmpErr, sendErr sql.NullInt64
 		if err := rows.Scan(&m.TargetID, &m.AgentID, &m.TS, &m.Sent, &m.Received,
-			&m.Flags, &blob, &icmpErr, &sendErr); err != nil {
+			&m.Flags, &blob, &m.ICMPErr, &m.SendErr); err != nil {
 			return nil, err
-		}
-		if sendErr.Valid {
-			v := uint8(sendErr.Int64)
-			m.SendErr = &v
 		}
 		if m.Samples, err = enc.Decode(blob); err != nil {
 			return nil, err
-		}
-		if icmpErr.Valid {
-			v := uint16(icmpErr.Int64)
-			m.ICMPErr = &v
 		}
 		out = append(out, m)
 	}

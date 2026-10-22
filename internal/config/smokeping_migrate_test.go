@@ -113,7 +113,7 @@ port = 8443
 ++ plainping
 host = 1.1.1.1
 `
-	f, _, err := ParseSmokePing([]byte(cfg), false)
+	f, _, err := parseSmokePingText(t, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}

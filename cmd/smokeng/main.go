@@ -116,11 +116,7 @@ func configCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		var opts []config.Option
-		if *allowUnknownAgents {
-			opts = append(opts, config.AllowUnknownAgents())
-		}
-		sum, err := config.Import(ctx, st, data, *prune, opts...)
+		sum, err := config.Import(ctx, st, data, *prune, *allowUnknownAgents)
 		if err != nil {
 			return err
 		}
@@ -156,7 +152,7 @@ func configCmd(args []string) error {
 		// Slaves named in a SmokePing file are by definition not enrolled here
 		// yet — the importer warns about each one — so the unknown-agent check
 		// would refuse every migration it is meant to enable.
-		sum, err := config.Apply(ctx, st, f, *prune, config.AllowUnknownAgents())
+		sum, err := config.Apply(ctx, st, f, *prune, true)
 		if err != nil {
 			return err
 		}

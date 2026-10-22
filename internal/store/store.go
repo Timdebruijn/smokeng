@@ -64,9 +64,6 @@ const (
 // should offer them.
 var KnownSeries = series.All
 
-// ValidSeries reports whether name is a series smokeng knows how to record.
-func ValidSeries(name string) bool { return series.Valid(name) }
-
 // Why the local side could not put a probe on the wire. Kept deliberately
 // coarse: the value has to mean the same thing across every probe type, and a
 // reason nobody can act on differently is not worth a code of its own. The
