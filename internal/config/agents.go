@@ -84,14 +84,7 @@ func agentStringFrom(v any) *string {
 
 // knownAgents is the set of names an `agents` list may legally contain.
 func knownAgents(ctx context.Context, st Store) (map[string]bool, error) {
-	lister, ok := st.(interface {
-		ListAgents(ctx context.Context) ([]store.AgentRecord, error)
-	})
-	if !ok {
-		// A store that cannot enumerate agents cannot be checked against.
-		return nil, nil
-	}
-	agents, err := lister.ListAgents(ctx)
+	agents, err := st.ListAgents(ctx)
 	if err != nil {
 		return nil, err
 	}

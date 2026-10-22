@@ -27,7 +27,7 @@ type srcLine struct {
 // levels; anything deeper is a loop the cycle guard did not catch or a mistake.
 const maxIncludeDepth = 20
 
-// ParseSmokePing converts a SmokePing Targets file into smokeng's
+// ParseSmokePingFile converts a SmokePing Targets file into smokeng's
 // configuration form. The `+`/`++`/`+++` hierarchy becomes the target tree and
 // per-node keys become local settings, so inheritance survives the move rather
 // than being flattened. The `*** Probes ***` section is read so each target's
@@ -39,27 +39,9 @@ const maxIncludeDepth = 20
 // reported as a warning rather than dropped in silence. An adoption path that
 // quietly loses configuration is worse than one that refuses it out loud.
 //
-// This byte form cannot follow @include (it has no file to resolve paths
-// against); ParseSmokePingFile can, and is what the CLI uses.
-func ParseSmokePing(data []byte, alsoIPv6 bool) (File, []string, error) {
-	var lines []srcLine
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	no := 0
-	for sc.Scan() {
-		no++
-		lines = append(lines, srcLine{file: "(input)", no: no, text: sc.Text()})
-	}
-	if err := sc.Err(); err != nil {
-		return File{}, nil, fmt.Errorf("smokeping: read: %w", err)
-	}
-	return parseSmokePing(lines, alsoIPv6, false)
-}
-
-// ParseSmokePingFile reads a SmokePing config from disk and follows @include
-// directives, resolving each relative to the including file's directory. This
-// is what turns a multi-file SmokePing install — almost every real one — into a
-// single import rather than one per file.
+// @include directives are followed, resolving each relative to the including
+// file's directory. This is what turns a multi-file SmokePing install — almost
+// every real one — into a single import rather than one per file.
 //
 // An include names a path the file chooses and what it names is read into the
 // import, so by default only what sits under the directory of the file being
@@ -86,7 +68,7 @@ func ParseSmokePingFile(path string, alsoIPv6 bool, roots ...string) (File, []st
 	if err != nil {
 		return File{}, warnings, err
 	}
-	f, w2, err := parseSmokePing(lines, alsoIPv6, true)
+	f, w2, err := parseSmokePing(lines, alsoIPv6)
 	return f, append(warnings, w2...), err
 }
 
@@ -111,7 +93,7 @@ type includeReader struct {
 
 func (r *includeReader) within(real string) bool {
 	for _, root := range r.roots {
-		if rel, err := filepath.Rel(root, real); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+		if rel, err := filepath.Rel(root, real); err == nil && filepath.IsLocal(rel) {
 			return true
 		}
 	}
@@ -139,7 +121,7 @@ func (r *includeReader) open(real string, top bool) (*os.File, error) {
 	}
 	for _, dir := range r.roots {
 		rel, err := filepath.Rel(dir, real)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		if err != nil || !filepath.IsLocal(rel) {
 			continue
 		}
 		root, err := os.OpenRoot(dir)
@@ -248,7 +230,7 @@ func (r *includeReader) read(path string, depth int, top bool) ([]srcLine, []str
 	return out, warnings, nil
 }
 
-func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []string, error) {
+func parseSmokePing(lines []srcLine, alsoIPv6 bool) (File, []string, error) {
 	f := File{Targets: map[string]Entry{}}
 	var warnings []string
 	warn := func(sl srcLine, format string, args ...any) {
@@ -346,11 +328,9 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 			// Build the probe-name → module map. Depth-1 names are modules;
 			// deeper names are subclasses that inherit their ancestor's module.
 			if strings.HasPrefix(trimmed, "+") {
-				depth := 0
-				for depth < len(trimmed) && trimmed[depth] == '+' {
-					depth++
-				}
-				pname := strings.TrimSpace(trimmed[depth:])
+				pname := strings.TrimLeft(trimmed, "+")
+				depth := len(trimmed) - len(pname)
+				pname = strings.TrimSpace(pname)
 				if pname == "" {
 					continue
 				}
@@ -373,21 +353,14 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 		// --- Targets section ---
 
 		if strings.HasPrefix(trimmed, "@include") {
-			if includesFollowed {
-				// readSmokePingLines already expanded it; this line cannot occur.
-				continue
-			}
-			warn(sl, "@include is not followed by the byte parser; use "+
-				"`smokeng config import-smokeping FILE`, which follows includes relative to the file")
+			// r.read already expanded it; this line cannot occur.
 			continue
 		}
 
 		if strings.HasPrefix(trimmed, "+") {
-			depth := 0
-			for depth < len(trimmed) && trimmed[depth] == '+' {
-				depth++
-			}
-			name := strings.TrimSpace(trimmed[depth:])
+			name := strings.TrimLeft(trimmed, "+")
+			depth := len(trimmed) - len(name)
+			name = strings.TrimSpace(name)
 			if name == "" {
 				return f, warnings, fmt.Errorf("smokeping: %s line %d: %q has no name", sl.file, sl.no, trimmed)
 			}
@@ -425,24 +398,26 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 		}
 	}
 	flush()
-	if !sawTargetsHeader {
-		warnAt("(input)", "no '*** Targets ***' header found; treating the whole file as targets")
+	if !sawTargetsHeader && len(lines) > 0 {
+		warnAt(lines[0].file, "no '*** Targets ***' header found; treating the whole file as targets")
+	}
+
+	// posInt reads a positive count, or warns and leaves the setting unset.
+	posInt := func(where, label, v string) *int {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			warnAt(where, "%s = %q is not a positive number; ignored", label, v)
+			return nil
+		}
+		return &n
 	}
 
 	// File-level defaults become the root's settings.
 	if v, ok := top["pings"]; ok {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			f.Defaults.PingsPerInterval = &n
-		} else {
-			warnAt("(defaults)", "top-level pings = %q is not a positive number; ignored", v)
-		}
+		f.Defaults.PingsPerInterval = posInt("(defaults)", "top-level pings", v)
 	}
 	if v, ok := top["step"]; ok {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			f.Defaults.IntervalS = &n
-		} else {
-			warnAt("(defaults)", "top-level step = %q is not a positive number; ignored", v)
-		}
+		f.Defaults.IntervalS = posInt("(defaults)", "top-level step", v)
 	}
 
 	// probe inherits down the tree in SmokePing, so resolve it per node.
@@ -475,18 +450,10 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 
 		// Timing.
 		if v, ok := n.keys["pings"]; ok {
-			if p, err := strconv.Atoi(v); err == nil && p > 0 {
-				entry.PingsPerInterval = &p
-			} else {
-				warnAt(n.path, "pings = %q is not a positive number; ignored", v)
-			}
+			entry.PingsPerInterval = posInt(n.path, "pings", v)
 		}
 		if v, ok := n.keys["step"]; ok {
-			if s, err := strconv.Atoi(v); err == nil && s > 0 {
-				entry.IntervalS = &s
-			} else {
-				warnAt(n.path, "step = %q is not a positive number; ignored", v)
-			}
+			entry.IntervalS = posInt(n.path, "step", v)
 		}
 
 		// Which agents measure this node. SmokePing's slaves add to master
@@ -541,10 +508,7 @@ func parseSmokePing(lines []srcLine, alsoIPv6, includesFollowed bool) (File, []s
 			continue
 		default:
 			probe := probeAt[n.path]
-			module := probeModule[probe]
-			if module == "" {
-				module = probe // referenced a built-in module directly
-			}
+			module := moduleAt(probe, probeModule)
 			ptype := probeTypeFor(module)
 			fam, dup := familyFor(host, probe, alsoIPv6)
 			entry.Host = strPtr(host)

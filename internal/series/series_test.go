@@ -1,8 +1,8 @@
 package series
 
 import (
-	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -36,17 +36,13 @@ func TestParseSelection(t *testing.T) {
 // Ansible, and a typo that silently drew nothing would look exactly like a link
 // with no jitter — which is the reading this project exists to prevent.
 func TestParseSelectionRefusesTypos(t *testing.T) {
-	var unknown *UnknownError
 	_, _, err := ParseSelection("ipdv_sideways")
-	if !errors.As(err, &unknown) {
-		t.Fatalf("err = %v, want *UnknownError", err)
-	}
-	if unknown.Name != "ipdv_sideways" {
-		t.Errorf("the error does not name the offending value: %q", unknown.Name)
+	if err == nil || !strings.Contains(err.Error(), "ipdv_sideways") {
+		t.Fatalf("err = %v, want one naming the offending value", err)
 	}
 	// It also lists what is valid, so the message is actionable on its own.
 	for _, want := range append(slices.Clone(All), SelectAll) {
-		if !contains(err.Error(), want) {
+		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q: %v", want, err)
 		}
 	}
@@ -64,13 +60,9 @@ func TestParseSelectionRefusesTypos(t *testing.T) {
 // A name given twice is a mistake, not a request for two graphs. Nothing
 // exercised this branch, so it could have been deleted unnoticed.
 func TestParseSelectionRefusesDuplicates(t *testing.T) {
-	var dup *DuplicateError
 	_, _, err := ParseSelection(IPDVSend + " " + IPDVSend)
-	if !errors.As(err, &dup) {
-		t.Fatalf("err = %v, want *DuplicateError", err)
-	}
-	if dup.Name != IPDVSend {
-		t.Errorf("DuplicateError names %q", dup.Name)
+	if err == nil || !strings.Contains(err.Error(), IPDVSend) {
+		t.Fatalf("err = %v, want one naming %q", err, IPDVSend)
 	}
 }
 
@@ -85,18 +77,4 @@ func TestValid(t *testing.T) {
 			t.Errorf("Valid(%q) = true", n)
 		}
 	}
-}
-
-func contains(hay, needle string) bool {
-	return len(needle) > 0 && len(hay) >= len(needle) &&
-		(hay == needle || indexOf(hay, needle) >= 0)
-}
-
-func indexOf(hay, needle string) int {
-	for i := 0; i+len(needle) <= len(hay); i++ {
-		if hay[i:i+len(needle)] == needle {
-			return i
-		}
-	}
-	return -1
 }

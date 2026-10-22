@@ -1,9 +1,10 @@
 package config
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/timdebruijn/smokeng/internal/store"
@@ -17,15 +18,6 @@ type GrantEntry struct {
 	Group string `toml:"group"`
 	Path  string `toml:"path"`
 	Role  string `toml:"role"`
-}
-
-// GrantStore is the persistence grants need. It is separate from Store so an
-// import against something that cannot hold grants simply does not sync them,
-// rather than failing.
-type GrantStore interface {
-	ListGrants(ctx context.Context) ([]store.Grant, error)
-	UpsertGrant(ctx context.Context, g *store.Grant) error
-	DeleteGrant(ctx context.Context, id int64) error
 }
 
 // syncGrants applies the file's grants.
@@ -42,10 +34,6 @@ type GrantStore interface {
 // everything.
 func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []tree.Target, sum *Summary) error {
 	if f.Grants == nil {
-		return nil
-	}
-	gs, ok := st.(GrantStore)
-	if !ok {
 		return nil
 	}
 	byPath := map[string]int64{}
@@ -78,7 +66,7 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 		wanted[key{group, id}] = e.Role
 	}
 
-	current, err := gs.ListGrants(ctx)
+	current, err := st.ListGrants(ctx)
 	if err != nil {
 		return err
 	}
@@ -92,11 +80,8 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 	for k := range wanted {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].group != keys[j].group {
-			return keys[i].group < keys[j].group
-		}
-		return keys[i].id < keys[j].id
+	slices.SortFunc(keys, func(a, b key) int {
+		return cmp.Or(cmp.Compare(a.group, b.group), cmp.Compare(a.id, b.id))
 	})
 
 	for _, k := range keys {
@@ -106,14 +91,14 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 				continue
 			}
 			prev.Role = role
-			if err := gs.UpsertGrant(ctx, &prev); err != nil {
+			if err := st.UpsertGrant(ctx, &prev); err != nil {
 				return err
 			}
 			sum.GrantsUpdated++
 			continue
 		}
 		g := store.Grant{Group: k.group, TargetID: k.id, Role: role}
-		if err := gs.UpsertGrant(ctx, &g); err != nil {
+		if err := st.UpsertGrant(ctx, &g); err != nil {
 			return err
 		}
 		sum.GrantsCreated++
@@ -122,7 +107,7 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 		if _, ok := wanted[k]; ok {
 			continue
 		}
-		if err := gs.DeleteGrant(ctx, g.ID); err != nil {
+		if err := st.DeleteGrant(ctx, g.ID); err != nil {
 			return err
 		}
 		sum.GrantsRemoved++
@@ -133,11 +118,7 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 // exportGrants renders the grants as TOML entries, sorted so an export is
 // stable enough to keep in a repository.
 func exportGrants(ctx context.Context, st Store, tr *tree.Tree) ([]GrantEntry, error) {
-	gs, ok := st.(GrantStore)
-	if !ok {
-		return nil, nil
-	}
-	current, err := gs.ListGrants(ctx)
+	current, err := st.ListGrants(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -152,11 +133,8 @@ func exportGrants(ctx context.Context, st Store, tr *tree.Tree) ([]GrantEntry, e
 			Group: g.Group, Path: strings.TrimPrefix(p, "/"), Role: g.Role,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Group != out[j].Group {
-			return out[i].Group < out[j].Group
-		}
-		return out[i].Path < out[j].Path
+	slices.SortFunc(out, func(a, b GrantEntry) int {
+		return cmp.Or(cmp.Compare(a.Group, b.Group), cmp.Compare(a.Path, b.Path))
 	})
 	return out, nil
 }

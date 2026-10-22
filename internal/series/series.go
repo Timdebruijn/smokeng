@@ -7,7 +7,11 @@
 // store already imports the tree — so the names live below both.
 package series
 
-import "strings"
+import (
+	"fmt"
+	"slices"
+	"strings"
+)
 
 const (
 	// IPDVSend is inter-packet delay variation on the way out: how much later
@@ -36,14 +40,7 @@ var All = []string{IPDVSend, IPDVReceive, ServerProcessing}
 // Valid reports whether name is a series smokeng knows how to record. An
 // unknown name is refused at the door rather than stored and later rendered as
 // an unlabelled curve.
-func Valid(name string) bool {
-	for _, s := range All {
-		if s == name {
-			return true
-		}
-	}
-	return false
-}
+func Valid(name string) bool { return slices.Contains(All, name) }
 
 // SelectAll is the graph_series value meaning "draw every series that has
 // data". It is the default: a measurement smokeng took and did not show is one
@@ -69,26 +66,14 @@ func ParseSelection(v string) (names []string, all bool, err error) {
 	seen := map[string]bool{}
 	for _, f := range strings.Fields(v) {
 		if !Valid(f) {
-			return nil, false, &UnknownError{Name: f}
+			return nil, false, fmt.Errorf("unknown series %s (known: %s, or %s)",
+				f, strings.Join(All, ", "), SelectAll)
 		}
 		if seen[f] {
-			return nil, false, &DuplicateError{Name: f}
+			return nil, false, fmt.Errorf("series %s listed twice", f)
 		}
 		seen[f] = true
 		names = append(names, f)
 	}
 	return names, false, nil
 }
-
-// UnknownError names a series the setting asked for that does not exist.
-type UnknownError struct{ Name string }
-
-func (e *UnknownError) Error() string {
-	return "unknown series " + e.Name + " (known: " + strings.Join(All, ", ") +
-		", or " + SelectAll + ")"
-}
-
-// DuplicateError names a series listed more than once.
-type DuplicateError struct{ Name string }
-
-func (e *DuplicateError) Error() string { return "series " + e.Name + " listed twice" }
