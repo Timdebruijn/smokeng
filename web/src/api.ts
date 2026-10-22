@@ -15,10 +15,14 @@ export interface Me {
   subject?: string
 }
 
+async function get<T>(url: string, what: string): Promise<T> {
+  const r = await fetch(url, { cache: 'no-store' })
+  if (!r.ok) throw new Error(`${what}: HTTP ${r.status}`)
+  return (await r.json()) as T
+}
+
 export async function fetchMe(): Promise<Me> {
-  const r = await fetch('/api/v1/me', { cache: 'no-store' })
-  if (!r.ok) throw new Error(`me: HTTP ${r.status}`)
-  return (await r.json()) as Me
+  return get<Me>('/api/v1/me', 'me')
 }
 
 export async function logout(): Promise<void> {
@@ -83,9 +87,7 @@ export interface Silence {
 }
 
 export async function fetchSilences(): Promise<Silence[]> {
-  const r = await fetch('/api/v1/silences', { cache: 'no-store' })
-  if (!r.ok) throw new Error(`silences: HTTP ${r.status}`)
-  return ((await r.json()) as { silences: Silence[] }).silences ?? []
+  return (await get<{ silences: Silence[] }>('/api/v1/silences', 'silences')).silences ?? []
 }
 
 /**
@@ -122,9 +124,7 @@ export interface AlertBaseline {
 }
 
 export async function fetchAlertBaselines(): Promise<AlertBaseline[]> {
-  const r = await fetch('/api/v1/alert-baselines', { cache: 'no-store' })
-  if (!r.ok) throw new Error(`baselines: HTTP ${r.status}`)
-  return ((await r.json()) as { baselines: AlertBaseline[] }).baselines ?? []
+  return (await get<{ baselines: AlertBaseline[] }>('/api/v1/alert-baselines', 'baselines')).baselines ?? []
 }
 
 /** Capture what a window measured as a shape rule's reference. */
@@ -160,9 +160,7 @@ export async function fetchShapeReference(
     target_id: String(targetId),
     agent_id: String(agentId),
   })
-  const r = await fetch(`/api/v1/shape-reference?${p.toString()}`, { cache: 'no-store' })
-  if (!r.ok) throw new Error(`shape reference: HTTP ${r.status}`)
-  return (await r.json()) as ShapeReference
+  return get<ShapeReference>(`/api/v1/shape-reference?${p.toString()}`, 'shape reference')
 }
 
 /** One outage in an availability report: a contiguous run of down intervals. */
@@ -216,9 +214,7 @@ export async function fetchAvailability(
     to: String(to),
   })
   if (downThreshold !== undefined) p.set('down_threshold', String(downThreshold))
-  const r = await fetch(`/api/v1/availability?${p.toString()}`, { cache: 'no-store' })
-  if (!r.ok) throw new Error(`availability: HTTP ${r.status}`)
-  return (await r.json()) as AvailabilityResponse
+  return get<AvailabilityResponse>(`/api/v1/availability?${p.toString()}`, 'availability')
 }
 
 /**
@@ -238,9 +234,7 @@ export function acknowledgeAlert(
 }
 
 export async function fetchAlertRules(): Promise<AlertRule[]> {
-  const r = await fetch('/api/v1/alert-rules', { cache: 'no-store' })
-  if (!r.ok) throw new Error(`alert rules: HTTP ${r.status}`)
-  return ((await r.json()) as { rules: AlertRule[] }).rules ?? []
+  return (await get<{ rules: AlertRule[] }>('/api/v1/alert-rules', 'alert rules')).rules ?? []
 }
 
 export async function fetchFiringAlerts(): Promise<{
@@ -250,13 +244,7 @@ export async function fetchFiringAlerts(): Promise<{
   /** Transitions are posted somewhere as well as recorded. */
   delivering: boolean
 }> {
-  const r = await fetch('/api/v1/alerts', { cache: 'no-store' })
-  if (!r.ok) throw new Error(`alerts: HTTP ${r.status}`)
-  return (await r.json()) as {
-    alerts: FiringAlert[]
-    enabled: boolean
-    delivering: boolean
-  }
+  return get('/api/v1/alerts', 'alerts')
 }
 
 /** One transition: a rule started firing, or stopped. */
@@ -373,10 +361,7 @@ export interface Target {
 }
 
 export async function fetchTargets(): Promise<Target[]> {
-  const r = await fetch('/api/v1/targets', { cache: 'no-store' })
-  if (!r.ok) throw new Error(`targets: HTTP ${r.status}`)
-  const body = (await r.json()) as { targets: Target[] }
-  return body.targets
+  return (await get<{ targets: Target[] }>('/api/v1/targets', 'targets')).targets
 }
 
 /** Surfaces the server's validation message, which names the offending field. */
@@ -437,9 +422,7 @@ export interface Grant {
 }
 
 export async function fetchGrants(): Promise<Grant[]> {
-  const r = await fetch('/api/v1/grants', { cache: 'no-store' })
-  if (!r.ok) throw new Error(`grants: HTTP ${r.status}`)
-  return ((await r.json()) as { grants: Grant[] }).grants ?? []
+  return (await get<{ grants: Grant[] }>('/api/v1/grants', 'grants')).grants ?? []
 }
 
 /** Posting the same (group, target_id) again re-roles the existing grant rather than duplicating it. */
@@ -581,12 +564,8 @@ export async function fetchPathChanges(
   from: number,
   to: number,
 ): Promise<PathChange[]> {
-  const r = await fetch(
-    `/api/v1/paths?target_id=${targetId}&agent_id=${agentId}&from=${from}&to=${to}`,
-    { cache: 'no-store' },
-  )
-  if (!r.ok) throw new Error(`paths: HTTP ${r.status}`)
-  return ((await r.json()) as { changes: PathChange[] }).changes ?? []
+  const url = `/api/v1/paths?target_id=${targetId}&agent_id=${agentId}&from=${from}&to=${to}`
+  return (await get<{ changes: PathChange[] }>(url, 'paths')).changes ?? []
 }
 
 export interface AgentInfo {
@@ -601,9 +580,7 @@ export interface AgentInfo {
 }
 
 export async function fetchAgents(): Promise<AgentInfo[]> {
-  const r = await fetch('/api/v1/agents', { cache: 'no-store' })
-  if (!r.ok) throw new Error(`agents: HTTP ${r.status}`)
-  return ((await r.json()) as { agents: AgentInfo[] }).agents ?? []
+  return (await get<{ agents: AgentInfo[] }>('/api/v1/agents', 'agents')).agents ?? []
 }
 
 /** The local prober (id 0) refuses both fields — the UI should not offer them for it. */
@@ -628,9 +605,7 @@ export interface AgentToken {
 }
 
 export async function fetchAgentTokens(): Promise<AgentToken[]> {
-  const r = await fetch('/api/v1/agent-tokens', { cache: 'no-store' })
-  if (!r.ok) throw new Error(`agent tokens: HTTP ${r.status}`)
-  return ((await r.json()) as { tokens: AgentToken[] }).tokens ?? []
+  return (await get<{ tokens: AgentToken[] }>('/api/v1/agent-tokens', 'agent tokens')).tokens ?? []
 }
 
 /** The plaintext `token` is returned only in this response — it is never shown again. */
@@ -685,28 +660,6 @@ const inFlight = new Map<string, { at: number; p: Promise<Series> }>()
  */
 const SHARE_MS = 2000
 
-function copySeries(s: Series): Series {
-  const extra: Record<string, ExtraSeries> = {}
-  for (const [k, v] of Object.entries(s.extra)) {
-    extra[k] = {
-      offsets: v.offsets.slice(),
-      values: v.values.slice(),
-      measured: v.measured.slice(),
-    }
-  }
-  return {
-    ts: s.ts.slice(),
-    sent: s.sent.slice(),
-    received: s.received.slice(),
-    flags: s.flags.slice(),
-    offsets: s.offsets.slice(),
-    values: s.values.slice(),
-    icmpErrors: s.icmpErrors.slice(),
-    sendErrors: s.sendErrors.slice(),
-    extra,
-  }
-}
-
 export function fetchSeries(
   targetId: number,
   agentId: number,
@@ -716,7 +669,7 @@ export function fetchSeries(
   const key = `${targetId}/${agentId}/${from}/${to}`
   const now = Date.now()
   const hit = inFlight.get(key)
-  if (hit && now - hit.at < SHARE_MS) return hit.p.then(copySeries)
+  if (hit && now - hit.at < SHARE_MS) return hit.p.then((s) => structuredClone(s))
   const p = fetchSeriesUncached(targetId, agentId, from, to).catch((e: unknown) => {
     // A failure is never shared: the next caller must be able to try again.
     // Guarded like the timeout below, and for the same reason — a slow request
@@ -731,7 +684,7 @@ export function fetchSeries(
   setTimeout(() => {
     if (inFlight.get(key)?.p === p) inFlight.delete(key)
   }, SHARE_MS)
-  return p.then(copySeries)
+  return p.then((s) => structuredClone(s))
 }
 
 async function fetchSeriesUncached(
@@ -783,8 +736,8 @@ export interface ImportResult {
  * is recoverable by importing again. Pruning deletes, and stays on the command
  * line.
  */
-export async function importConfig(toml: string, allowUnknownAgents = false): Promise<ImportResult> {
-  const r = await fetch(`/api/v1/config${allowUnknownAgents ? '?allow_unknown_agents=1' : ''}`, {
+export async function importConfig(toml: string): Promise<ImportResult> {
+  const r = await fetch('/api/v1/config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/toml' },
     body: toml,
