@@ -1,9 +1,10 @@
 package config
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/timdebruijn/smokeng/internal/store"
@@ -92,11 +93,8 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 	for k := range wanted {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].group != keys[j].group {
-			return keys[i].group < keys[j].group
-		}
-		return keys[i].id < keys[j].id
+	slices.SortFunc(keys, func(a, b key) int {
+		return cmp.Or(cmp.Compare(a.group, b.group), cmp.Compare(a.id, b.id))
 	})
 
 	for _, k := range keys {
@@ -152,11 +150,8 @@ func exportGrants(ctx context.Context, st Store, tr *tree.Tree) ([]GrantEntry, e
 			Group: g.Group, Path: strings.TrimPrefix(p, "/"), Role: g.Role,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Group != out[j].Group {
-			return out[i].Group < out[j].Group
-		}
-		return out[i].Path < out[j].Path
+	slices.SortFunc(out, func(a, b GrantEntry) int {
+		return cmp.Or(cmp.Compare(a.Group, b.Group), cmp.Compare(a.Path, b.Path))
 	})
 	return out, nil
 }

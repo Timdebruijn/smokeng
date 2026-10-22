@@ -146,7 +146,7 @@ func TestSmokePingImportApplies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum, err := Apply(ctx, st, f, false, AllowUnknownAgents())
+	sum, err := Apply(ctx, st, f, false, true)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}

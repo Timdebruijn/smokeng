@@ -19,11 +19,12 @@ package config
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -159,20 +160,13 @@ func (s Summary) String() string {
 
 // Import applies a TOML file to the store as a declarative sync. The
 // resulting tree is fully validated before anything is written.
-// Option adjusts how an import behaves. Options are variadic so the common
-// call stays a call and does not need an options struct built for it.
-type Option func(*options)
-
-type options struct{ allowUnknownAgents bool }
-
-// AllowUnknownAgents downgrades an `agents` entry that names no enrolled agent
+//
+// allowUnknownAgents downgrades an `agents` entry that names no enrolled agent
 // from an error to a warning, for the case where the tree is meant to land
 // before the agents that will serve it. It is opt-in because the common cause
 // of an unknown name is a typo, and a typo means nobody measures that target
 // (DESIGN.md §4.4).
-func AllowUnknownAgents() Option { return func(o *options) { o.allowUnknownAgents = true } }
-
-func Import(ctx context.Context, st Store, data []byte, prune bool, opts ...Option) (Summary, error) {
+func Import(ctx context.Context, st Store, data []byte, prune, allowUnknownAgents bool) (Summary, error) {
 	var f File
 	// Strict: a key smokeng does not know is a mistake, and accepting it
 	// quietly is how "probe_type = dns" ends up in a file, changing nothing,
@@ -189,17 +183,13 @@ func Import(ctx context.Context, st Store, data []byte, prune bool, opts ...Opti
 		}
 		return Summary{}, fmt.Errorf("config: parse: %w", err)
 	}
-	return Apply(ctx, st, f, prune, opts...)
+	return Apply(ctx, st, f, prune, allowUnknownAgents)
 }
 
 // Apply syncs an already-parsed configuration into the store. Both the TOML
 // importer and the SmokePing importer land here, so they cannot drift apart
 // in how absence, inheritance or validation are handled.
-func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (Summary, error) {
-	var o options
-	for _, fn := range opts {
-		fn(&o)
-	}
+func Apply(ctx context.Context, st Store, f File, prune, allowUnknownAgents bool) (Summary, error) {
 	var sum Summary
 	if err := f.normaliseAgentLists(); err != nil {
 		return sum, err
@@ -262,12 +252,8 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 	for p := range f.Targets {
 		paths = append(paths, p)
 	}
-	sort.Slice(paths, func(i, j int) bool {
-		di, dj := strings.Count(paths[i], "/"), strings.Count(paths[j], "/")
-		if di != dj {
-			return di < dj
-		}
-		return paths[i] < paths[j]
+	slices.SortFunc(paths, func(a, b string) int {
+		return cmp.Or(cmp.Compare(strings.Count(a, "/"), strings.Count(b, "/")), cmp.Compare(a, b))
 	})
 	created := map[string]bool{}
 	ensure := func(path string) *tree.Target {
@@ -301,29 +287,7 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 		n.Hidden = e.Hidden
 		n.Enabled = !e.Disabled
 		n.SortOrder = e.SortOrder
-		n.Settings = tree.Settings{
-			IntervalS:        e.IntervalS,
-			PingsPerInterval: e.PingsPerInterval,
-			ProbeMode:        e.ProbeMode,
-			BurstGapMS:       e.BurstGapMS,
-			TimeoutMS:        e.TimeoutMS,
-			PacketSize:       e.PacketSize,
-			DSCP:             e.DSCP,
-			Agents:           agentStringFrom(e.Agents),
-			ProbeType:        e.ProbeType,
-			ProbePort:        e.ProbePort,
-			DNSQuery:         e.DNSQuery,
-			DNSRRType:        e.DNSRRType,
-			HTTPPath:         e.HTTPPath,
-			TLSSkipVerify:    e.TLSSkipVerify,
-			// A per-target trace_interval_s used to be dropped here — parsed,
-			// validated and exported everywhere else, but never written on a
-			// non-root node, so an export/import round-trip lost it. Carried
-			// through now, alongside retention_s.
-			TraceIntervalS: e.TraceIntervalS,
-			RetentionS:     e.RetentionS,
-			GraphSeries:    e.GraphSeries,
-		}
+		n.Settings = e.settings()
 		if existed && !reflect.DeepEqual(before, *n) {
 			sum.Updated++
 		}
@@ -341,7 +305,7 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 		declared[p] = true
 	}
 	if problems := checkAgentRefs(nodes, declared, known); len(problems) > 0 {
-		if !o.allowUnknownAgents {
+		if !allowUnknownAgents {
 			return sum, agentRefError(problems, known)
 		}
 		for _, p := range problems {
@@ -378,8 +342,8 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 		}
 	}
 	// Children before parents.
-	sort.Slice(deletePaths, func(i, j int) bool {
-		return strings.Count(deletePaths[i], "/") > strings.Count(deletePaths[j], "/")
+	slices.SortFunc(deletePaths, func(a, b string) int {
+		return cmp.Compare(strings.Count(b, "/"), strings.Count(a, "/"))
 	})
 	deleted := map[string]bool{}
 	for _, p := range deletePaths {
@@ -437,12 +401,8 @@ func Apply(ctx context.Context, st Store, f File, prune bool, opts ...Option) (S
 			order = append(order, p)
 		}
 	}
-	sort.Slice(order, func(i, j int) bool {
-		di, dj := depth(order[i]), depth(order[j])
-		if di != dj {
-			return di < dj
-		}
-		return order[i] < order[j]
+	slices.SortFunc(order, func(a, b string) int {
+		return cmp.Or(cmp.Compare(depth(a), depth(b)), cmp.Compare(a, b))
 	})
 	for _, p := range order {
 		n := nodes[p]
@@ -691,57 +651,62 @@ func valuesFrom(s tree.Settings) Values {
 	}
 }
 
+// settings converts the TOML spelling of the inheritable settings to the
+// tree's. The one difference is agents, which TOML accepts as an array or a
+// string and the tree holds as the space-separated string.
+func (v Values) settings() tree.Settings {
+	return tree.Settings{
+		IntervalS:        v.IntervalS,
+		PingsPerInterval: v.PingsPerInterval,
+		ProbeMode:        v.ProbeMode,
+		BurstGapMS:       v.BurstGapMS,
+		TimeoutMS:        v.TimeoutMS,
+		PacketSize:       v.PacketSize,
+		DSCP:             v.DSCP,
+		Agents:           agentStringFrom(v.Agents),
+		ProbeType:        v.ProbeType,
+		ProbePort:        v.ProbePort,
+		DNSQuery:         v.DNSQuery,
+		DNSRRType:        v.DNSRRType,
+		HTTPPath:         v.HTTPPath,
+		TLSSkipVerify:    v.TLSSkipVerify,
+		// A per-target trace_interval_s used to be dropped on import: parsed,
+		// validated and exported everywhere else, but never written on a
+		// non-root node, so an export/import round-trip lost it.
+		TraceIntervalS: v.TraceIntervalS,
+		RetentionS:     v.RetentionS,
+		GraphSeries:    v.GraphSeries,
+	}
+}
+
+// overlayValues copies onto dst only the settings v provides.
 func overlayValues(dst *tree.Settings, v Values) {
-	if v.IntervalS != nil {
-		dst.IntervalS = v.IntervalS
-	}
-	if v.PingsPerInterval != nil {
-		dst.PingsPerInterval = v.PingsPerInterval
-	}
-	if v.ProbeMode != nil {
-		dst.ProbeMode = v.ProbeMode
-	}
-	if v.BurstGapMS != nil {
-		dst.BurstGapMS = v.BurstGapMS
-	}
-	if v.TimeoutMS != nil {
-		dst.TimeoutMS = v.TimeoutMS
-	}
-	if v.PacketSize != nil {
-		dst.PacketSize = v.PacketSize
-	}
-	if v.DSCP != nil {
-		dst.DSCP = v.DSCP
-	}
+	s := v.settings()
+	set(&dst.IntervalS, s.IntervalS)
+	set(&dst.PingsPerInterval, s.PingsPerInterval)
+	set(&dst.ProbeMode, s.ProbeMode)
+	set(&dst.BurstGapMS, s.BurstGapMS)
+	set(&dst.TimeoutMS, s.TimeoutMS)
+	set(&dst.PacketSize, s.PacketSize)
+	set(&dst.DSCP, s.DSCP)
+	set(&dst.ProbeType, s.ProbeType)
+	set(&dst.ProbePort, s.ProbePort)
+	set(&dst.DNSQuery, s.DNSQuery)
+	set(&dst.DNSRRType, s.DNSRRType)
+	set(&dst.HTTPPath, s.HTTPPath)
+	set(&dst.TLSSkipVerify, s.TLSSkipVerify)
+	set(&dst.TraceIntervalS, s.TraceIntervalS)
+	set(&dst.RetentionS, s.RetentionS)
+	set(&dst.GraphSeries, s.GraphSeries)
 	if v.Agents != nil {
-		dst.Agents = agentStringFrom(v.Agents)
+		dst.Agents = s.Agents
 	}
-	if v.ProbeType != nil {
-		dst.ProbeType = v.ProbeType
-	}
-	if v.ProbePort != nil {
-		dst.ProbePort = v.ProbePort
-	}
-	if v.DNSQuery != nil {
-		dst.DNSQuery = v.DNSQuery
-	}
-	if v.DNSRRType != nil {
-		dst.DNSRRType = v.DNSRRType
-	}
-	if v.HTTPPath != nil {
-		dst.HTTPPath = v.HTTPPath
-	}
-	if v.TLSSkipVerify != nil {
-		dst.TLSSkipVerify = v.TLSSkipVerify
-	}
-	if v.TraceIntervalS != nil {
-		dst.TraceIntervalS = v.TraceIntervalS
-	}
-	if v.RetentionS != nil {
-		dst.RetentionS = v.RetentionS
-	}
-	if v.GraphSeries != nil {
-		dst.GraphSeries = v.GraphSeries
+}
+
+// set replaces *dst with src unless src is nil.
+func set[T any](dst **T, src *T) {
+	if src != nil {
+		*dst = src
 	}
 }
 
@@ -762,25 +727,7 @@ func validateEntry(p string, e Entry) error {
 		Name:          p[strings.LastIndex(p, "/")+1:],
 		Host:          e.Host,
 		AddressFamily: e.AddressFamily,
-		Settings: tree.Settings{
-			IntervalS:        e.IntervalS,
-			PingsPerInterval: e.PingsPerInterval,
-			ProbeMode:        e.ProbeMode,
-			BurstGapMS:       e.BurstGapMS,
-			TimeoutMS:        e.TimeoutMS,
-			PacketSize:       e.PacketSize,
-			DSCP:             e.DSCP,
-			Agents:           agentStringFrom(e.Agents),
-			ProbeType:        e.ProbeType,
-			ProbePort:        e.ProbePort,
-			DNSQuery:         e.DNSQuery,
-			DNSRRType:        e.DNSRRType,
-			HTTPPath:         e.HTTPPath,
-			TLSSkipVerify:    e.TLSSkipVerify,
-			TraceIntervalS:   e.TraceIntervalS,
-			RetentionS:       e.RetentionS,
-			GraphSeries:      e.GraphSeries,
-		},
+		Settings:      e.settings(),
 	}
 	if err := t.Validate(); err != nil {
 		return fmt.Errorf("config: %q: %w", p, err)
