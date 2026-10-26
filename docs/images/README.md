@@ -1,30 +1,31 @@
 # Documentation screenshots
 
-The docs reference these PNGs directly; the captions and alt text live with each
-reference. All are captured from a live instance at 1280 logical pixels wide, 2× device
-scale, theme-light.
+The README and the docs reference these files directly; captions and alt text live with each
+reference.
 
 | File | View | Referenced from |
 | --- | --- | --- |
-| `smokeng.png` | **Graphs** (hero) — the stacked density smoke led by a service probe whose distribution shows real spread and a faint tail, with loss rails, quality badges and the target-tree sidebar. | `README.md`, `reading-graphs.md` |
-| `overview.png` | **Overview** — the KPI cards, the per-series list with sparklines, and the firing/recent-alert panel. | `getting-started.md` |
-| `compare.png` | **Compare** — the compare overlay: every vantage point's pooled median on one axis with the legend. | `reading-graphs.md` |
-| `detail.png` | **Detail** — median / p95 / spread above the full-height smoke plot, the availability panel, and the effective settings and alert rules alongside. | `reading-graphs.md` |
-| `alerts.png` | **Alerts** — firing alerts, the rule list (including shape and bimodality rules and a golden reference), silences and maintenance windows, and the transition history. | `alerting.md` |
+| `tour.gif` | A short tour: overview, graphs, a crosshair sweep, a brush-zoom, a detail page, alerts. 960 px wide, 17 frames. | `README.md` |
+| `graphs.png` | **Graphs** — an uplink with evening congestion and loss, a wifi access point that splits into two bands, an irtt target with its userspace badges. | `README.md`, `reading-graphs.md` |
+| `overview.png` | **Overview** — KPI cards, the per-series list with sparklines, firing alerts and measurement quality. | `README.md`, `getting-started.md` |
+| `compare.png` | **Compare** — two public resolvers, each from the master and from a branch-office agent. | `README.md`, `reading-graphs.md` |
+| `detail.png` | **Detail** — median, p95, spread and loss above the full-height smoke of the bimodal target. | `README.md`, `reading-graphs.md` |
+| `alerts.png` | **Alerts** — a firing bimodality rule and a latency rule, the rule list, silences, history. | `README.md`, `alerting.md` |
+| `targets.png` | **Targets** — the tree admin with values set on the node next to inherited ones. | `README.md` |
 
-The first three are 2560×1884 (942 logical high); `detail.png` and `alerts.png` are
-2560×3000, since both pages are longer than a viewport.
+Stills are 1280 logical pixels wide at 2× device scale, light theme; the GIF is captured at 1×.
 
-## Recapturing
+## How they were made
 
-Driven with headless Chrome over the DevTools Protocol — no dependencies beyond Chrome
-and a recent Node (global `WebSocket`). Point it at a running instance and set device
-metrics to `1280×<height>`, `deviceScaleFactor: 2`.
+From a demo instance, not a production one: a throwaway VM running the released binary against
+public resolvers plus three network namespaces whose reply path runs through `netem` (the
+delay has to sit on the reply side: kernel transmit stamps are taken after the qdisc, so a
+delay on the sending host is correctly not measured). A small loop changes the conditions on a
+schedule — evening congestion with loss on one uplink, and a random half of the replies on a
+wifi target sent through a slower band — so the alerts in the shots fired for real. A second
+namespace runs an agent behind 25 ms of extra WAN delay for the compare view.
 
-Two things matter for a shot that is honest as well as tidy:
-
-- Set the graph range to **15m** and prefer views with no empty "from &lt;agent&gt;"
-  panels, so nothing reads as broken that is merely unassigned.
-- The availability panel defaults to **7d**. On a target only a day or two old that
-  shows low coverage — true, but an artefact of the instance rather than of the report.
-  **24h** shows the panel doing its job.
+Pages were driven with Playwright (`playwright-core` against the system Chrome) on the 15m
+range, and the GIF frames were joined with Pillow using one palette built from every frame.
+A young demo shows low availability *coverage* over 7 days, which is true and would read as
+broken in a screenshot, so the detail shot stops above the availability panel.

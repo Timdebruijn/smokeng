@@ -1,435 +1,254 @@
+<div align="center">
+
 # smokeng
 
-A latency monitoring tool in the spirit of [SmokePing](https://oss.oetiker.ch/smokeping/),
-rebuilt from scratch. The one thing that makes it worth existing: it keeps the **full RTT
-distribution per measurement interval, forever, at full resolution**, and renders it as
-actual density — no rollup, no consolidation, no single-value-per-check.
+### See the shape of your network, not its average.
 
-![The smokeng graphs view: a target's RTT distribution drawn as density smoke, with the
-pooled median line and the loss rail beneath it on a shared time axis](docs/images/smokeng.png)
+Self-hosted latency and packet-loss monitoring that keeps every round-trip time, alerts when the distribution changes shape, and flags any measurement it can't vouch for.
 
-**Status: released, [v0.10.0](https://github.com/timdebruijn/smokeng/releases/tag/v0.10.0).**
-The design is agreed and frozen in
-[DESIGN.md](DESIGN.md). Working end to end: the prober — ICMP, DNS, TCP-connect, HTTP(S)
-and IRTT, burst and spread, kernel timestamping for ICMP and DNS with an observable
-fallback, and a userspace flag on
-the types that cannot be stamped — the SQLite store, TOML import/export of the
-target tree, a SmokePing `Targets` importer, the Arrow measurements API, the browser
-renderer — density smoke, pooled median, loss rail, stacked plots with a shared
-crosshair, brush-zoom to free time ranges, a log y-axis — and an admin UI that edits the
-target tree and shows, per setting, whether a value is set here or inherited and from
-where; alerting with webhook delivery; OIDC login, with grants that scope a user to one
-subtree and show them nothing else; remote agents that enrol themselves with a one-time
-token and push signed measurements; and path correlation.
+[![Release](https://img.shields.io/github/v/release/Timdebruijn/smokeng)](https://github.com/Timdebruijn/smokeng/releases/latest) [![CI](https://github.com/Timdebruijn/smokeng/actions/workflows/ci.yml/badge.svg)](https://github.com/Timdebruijn/smokeng/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+[Quick start](#quick-start) · [Why](#averages-lie) · [Compare](#how-it-compares) · [Limits](#limits-up-front) · [Docs](docs/README.md)
 
-## Documentation
+<img src="docs/images/tour.gif" width="900" alt="A short tour of smokeng: the network overview, then the graphs page with latency drawn as density smoke, a crosshair sweep and a brush-zoom into a congested stretch, a target's detail page, and the alerts page with a firing bimodality rule">
 
-The rest of this file is a technical overview. The task-oriented guides live in
-[`docs/`](docs/README.md):
+</div>
 
-- [Getting started](docs/getting-started.md) — install, run, add your first target
-- [Configuration](docs/configuration.md) — the complete TOML reference and the target tree
-- [Reading the graphs](docs/reading-graphs.md) — what the smoke, the loss rail and the quality badges mean
-- [Alerting](docs/alerting.md) · [Remote agents](docs/agents.md)
-- [Authentication](docs/authentication.md) · [Access control](docs/access-control.md) — scoping a user to one subtree
-- [Operations](docs/operations.md) — storage growth, backups, Prometheus metrics, systemd
-- [Migrating from SmokePing](docs/migrating-from-smokeping.md)
+A ground-up rebuild of the idea [SmokePing](https://oss.oetiker.ch/smokeping/) made famous, in Go and
+React. One static binary with the UI embedded and SQLite inside: no Perl, no RRDtool, no CGI, no
+Prometheus stack to stand up first.
 
-## Install
+## Averages lie
 
-Download a binary from the [releases page](https://github.com/timdebruijn/smokeng/releases)
-— one static, CGO-free file with the frontend embedded, for linux/amd64, arm64, arm and
-386, and darwin/amd64 and arm64:
+It's 21:00. The video call stutters, the backup crawls. By 23:00 it's fine again. You call the ISP;
+their test says your line averages 12 ms. They're not lying, exactly: nine pings in ten take 8 ms and
+one takes 50, and that averages to about 12. A median can sit *between* two paths and describe neither.
+And a monitor that rolls last month into hourly averages has already thrown away the evenings you
+were trying to prove.
+
+smokeng is built on one rule:
+
+> **Never present a number claiming more certainty than is known.**
+
+Three things follow from it.
+
+**1. Nothing is averaged away.** Every interval's full set of RTTs is stored at the resolution it was
+measured, and drawn as density smoke at every zoom level. A tight band, a haze, a long tail and two
+separate bands look different, because they are different faults. Change the interval or the ping
+count later and the history stays: every row describes itself.
+
+**2. It alerts on shape, not just thresholds.** Next to loss, median, p95 and spread, a `shape` rule
+fires when the distribution drifts from its baseline (Wasserstein distance) and a `bimodality` rule
+when one path turns into two, against a rolling baseline or a "golden" window you capture. The firing
+alert shows reference and current distribution overlaid. Rules fire once and clear once, with
+hysteresis both ways, and their state survives a restart.
+
+**3. It flags its own faults.** ICMP and DNS are kernel-timestamped on Linux. Anything that isn't, and
+any interval with dropped replies, a clock step or an ICMP error, carries a badge on the graph, so you
+can tell "the network was bad" from "the monitor was busy". Intervals that are smokeng's own fault are
+kept out of the alert metrics they would distort. No data is drawn as a gap, never as a line or a
+fake 0%, and real loss under 0.1% reads `<0.1%`, not `0.0%`.
+
+<img src="docs/images/graphs.png" width="100%" alt="The graphs page: three targets stacked on a shared time axis, each drawn as density smoke with its pooled median line and a loss rail beneath; one uplink shows evening congestion with loss, a wifi access point splits into two latency bands">
+
+## Quick start
+
+Linux (amd64 below; arm64, arm and 386 builds too, plus macOS for development):
 
 ```bash
-curl -fsSLO https://github.com/timdebruijn/smokeng/releases/latest/download/smokeng-linux-amd64
-curl -fsSL  https://github.com/timdebruijn/smokeng/releases/latest/download/SHA256SUMS |
+# 1. Download and verify
+curl -fsSLO https://github.com/Timdebruijn/smokeng/releases/latest/download/smokeng-linux-amd64
+curl -fsSL  https://github.com/Timdebruijn/smokeng/releases/latest/download/SHA256SUMS |
   grep smokeng-linux-amd64 | sha256sum -c -
 chmod +x smokeng-linux-amd64 && sudo mv smokeng-linux-amd64 /usr/local/bin/smokeng
-```
 
-Or build it:
+# 2. Allow unprivileged ICMP (no root, no setuid helper), now and after a reboot
+echo 'net.ipv4.ping_group_range = 0 2147483647' | sudo tee /etc/sysctl.d/99-smokeng.conf
+sudo sysctl -p /etc/sysctl.d/99-smokeng.conf
 
-```bash
-go install github.com/timdebruijn/smokeng/cmd/smokeng@latest
-```
-
-## Build from source
-
-Requirements: Go 1.27+. Node 24 (the version CI runs; the frontend tests need type stripping, on by default from 22.18) only when rebuilding or testing the frontend (`web/dist` is
-committed, so `go build` alone always produces a working binary — and CI fails if that
-committed output ever drifts from the source).
-
-```
-make            # rebuild frontend + binary
-make build      # binary only, no Node needed
-make check      # what CI runs: gofmt, vet, tests, frontend typecheck and tests
-make dist       # release binaries for every supported platform, with checksums
-```
-
-The Linux-only tests — kernel timestamping, receive-queue drops, ICMP errors, path
-discovery — skip unless unprivileged ICMP sockets are permitted, so run them with the
-sysctl set or they will pass by not running:
-
-```bash
-sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
-```
-
-Run:
-
-```
-./bin/smokeng config import --db smokeng.db targets.toml
-./bin/smokeng serve --db smokeng.db --listen 127.0.0.1:8080
-```
-
-A minimal `targets.toml`:
-
-```toml
+# 3. Say what to measure
+cat > targets.toml <<'EOF'
 [defaults]
 interval_s = 60
 pings_per_interval = 20
 
-[targets."Internet/cloudflare-v4"]
+[targets."Internet/cloudflare"]
 host = "1.1.1.1"
 address_family = "v4"
+
+[targets."Internet/quad9"]
+host = "9.9.9.9"
+address_family = "v4"
+EOF
+smokeng config import --db smokeng.db targets.toml
+
+# 4. Run
+smokeng serve --db smokeng.db --listen 127.0.0.1:8080
 ```
 
-Settings cascade down the tree; an unset key means "inherit". Alert rules live in the
-same file, on the node they apply to:
+Open <http://127.0.0.1:8080>. The first measurements land after one interval; the smoke reads well
+after a few. Without OIDC configured, smokeng listens on loopback only.
+Next: [Getting started](docs/getting-started.md) · [hardened systemd service](docs/operations.md) ·
+[Ansible role](deploy/ansible). There is no container image yet.
 
-```toml
-[default_alerts."any loss"]        # on the root, so it covers everything
-metric = "loss"
-op = ">"
-threshold = 10
-
-[targets."Internet/cloudflare-v4".alerts."jitter"]
-metric = "spread"                  # p95 − p5, in milliseconds
-op = ">"
-threshold = 25
-for_intervals = 5                  # omitted hysteresis defaults to 3, never to 1
-```
-
-`config export` writes the whole thing back out, round-tripping exactly, so the file is a
-complete description of the configuration rather than half of one. Import is declarative
-in both: anything absent from the file is disabled, and `config import --prune` deletes
-it instead — `--prune` is a command-line-only flag. The same file can be applied from the
-web UI under **Targets → Import TOML**, which goes through `PUT /api/v1/config` and never
-prunes, so from there absence always disables. The summary reports targets and rules
-separately, because noticing "2 alert rules disabled" at import time is better than
-discovering it during an incident.
-
-Coming from SmokePing, import its `Targets` file directly:
+**Coming from SmokePing?** Bring your `Targets` file:
 
 ```bash
-smokeng config import-smokeping --db smokeng.db --dry-run /etc/smokeping/config.d/Targets
+smokeng config import-smokeping --dry-run /etc/smokeping/config.d/Targets   # preview
+smokeng config import-smokeping --db smokeng.db /etc/smokeping/config.d/Targets
 ```
 
-The `+`/`++`/`+++` hierarchy becomes the target tree, per-node keys become local settings
-so inheritance survives, `@include` is followed relative to the file, and each probe module
-maps to a smokeng probe type — `EchoPingDNS` to `dns`, `EchoPingHttps` to `https`, `TCPPing`
-to `tcp`, `FPing` to `icmp`. Anything smokeng deliberately does not implement — alert
-definitions, alternative hierarchies, multi-host overlay graphs, `DYNAMIC` hosts — is
-reported as a warning rather than dropped in silence. Drop `--dry-run` to write it.
+The tree, per-node settings and probe types come across; anything it can't translate is warned
+about, never silently dropped. RRD history can't come along: it was already consolidated.
+[Migrating from SmokePing →](docs/migrating-from-smokeping.md)
 
-Without `--oidc-issuer` there is no authentication, so `serve` refuses to listen on
-anything but loopback unless you pass `--i-know-this-is-unauthenticated`. See
-**Authentication** below.
+## Built for three jobs
 
-## Unprivileged ICMP (Linux)
+**Prove it to your ISP.** Measure your gateway, the ISP's first hop and a public resolver, and read
+them on one shared crosshair: "my link" and "their network" separate at a glance. When the evening
+loss shows up, it is in the graph with timestamps and in an [availability report](docs/reading-graphs.md)
+you can download as CSV. Availability is always shown next to coverage, so a gap passes for neither
+uptime nor downtime.
 
-smokeng pings from unprivileged datagram ICMP sockets — no root, no `CAP_NET_RAW`, no
-subprocess per measurement. The kernel gates this behind a sysctl listing the group IDs
-allowed to create such sockets:
+**Find the cause.** Six probe types, each producing a real RTT distribution: `icmp`, `dns`, `tcp`,
+`http`, `https` and `irtt`. A resolver that crawls behind a box that pings fine, TCP where ICMP is
+rate-limited, HTTPS for what users actually wait on. Route changes are marked on the same time axis.
+Drop an agent elsewhere and compare vantage points: each one is its own series, never averaged.
 
-```
-sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
-```
+**Run it for other people.** One subtree per customer or site, an agent at each. OIDC grants scope a
+group to its subtree, and that subtree is presented as the whole installation: foreign targets don't
+look forbidden, they look like they don't exist. (Grants restrict nothing until you start the server
+with `--default-role none`.) [Access control →](docs/access-control.md)
 
-Persist it in `/etc/sysctl.d/50-smokeng.conf`:
+<img src="docs/images/compare.png" width="100%" alt="The compare view: the median latency to two public resolvers from the master and from a branch-office agent, overlaid on one time axis in colour-blind-safe colours">
 
-```
-net.ipv4.ping_group_range = 0 2147483647
-```
+## What else is in the box
 
-The setting covers ICMPv6 datagram sockets as well. Narrow the range to the GID smokeng
-runs as if you prefer. If the datagram socket is not permitted, smokeng falls back to raw
-sockets (which need `CAP_NET_RAW`) with a clear error message, and marks all affected
-measurements with a degraded-accuracy flag.
+| | |
+|---|---|
+| **Remote agents** | The same binary in another mode. Push-only, so they work behind NAT. One-time enrolment tokens, Ed25519-signed requests, first write wins, and a local buffer that rides out a master outage and back-fills the graphs. Agents receive data, never code. [Agents →](docs/agents.md) |
+| **Alerting** | Loss, median, p95, spread, shape and bimodality. Acknowledge, silences and booked maintenance windows built in; delivery to an Alertmanager v2 webhook. [Alerting →](docs/alerting.md) |
+| **Target tree** | Settings inherit down the tree, and the admin UI shows per value whether it is set here or inherited, and from where. [Configuration →](docs/configuration.md) |
+| **GitOps** | The whole configuration, alert rules and grants included, round-trips through one TOML file. Import is declarative: absent targets are disabled, not deleted. |
+| **Access** | OIDC login (Authentik, Keycloak, Entra, Okta, …). Viewer and editor grants per subtree; admin is global. [Access control →](docs/access-control.md) |
+| **Reports** | Availability per vantage point over 24 h, 7 d or 30 d, with an outage list, CSV export and an API. |
+| **Operations** | Prometheus `/metrics` for smokeng's own health, documented systemd hardening, an Ansible role, and releases with SHA256SUMS and signed build provenance. [Operations →](docs/operations.md) |
+| **Accessibility** | Higher-contrast, larger-text and colour-blind-safe palettes; ⌘K / Ctrl+K jumps to any target. |
 
-## Timestamping accuracy
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/images/alerts.png" alt="The alerts page: a firing bimodality rule on a wifi access point and a latency rule on an uplink, the rule list with their hysteresis, silences and maintenance windows, and the transition history"></td>
+<td width="50%" valign="top"><img src="docs/images/detail.png" alt="A target's detail page: median, p95, spread and loss computed from the same samples the full-height smoke plot draws, here for a wifi access point whose latency keeps splitting into two bands"></td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/images/targets.png" alt="The target tree admin: each setting of the selected target marked as set on this node or inherited, with the ancestor it comes from"></td>
+<td valign="top"><img src="docs/images/overview.png" alt="The network overview: every series with its median, p95 and loss over the last hour and a sparkline, the firing alerts, and how many series carry measurement-quality flags"></td>
+</tr>
+</table>
 
-On Linux, packets are timestamped by the kernel in both directions
-(`SO_TIMESTAMPING`: RX from the reply's control messages, TX read back from the socket
-error queue), so scheduler jitter on a busy host does not widen the smoke. On other
-platforms (including macOS, supported for development) userspace timestamps are used
-instead — recorded per measurement in a flags field, never silently.
+<details>
+<summary><b>Under the hood: storage, probes and quality flags</b></summary>
 
-This is not a theoretical difference. Loopback bursts of 10 pings, kernel timestamping
-versus the userspace fallback:
+**What is stored.** One row per target, vantage point and interval: sent, received, a quality
+bitfield, an ICMP error code, and the sorted RTTs in microseconds as delta-varints. Nothing is
+averaged or downsampled when it is written, when it ages or when it is drawn. At a 60 s interval
+that is about **28 MB per series per year** ([estimate and examples](docs/operations.md#storage-growth));
+SQLite stays comfortable into the low thousands of series. Retention is opt-in per subtree and
+deletes whole intervals; it never coarsens them.
 
-| Timestamps | Median RTT | Median intra-burst spread |
+**How it measures.**
+
+| Probe | Measures | Timestamps on Linux |
 |---|---|---|
-| kernel (Linux, `flags=0`) | ~15–31 µs | **26 µs** |
-| userspace (macOS, `flags=3`) | ~270–650 µs | **563 µs** |
+| `icmp` | echo request to reply, unprivileged datagram socket | kernel, both directions |
+| `dns` | query to answer; the target is the resolver | kernel, both directions |
+| `tcp` | SYN to completed handshake | userspace, flagged |
+| `http` / `https` | request to response, fresh connection, TLS included | userspace, flagged |
+| `irtt` | UDP session against an irtt server you run | userspace, flagged |
 
-Roughly 20× more apparent jitter from the measurement method alone — noise that would be
-drawn as smoke and read as network variance. The two rows are different hosts, so treat
-the ratio as indicative rather than a controlled benchmark; the order of magnitude is
-what matters.
+`probe_mode` sends the N probes of an interval as a **burst** or **spreads** them across it.
 
-One kernel quirk worth knowing: Linux gates RX timestamping behind a static key that
-goes cold when nothing has requested timestamps for a few seconds. The first packets
-after that arrive with no `SCM_TIMESTAMPING` at all. smokeng handles this by design —
-those measurements are stamped in userspace and carry `FlagUserspaceRX` — so expect the
-occasional flagged measurement right after startup, and on targets whose interval is long
-enough that the socket goes quiet between bursts. Nothing is silently mis-measured; the
-flag is the record.
+**Quality flags**, shown as badges on the graph:
 
-## Alerting
-
-Rules hang on nodes of the target tree and inherit downward, replacing rather than
-adding: the nearest ancestor that defines any rules defines the whole set for its
-subtree. A rule tests `loss`, `median`, `p95` or `spread` against a threshold — the last
-two exist only because smokeng keeps whole distributions.
-
-Rules are edge-triggered with hysteresis in both directions: the condition must hold for
-N consecutive intervals before it fires, and fail for M before it clears. A single bad
-interval never pages anyone, a gap in the series resets the count rather than bridging
-intervals nobody measured, and state is persisted so an alert firing for an hour does not
-resolve and re-fire across a restart. Measurements flagged as smokeng's own fault
-(§ Measurement quality) are excluded from the metrics they would distort.
-
-Delivery is one webhook, in Alertmanager's v2 format:
-
-```bash
-smokeng serve --db smokeng.db --alert-webhook http://alertmanager:9093/api/v2/alerts
-```
-
-Firing alerts are repeated once a minute, because Alertmanager expires an alert it stops
-hearing about. Grouping, silencing, escalation and notification channels are
-Alertmanager's job; smokeng does not reimplement them. Rules are evaluated whether or
-not `--alert-webhook` is set — firing state and the transition history are live either
-way; a missing webhook only means a transition is never posted anywhere.
-`GET /api/v1/alerts` reports `enabled` (evaluated) and `delivering` (posted) separately,
-rather than conflating the two.
-
-## Path correlation
-
-When the smoke changes shape, the next question is always whether the path changed.
-smokeng records the route to each target and marks every change on the same time axis as
-the measurements, so "the path changed at 14:02" sits beside "the smoke widened at
-14:03". Hovering names the route in force at that instant.
-
-That is the whole feature. There is no standalone traceroute view, no per-hop latency
-graph and no path scoring: those are a different product, and this one exists to make the
-distribution legible.
-
-Enable it per target with the inheritable `trace_interval_s` (0 disables it), defaulting
-to five minutes — a traceroute costs a round trip per hop, and a route changes on a scale
-of days rather than seconds. Only changes are stored, the same way DNS resolutions are,
-so a stable route costs one row rather than one per run.
-
-Hops are found with TTL-limited probes, reading each router's address from the ICMP
-time-exceeded reply on the socket error queue. That needs Linux; elsewhere no route is
-recorded rather than a wrong one.
-
-## Remote agents
-
-A target can be measured from more than one place. Assign it with the inheritable
-`agents` setting — `agents = "local ams rtm"` — and each vantage point becomes its own
-series, drawn as its own plot. They are never averaged: two views of a path that disagree
-are the finding, and averaging them destroys it.
-
-Agents push to the master, so only the master needs to be reachable and an agent works
-behind NAT with no inbound rules. The short way to enrol one is a one-time token, minted
-in the UI under **Agents** (or `POST /api/v1/agent-tokens`), single-use and short-lived:
-
-```bash
-smokeng agent run --master https://smokeng.example.org --token smk_...
-```
-
-The agent generates its keypair if it has none, enrols itself, and records the id it was
-given — a unit file may keep carrying `--token`, since the recorded id wins and a
-restart does not try to spend a token that is already spent. Without a token, the key can
-still be carried by hand, exactly as before:
-
-```bash
-# On the agent: generates a key on first run and prints its public half.
-smokeng agent run --key /etc/smokeng/probe.key
-
-# On the master:
-smokeng agent add --db smokeng.db --name ams --pubkey <the printed key>
-
-# Back on the agent, with the id the master just assigned:
-smokeng agent run --master https://smokeng.example.org --agent-id 1 \
-  --key /etc/smokeng/probe.key --db /var/lib/smokeng/agent.db
-```
-
-`smokeng agent list`, `enable`, `disable` and `remove` manage them afterwards. An agent
-that has already reported **cannot be removed** — its measurements are labelled by agent
-and deleting it would leave a series nothing can name — so disable it instead: probing
-stops, the history stays. See [Remote agents](docs/agents.md) for the full protocol.
-
-Every request carries an Ed25519 signature over a canonical string that binds the method,
-path, agent, timestamp, nonce and a hash of the body — so a captured signature cannot be
-replayed against another endpoint or with another payload. The master holds only public
-keys, so compromising its database does not let an attacker impersonate an agent. Rows
-for a target that is not assigned to the agent are dropped and the rest of the submission
-accepted, and writes keep what is already stored for `(target, agent, interval)`, so a
-replayed batch is a no-op and an agent cannot rewrite an interval it has already
-reported. The nonce cache is
-in-memory and empty after a restart; a replay is harmless regardless, because it changes
-nothing.
-
-Agents pull their assignments from `GET /api/v1/agent/targets` — resolved settings and
-nothing else. Pure data, pull-only, never code. (SmokePing's equivalent has slaves
-*evaluate Perl sent by the master*; this shares none of that.) Results are written to the
-agent's own database first and only forgotten once the master confirms them, so an
-unreachable master costs latency rather than measurements.
-
-TLS is expected everywhere the traffic can be observed. A master on a literal loopback
-address is exempt — those packets never reach an interface — and `--insecure-allow-http`
-covers anything else that is not HTTPS, and says so.
-
-## Authentication
-
-There are no local accounts and no password handling. Point smokeng at an OIDC provider:
-
-```bash
-smokeng serve --db smokeng.db --listen 0.0.0.0:8080 \
-  --oidc-issuer https://id.example.org/application/o/smokeng/ \
-  --oidc-client-id smokeng --oidc-client-secret-file /var/lib/smokeng/oidc-client-secret \
-  --oidc-redirect-url https://smokeng.example.org/auth/callback \
-  --oidc-admin-value smokeng-admins
-```
-
-**admin** is global and comes from a claim (`--oidc-admin-claim`, default `groups`);
-anything not recognised as an admin is not one, so a provider that renames or drops the
-claim demotes people rather than promoting them. smokeng will not start with OIDC and no
-`--oidc-admin-value` unless you pass `--oidc-everyone-is-admin`, which makes every
-authenticated user an admin and says so at startup.
-
-Everyone else gets what their **grants** give them. A grant gives an OIDC group `viewer`
-or `editor` on one node and its subtree, and the isolation is total: that subtree is
-presented as though it were the whole installation, so one customer never learns that
-there are others. Grants live in smokeng's own table, round-trip through TOML, and never
-reach agents, the root defaults, `/metrics` or `config import`. What an authenticated user
-with no grant may do is `--default-role`, which stays `viewer` — the behaviour before
-grants existed — until you set it to `none`. See
-[Access control](docs/access-control.md).
-
-Sessions are held in an HMAC-signed cookie whose key is stored in the database, so they
-survive a restart; deleting the `session_key` row invalidates every session at once.
-Without `--oidc-issuer`, smokeng runs unauthenticated and refuses to listen anywhere but
-loopback unless explicitly overridden.
-
-## Monitoring smokeng itself
-
-`/metrics` serves Prometheus text exposition about smokeng's own health: targets being
-probed, measurements written, write errors, dropped measurements, late replies, socket
-overflows, DNS failures, agent enrolment and last contact, ingest accepted and rejected,
-and alerts firing.
-
-What it deliberately does not carry is measurement data. Latency and loss live in the
-store at full resolution and are read as Arrow; pushing them through Prometheus would
-flatten every interval to a single number, which is the exact loss this project exists to
-avoid. These metrics answer "is smokeng healthy", never "what is the network doing" — and
-a test asserts that no sample value ever comes from a measurement.
-
-The endpoint names agents and counts targets, so it sits behind the session like every
-other read. Open it for a scraper explicitly:
-
-```bash
-smokeng serve --db smokeng.db --metrics-public
-```
-
-Two counters deserve a standing alert of your own: `smokeng_measurements_dropped_total`
-above zero means measurements were taken and then lost because the writer fell behind,
-and `smokeng_socket_overflow_measurements_total` climbing means the loss you are looking
-at is partly smokeng's rather than the network's.
-
-## Measurement quality
-
-Every measurement records the conditions it was taken under, because a number is only
-worth as much as the conditions behind it. The graphs badge any target whose window
-contains flagged measurements.
-
-| Flag | Meaning |
+| Badge | What it tells you |
 |---|---|
-| `userspace TX` / `userspace RX` | Timestamps taken in userspace; scheduler jitter widens the smoke. |
-| `raw socket` | Unprivileged datagram ICMP was unavailable. |
-| `dropped replies` | The socket's receive queue overflowed: some loss shown is smokeng's, not the network's. |
-| `clock step` | The wall clock jumped during the interval, so its RTTs are unreliable. |
-| *the ICMP error by name* | Probes were refused with an ICMP error instead of going unanswered. |
-| `send refused` | The local stack would not transmit some probes: no route, or a local firewall rule. |
+| `userspace TX` / `RX` | scheduler jitter is in the number; the smoke is wider than the network |
+| `raw socket` | the `ping_group_range` sysctl is not set; accuracy unaffected |
+| `dropped replies` | the socket receive queue overflowed, so some of the loss is smokeng's |
+| `clock step` | wall clock and monotonic clock diverged; those RTTs are not trusted |
+| ICMP error, by name | "administratively prohibited" is a different finding from silence |
+| `send refused` | the local stack would not transmit; counted as lost, not drawn as empty |
 
-Two of these deserve a note.
+The data model, encoding and render pipeline: [DESIGN.md](DESIGN.md) and
+[Reading the graphs](docs/reading-graphs.md).
 
-**Dropped replies.** One socket carries every target of an address family, and
-simultaneous bursts can deliver thousands of packets at once — well past the usual
-~208KB default receive buffer. smokeng asks for 4MB and warns if `net.core.rmem_max`
-caps it lower. It then polls the kernel's per-socket drop counter from `/proc/net/icmp`
-(or `raw`/`icmp6`/`raw6`), and any interval during which that counter moves is flagged.
-Without this, a host that is merely busy reads as a lossy network. Note that the obvious
-mechanism, `SO_RXQ_OVFL`, does not work here: `setsockopt` accepts it on a ping socket
-and then never reports anything, because `ping_recvmsg` does not attach the counter.
+</details>
 
-**ICMP errors.** A target at 100% loss because a firewall says "administratively
-prohibited" and one at 100% loss in silence are different findings that call for
-different responses, so smokeng keeps them apart. `IP_RECVERR` routes ICMP errors for our
-probes onto the socket error queue, which returns the offending datagram alongside them —
-our own echo request, whose sequence number attributes the error to an exact ping. The
-graphs name the error rather than reporting a generic failure. A probe the kernel
-declines to send is counted as attempted and lost for the same reason: an unreachable
-target should render as total loss, not as an empty graph.
+## How it compares
 
-**Clock steps.** Kernel timestamps are `CLOCK_REALTIME`, so a clock jump lands directly
-in the RTTs and would be drawn as a latency spike that never happened. smokeng compares
-how far the wall clock and the monotonic clock advanced over each interval; a divergence
-beyond what NTP slewing could explain marks the measurement. The tolerance is rate-based
-because slew is a rate, and because platforms differ: Linux slews `CLOCK_MONOTONIC`
-alongside `CLOCK_REALTIME`, while macOS leaves `mach_absolute_time` untouched, so on
-macOS ordinary slewing shows up in this comparison and must not be mistaken for a step.
+Every tool here is good at what it was built for.
 
-Verified on Linux 7.1: aarch64 natively (full kernel path, plus an end-to-end run where
-every measurement was written with `flags=0`), and x86-64 under qemu-user, where the
-missing `SO_TIMESTAMPING` support exercised the fallback path instead. The structures
-read from control messages are architecture-independent — `sock_extended_err` is
-fixed-width on every Linux port — and compile-time assertions in
-`internal/probe/timestamp` fail the build if that ever stops being true. The package
-builds for linux/amd64, arm64, 386, arm and riscv64.
+| | **smokeng** | **SmokePing** | **Uptime Kuma** | **blackbox_exporter + Grafana** |
+|---|---|---|---|---|
+| Built for | Latency and loss distributions | Latency and loss distributions | Up/down and response time | General probing in a Prometheus stack |
+| Per-interval distribution | Every sample, never consolidated | Per round, consolidated in RRD as it ages | One value per check | One value per scrape; `smokeping_prober` adds histograms |
+| Alert on distribution shape | Shape and bimodality rules | Threshold and pattern matchers | Up/down, response time | PromQL on what you stored |
+| Notification channels | Alertmanager webhook | Email, scripts | Many built in | Alertmanager |
+| Multiple vantage points | Signed push agents, buffered | Master/slave | Not natively | One exporter per site |
+| Deploy | One static binary | Perl, RRDtool, CGI, a web server | Node or Docker | Exporter, Prometheus, Grafana |
+| Maturity | Young, one maintainer | Proven over two decades, still maintained | Large community | Industry standard |
 
-## Layout
+**Pick something else if** you need status pages or many notification channels (Uptime Kuma, Gatus),
+you are happy with per-scrape values inside an existing Prometheus stack (blackbox_exporter), or you
+want hop-by-hop MTR graphs (smokeng records whether the route changed, not per-hop latency).
 
-| Path | Contents |
-|---|---|
-| `cmd/smokeng` | the binary: `serve`, `config`, `agent`, `version` |
-| `internal/tree` | target tree, inheritance resolution with provenance |
-| `internal/probe` | scheduler + the probe engines (icmp, dns, tcp, http/s, irtt) |
-| `internal/probe/timestamp` | kernel packet timestamping and the socket error queue |
-| `internal/probe/dnscache` | TTL-respecting hostname resolution |
-| `internal/probe/trace` | path discovery, to see whether the route changed |
-| `internal/store` | storage interface, SQLite backend |
-| `internal/store/enc` | versioned samples-blob codec |
-| `internal/api` | HTTP API, Arrow serialization, embedded web UI |
-| `internal/auth` | OIDC login and the two roles |
-| `internal/config` | TOML import/export, SmokePing importer |
-| `internal/alert` | rule evaluation, hysteresis, webhook notification |
-| `internal/agent` | remote node: assignment pull, local buffer, signed push |
-| `internal/ingest` | signed agent protocol: batch push, assignment pull |
-| `internal/metrics` | Prometheus exposition of smokeng's own health |
-| `web` | React frontend, embedded into the binary |
+2026 also brought other SmokePing successors, each with real strengths: **smokestack** stores
+DDSketch histograms with bounded error, which keeps storage small and percentiles accurate across
+rollups; **heliograph** keeps raw samples on TimescaleDB with mTLS agents; **smoketrace** puts
+traceroute and latency on one time axis. smokeng's trade-off is exact samples at about 28 MB per
+series per year, with shape alerting, self-flagged measurements and subtree tenancy on top.
 
-See [DESIGN.md](DESIGN.md) for the data model, rendering pipeline, agent protocol and
-the explicit non-goals.
+## Limits, up front
 
-## Licence
+- **Latency-shaped probes only.** No up/down checks, no SNMP, no status pages.
+- **One notifier:** an Alertmanager v2 webhook. Email, chat and escalation go through Alertmanager.
+- **Linux for real measurements.** Kernel timestamps, drop counting, clock-step detection and path
+  discovery are Linux-only; macOS works for development with every measurement flagged.
+- **`tcp`, `http(s)` and `irtt` are userspace-timed**, and say so on the graph.
+- **SQLite scale:** comfortable into the low thousands of series. No downsampling, by design.
+- **No local accounts:** OIDC, or unauthenticated on loopback. Agents need NTP within ±5 minutes.
+- **No container image yet;** a binary, systemd units and an Ansible role.
+- **One maintainer.** Security reports go through [SECURITY.md](SECURITY.md).
 
-MIT — see [LICENSE](LICENSE). `SPDX-License-Identifier: MIT`.
+## Documentation
 
-The released binaries statically link their dependencies, so each release ships a
-`THIRD-PARTY-NOTICES` file with the licences of every module linked into it, generated
-from the module cache by `make notices`. Everything smokeng depends on is permissively
-licensed (MIT, BSD or Apache-2.0); nothing copyleft is linked in.
+[Getting started](docs/getting-started.md) · [Configuration](docs/configuration.md) ·
+[Reading the graphs](docs/reading-graphs.md) · [Alerting](docs/alerting.md) ·
+[Remote agents](docs/agents.md) · [Authentication](docs/authentication.md) ·
+[Access control](docs/access-control.md) · [Operations](docs/operations.md) ·
+[Migrating from SmokePing](docs/migrating-from-smokeping.md) · Why it's built this way: [DESIGN.md](DESIGN.md)
+
+## Build from source
+
+```bash
+git clone https://github.com/Timdebruijn/smokeng.git && cd smokeng
+make build   # Go 1.27+; no Node needed, web/dist is committed
+make check   # what CI runs
+```
+
+Or `go install github.com/timdebruijn/smokeng/cmd/smokeng@latest`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Every release ships `THIRD-PARTY-NOTICES`; nothing copyleft is linked in.
+
+---
+
+<div align="center">
+
+**Your ISP says the line is fine. Go get the graph.**
+
+[Download the latest release](https://github.com/Timdebruijn/smokeng/releases/latest) ·
+[Getting started](docs/getting-started.md) · ⭐ Star the repo if it found something for you
+
+</div>
