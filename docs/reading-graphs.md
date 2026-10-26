@@ -6,7 +6,7 @@ times, not a summary of them.
 
 ![The graphs view: several targets stacked on a shared time axis, each showing its RTT
 distribution as density smoke with a loss rail beneath, and a sidebar listing the target
-tree](images/smokeng.png)
+tree](images/graphs.png)
 
 *The graphs view. Each target's smoke is its full RTT distribution over time; the sidebar
 is the target tree, and the toolbar sets the time range, log scale, live follow, and the
@@ -84,9 +84,8 @@ Clicking a target opens it at length: the pooled median, p95 and spread (p95 −
 window on screen, computed from the same samples the plot draws, above a full-height smoke
 plot and the target's effective settings, alert rules and vantage points.
 
-![A target's detail page: median, p95 and spread figures above a large density-smoke plot,
-then availability and coverage over a period, with the target's effective settings, its
-alert rules and the agents measuring it alongside](images/detail.png)
+![A target's detail page: median, p95 and spread figures above a large density-smoke plot of
+a target whose latency keeps splitting into two bands](images/detail.png)
 
 *The detail view. p95 and the spread are the two numbers a median cannot give you, and the
 reason the whole distribution is kept. Availability and coverage sit below, as two figures
@@ -120,8 +119,8 @@ The **compare** button overlays the pooled medians of the shown targets on one a
 the stacked plots cannot do — they answer "what is this target doing", not "which of these
 is worse". Only the median is drawn; the distribution stays in the plots below.
 
-![The compare overlay: several targets' pooled median lines on one shared axis, each a
-distinct colour, with a legend naming them](images/compare.png)
+![The compare overlay: two targets' pooled median lines, each from two vantage points, on one
+shared axis in distinct colours, with a legend naming them](images/compare.png)
 
 *Compare. Vantage points are never averaged — a target measured from two agents is two
 lines, exactly as it is two plots.*

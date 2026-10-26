@@ -6,9 +6,8 @@ condition has held for a number of consecutive intervals, and clears only after 
 stopped holding for a number of consecutive intervals. A flapping link produces one alert,
 not forty.
 
-![The Alerts page: what is firing, the rule list including shape and bimodality rules with
-a golden reference, the silences and maintenance windows, and the transition
-history](images/alerts.png)
+![The Alerts page: what is firing (a bimodality rule and a latency rule), the rule list,
+the silences and maintenance windows, and the transition history](images/alerts.png)
 
 *The Alerts page. Rules, the silences that mute them for a window, and the history of every
 transition — recorded whether or not a webhook was reachable.*
