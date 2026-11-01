@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import Admin from './Admin'
 import Agents from './Agents'
 import Alerts from './Alerts'
@@ -280,7 +280,7 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
     return [now - rangeS, now]
   }, [rangeS, refreshKey, zoom])
 
-  const onZoom = useCallback((f: number, t: number) => setZoom({ from: f, to: t }), [])
+  const onZoom = (f: number, t: number) => setZoom({ from: f, to: t })
 
   const pickRange = (seconds: number) => {
     setZoom(null)

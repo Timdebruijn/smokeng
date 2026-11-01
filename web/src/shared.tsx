@@ -3,8 +3,9 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 /**
  * The reload / run-a-mutation / busy / error shape the admin screens share.
  * `load` fetches and sets state and may throw; `reload` is the same with a
- * failure shown in `error`. `run` clears the error, does the mutation, reloads,
- * and answers whether the mutation worked.
+ * failure shown in `error` and a success clearing it; it runs once on mount.
+ * `run` clears the error, does the mutation, reloads, and answers whether the
+ * mutation worked.
  */
 export function useAction(load: () => Promise<void>) {
   const [error, setError] = useState<string | null>(null)
@@ -13,10 +14,15 @@ export function useAction(load: () => Promise<void>) {
   const reload = useCallback(async () => {
     try {
       await load()
+      setError(null)
     } catch (e) {
       setError((e as Error).message)
     }
   }, [load])
+
+  useEffect(() => {
+    void reload()
+  }, [reload])
 
   const run = useCallback(
     async (fn: () => Promise<unknown>) => {
