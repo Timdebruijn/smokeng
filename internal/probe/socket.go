@@ -71,8 +71,6 @@ type conn struct {
 	rxDrops   atomic.Uint64
 	dropsPath string
 	dropsNode string
-
-	reportsICMPErrors bool
 }
 
 // drops returns the cumulative count of replies the kernel discarded because
@@ -171,11 +169,11 @@ func openConn(family string, dscp int, late, panics *atomic.Int64) (*conn, error
 	// Routes ICMP errors for our packets onto the error queue instead of
 	// letting them be discarded, so a refused probe is distinguishable from
 	// an unanswered one.
-	c.reportsICMPErrors = timestamp.EnableICMPErrors(fd, family == "v6")
+	reportsICMPErrors := timestamp.EnableICMPErrors(fd, family == "v6")
 
 	c.wg.Add(1)
 	go c.recvLoop()
-	if c.caps.KernelTX || c.reportsICMPErrors {
+	if c.caps.KernelTX || reportsICMPErrors {
 		c.wg.Add(1)
 		go c.errQueueLoop()
 	}

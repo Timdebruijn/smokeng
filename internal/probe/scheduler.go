@@ -3,6 +3,7 @@ package probe
 import (
 	"cmp"
 	"crypto/rand"
+	"encoding/binary"
 	"hash/fnv"
 	"log"
 	"math"
@@ -28,9 +29,7 @@ func bucketStart(t int64, intervalS int) int64 {
 func phaseOffset(spec TargetSpec) time.Duration {
 	h := fnv.New64a()
 	var b [8]byte
-	for i := range 8 {
-		b[i] = byte(spec.TargetID >> (8 * i))
-	}
+	binary.LittleEndian.PutUint64(b[:], uint64(spec.TargetID))
 	h.Write(b[:])
 	interval := time.Duration(spec.IntervalS) * time.Second
 	var window time.Duration
@@ -407,15 +406,13 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 
 	if len(errCounts) > 0 {
 		m.Flags |= store.FlagICMPError
-		best := modeOf(errCounts)
-		m.ICMPErr = &best
+		m.ICMPErr = new(modeOf(errCounts))
 	}
 	// The most frequent reason represents the interval, as the ICMP tally
 	// above does: one value has to stand for it, and the common cause is the
 	// one worth acting on.
 	if len(sendCounts) > 0 {
-		best := modeOf(sendCounts)
-		m.SendErr = &best
+		m.SendErr = new(modeOf(sendCounts))
 	}
 	m.Series = c.series
 	return m

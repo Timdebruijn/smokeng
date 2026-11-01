@@ -43,7 +43,7 @@ func saveAgentID(keyPath string, id int64) error {
 // is the only credential on this request, which is why a plain-HTTP master is
 // refused here as firmly as it is for the signed endpoints: this is the
 // request that would leak something usable.
-func Enrol(ctx context.Context, master, token string, key ed25519.PrivateKey, insecure bool) (int64, string, error) {
+func Enrol(ctx context.Context, master, token string, key ed25519.PrivateKey, insecure bool) (int64, error) {
 	// A loopback master is exempt for the same reason agent.New is: the token
 	// is a credential, but over a literal loopback address it never reaches a
 	// network interface, so there is nothing to intercept it. Without this the
@@ -52,7 +52,7 @@ func Enrol(ctx context.Context, master, token string, key ed25519.PrivateKey, in
 	// --master http://127.0.0.1:8080 --token …`, the ordinary same-host
 	// enrolment, failed where the --agent-id form on the same URL succeeded.
 	if !strings.HasPrefix(master, "https://") && !insecure && !masterIsLoopback(master) {
-		return 0, "", fmt.Errorf("agent: refusing to send an enrolment token to %q over plain HTTP "+
+		return 0, fmt.Errorf("agent: refusing to send an enrolment token to %q over plain HTTP "+
 			"that is not on loopback; pass --insecure-allow-http only for local development", master)
 	}
 	body, err := json.Marshal(map[string]string{
@@ -60,18 +60,18 @@ func Enrol(ctx context.Context, master, token string, key ed25519.PrivateKey, in
 		"pubkey": PublicKey(key),
 	})
 	if err != nil {
-		return 0, "", err
+		return 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimSuffix(master, "/")+"/api/v1/agent/enrol", bytes.NewReader(body))
 	if err != nil {
-		return 0, "", err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
-		return 0, "", err
+		return 0, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
@@ -83,34 +83,32 @@ func Enrol(ctx context.Context, master, token string, key ed25519.PrivateKey, in
 		if e.Error == "" {
 			e.Error = resp.Status
 		}
-		return 0, "", fmt.Errorf("agent: enrolment refused: %s", e.Error)
+		return 0, fmt.Errorf("agent: enrolment refused: %s", e.Error)
 	}
 	var out struct {
-		AgentID int64  `json:"agent_id"`
-		Name    string `json:"name"`
+		AgentID int64 `json:"agent_id"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return 0, "", fmt.Errorf("agent: master returned an unreadable enrolment response: %w", err)
+		return 0, fmt.Errorf("agent: master returned an unreadable enrolment response: %w", err)
 	}
 	if out.AgentID == 0 {
-		return 0, "", fmt.Errorf("agent: master returned no agent id")
+		return 0, fmt.Errorf("agent: master returned no agent id")
 	}
-	return out.AgentID, out.Name, nil
+	return out.AgentID, nil
 }
 
 // EnrolOnce enrols and records the id next to the key, so a service that
 // restarts with --token in its unit file finds it (LoadAgentID) instead of
 // spending the token again. The caller checks for a recorded id first.
 func EnrolOnce(ctx context.Context, master, token, keyPath string, key ed25519.PrivateKey, insecure bool) (int64, error) {
-	id, name, err := Enrol(ctx, master, token, key, insecure)
+	id, err := Enrol(ctx, master, token, key, insecure)
 	if err != nil {
 		return 0, err
 	}
 	if err := saveAgentID(keyPath, id); err != nil {
 		// The agent exists on the master now; losing the id locally would mean
 		// enrolling a second one under a name that is already taken.
-		return 0, fmt.Errorf("agent: enrolled as %q with id %d, but could not record it: %w",
-			name, id, err)
+		return 0, fmt.Errorf("agent: enrolled with id %d, but could not record it: %w", id, err)
 	}
 	return id, nil
 }

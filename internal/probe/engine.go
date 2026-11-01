@@ -42,8 +42,6 @@ type Engine struct {
 	written   atomic.Int64
 	writeErrs atomic.Int64
 	dnsErrs   atomic.Int64
-	traces    atomic.Int64
-	pathHops  atomic.Int64
 	dropped   atomic.Int64 // measurements lost because the results channel was full
 	panics    atomic.Int64 // panics contained rather than allowed to end the process
 
@@ -549,8 +547,6 @@ type Stats struct {
 	MeasurementsWritten int64
 	WriteErrors         int64
 	DNSFailures         int64
-	// PathChanges counts routes recorded because they differed from the last.
-	PathChanges int64
 	// Dropped measurements were finalized but never stored, because the
 	// writer could not keep up. This should always be zero.
 	Dropped int64
@@ -571,7 +567,6 @@ func (e *Engine) Stats() Stats {
 		MeasurementsWritten: e.written.Load(),
 		WriteErrors:         e.writeErrs.Load(),
 		DNSFailures:         e.dnsErrs.Load(),
-		PathChanges:         e.traces.Load(),
 		Dropped:             e.dropped.Load(),
 		ActiveTargets:       active,
 		Panics:              e.panics.Load(),
@@ -633,7 +628,6 @@ func (e *Engine) traceOnce(ctx context.Context, spec TargetSpec) {
 		log.Printf("probe: target %d: record path: %v", spec.TargetID, err)
 		return
 	}
-	e.traces.Add(1)
 	if last != "" {
 		log.Printf("probe: target %d (%s): path changed\n  was: %s\n  now: %s",
 			spec.TargetID, spec.Host, last, hops)

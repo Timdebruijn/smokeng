@@ -218,7 +218,7 @@ func (a *Agent) mirror(ctx context.Context, targets []assignment) error {
 		wanted[t.TargetID] = true
 		node := tree.Target{
 			ID:            t.TargetID,
-			ParentID:      ptr(int64(1)),
+			ParentID:      new(int64(1)),
 			Name:          strings.ReplaceAll(strings.TrimPrefix(t.Path, "/"), "/", "-"),
 			Host:          &t.Host,
 			AddressFamily: &t.AddressFamily,
@@ -230,7 +230,7 @@ func (a *Agent) mirror(ctx context.Context, targets []assignment) error {
 				IntervalS: &t.IntervalS, PingsPerInterval: &t.Pings,
 				ProbeMode: &t.ProbeMode, BurstGapMS: &t.BurstGapMS,
 				TimeoutMS: &t.TimeoutMS, PacketSize: &t.PacketSize, DSCP: &t.DSCP,
-				Agents: ptr("local"),
+				Agents: new("local"),
 				// The probe-type settings are mirrored only where the master
 				// actually set one. An empty string is not "no opinion" to
 				// tree.Validate — it is an invalid value, and writing it would
@@ -352,8 +352,6 @@ func (a *Agent) signedRequest(ctx context.Context, method, path string, body []b
 	}
 	return req, nil
 }
-
-func ptr[T any](v T) *T { return &v }
 
 // nz points at v, or is nil when v is the zero value.
 func nz[T comparable](v T) *T {

@@ -191,28 +191,22 @@ func describeCerts(blob []byte) []string {
 		if block == nil {
 			return out
 		}
-		if block.Type != "CERTIFICATE" {
+		// The blob went through cleanCertificates, which refuses anything that
+		// is not a parseable certificate.
+		c, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
 			continue
 		}
 		sum := sha256.Sum256(block.Bytes)
-		fp := hex.EncodeToString(sum[:])
-		if c, err := x509.ParseCertificate(block.Bytes); err == nil {
-			out = append(out, fmt.Sprintf("%s (sha256:%s)", c.Subject, fp))
-			continue
-		}
-		out = append(out, fmt.Sprintf("unparseable certificate (sha256:%s)", fp))
+		out = append(out, fmt.Sprintf("%s (sha256:%s)", c.Subject, hex.EncodeToString(sum[:])))
 	}
 }
 
 // tlsConfigFor builds the client TLS configuration for one target.
 func tlsConfigFor(spec TargetSpec) *tls.Config {
-	cfg := &tls.Config{RootCAs: trustedCAs.Load()}
-	if spec.TLSSkipVerify {
-		// #nosec G402 — deliberate, per-target, and never the default. See
-		// the setting's own documentation for why the alternative is worse:
-		// an internal service on a private PKI reading as 100% loss is a
-		// graph reporting an outage that is not happening.
-		cfg.InsecureSkipVerify = true
-	}
-	return cfg
+	// #nosec G402 — InsecureSkipVerify is deliberate, per-target, and never the
+	// default. See the setting's own documentation for why the alternative is
+	// worse: an internal service on a private PKI reading as 100% loss is a
+	// graph reporting an outage that is not happening.
+	return &tls.Config{RootCAs: trustedCAs.Load(), InsecureSkipVerify: spec.TLSSkipVerify}
 }
