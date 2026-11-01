@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useAction } from './shared'
 import {
   createAlertRule,
   deleteAlertRule,
@@ -55,46 +56,29 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   const [targets, setTargets] = useState<Target[]>([])
   const [silences, setSilences] = useState<Silence[]>([])
   const [baselines, setBaselines] = useState<AlertBaseline[]>([])
-  const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
 
-  const reload = useCallback(async () => {
-    try {
-      const [r, f, t, s, b] = await Promise.all([
-        fetchAlertRules(),
-        fetchFiringAlerts(),
-        fetchTargets(),
-        fetchSilences(),
-        fetchAlertBaselines(),
-      ])
-      setRules(r)
-      setFiring(f.alerts ?? [])
-      setDelivering(f.delivering)
-      setTargets(t)
-      setSilences(s)
-      setBaselines(b)
-      setError(null)
-    } catch (e) {
-      setError((e as Error).message)
-    }
+  const load = useCallback(async () => {
+    const [r, f, t, s, b] = await Promise.all([
+      fetchAlertRules(),
+      fetchFiringAlerts(),
+      fetchTargets(),
+      fetchSilences(),
+      fetchAlertBaselines(),
+    ])
+    setRules(r)
+    setFiring(f.alerts ?? [])
+    setDelivering(f.delivering)
+    setTargets(t)
+    setSilences(s)
+    setBaselines(b)
   }, [])
+  const { error, reload, run } = useAction(load)
 
   useEffect(() => {
-    void reload()
     const id = setInterval(() => void reload(), REFRESH_MS)
     return () => clearInterval(id)
   }, [reload])
-
-  const run = async (fn: () => Promise<unknown>) => {
-    try {
-      await fn()
-      await reload()
-      return true
-    } catch (e) {
-      setError((e as Error).message)
-      return false
-    }
-  }
 
   const ackAlert = (a: FiringAlert) => run(() => acknowledgeAlert(a, !a.acked))
 
@@ -539,11 +523,7 @@ function SilenceForm({
         <span>Scope</span>
         <select value={scope} onChange={(e) => setScope(Number(e.target.value))}>
           <option value={0}>Everything</option>
-          {targets.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.path === '/' ? '/ (everything)' : t.path}
-            </option>
-          ))}
+          <TargetOptions targets={targets} />
         </select>
       </label>
       <label className="field">
@@ -715,11 +695,7 @@ function RuleForm({
       <label className="field">
         <span>Applies to</span>
         <select value={targetId} onChange={(e) => setTargetId(Number(e.target.value))}>
-          {targets.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.path === '/' ? '/ (everything)' : t.path}
-            </option>
-          ))}
+          <TargetOptions targets={targets} />
         </select>
       </label>
       <label className="field">
@@ -813,4 +789,12 @@ function RuleForm({
       </div>
     </form>
   )
+}
+
+function TargetOptions({ targets }: { targets: Target[] }) {
+  return targets.map((t) => (
+    <option key={t.id} value={t.id}>
+      {t.path === '/' ? '/ (everything)' : t.path}
+    </option>
+  ))
 }

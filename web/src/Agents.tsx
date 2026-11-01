@@ -40,11 +40,7 @@ export default function Agents({
     setAgents(a)
     setTokens(t)
   }, [])
-  const { error, busy, reload, run } = useAction(load)
-
-  useEffect(() => {
-    void reload()
-  }, [reload])
+  const { error, busy, run } = useAction(load)
 
   const agentName = (id: number | undefined) => {
     if (id === undefined) return undefined

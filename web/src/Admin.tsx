@@ -1,5 +1,5 @@
 import TomlDialog from './TomlDialog'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   SERIES_LABELS,
   SERIES_NAMES,
@@ -183,11 +183,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
   // regardless; disabling the controls only saves them a refused request.
   const busy = saving || readOnly
 
-  useEffect(() => {
-    void reload()
-  }, [reload])
-
-  const ordered = useMemo(() => orderedTargets(targets), [targets])
+  const ordered = orderedTargets(targets)
 
   const selected = targets.find((t) => t.id === selectedId) ?? null
 

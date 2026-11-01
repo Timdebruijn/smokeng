@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useMemo, useState } from 'react'
 import {
   createGrant,
   deleteGrant,
@@ -33,11 +33,7 @@ export default function Grants({
     setGrants(g)
     setTargets(t)
   }, [])
-  const { error, busy, reload, run } = useAction(load)
-
-  useEffect(() => {
-    void reload()
-  }, [reload])
+  const { error, busy, run } = useAction(load)
 
   // Grouped by OIDC group name — the list should read as "who can reach
   // what", not as a flat table of unrelated rows.
@@ -195,14 +191,12 @@ function AddGrantForm({
   onSubmit: (group: string, targetId: number, role: Grant['role']) => void
   onCancel: () => void
 }) {
-  const ordered = useMemo(() => orderedTargets(targets), [targets])
+  const ordered = orderedTargets(targets)
   const [group, setGroup] = useState('')
-  const [targetId, setTargetId] = useState<number | ''>('')
+  const [pick, setTargetId] = useState<number | null>(null)
+  // Until the user chooses, the first target.
+  const targetId = pick ?? ordered[0]?.target.id
   const [role, setRole] = useState<Grant['role']>('viewer')
-
-  useEffect(() => {
-    if (targetId === '' && ordered.length > 0) setTargetId(ordered[0].target.id)
-  }, [ordered, targetId])
 
   return (
     <form
@@ -210,7 +204,7 @@ function AddGrantForm({
       onSubmit={(e) => {
         e.preventDefault()
         const trimmed = group.trim()
-        if (!trimmed || targetId === '') return
+        if (!trimmed || targetId === undefined) return
         onSubmit(trimmed, targetId, role)
       }}
     >
@@ -227,7 +221,7 @@ function AddGrantForm({
       <label className="field">
         <span>Target</span>
         <select
-          value={targetId}
+          value={targetId ?? ''}
           onChange={(e) => setTargetId(Number(e.target.value))}
         >
           {ordered.map(({ target, depth }) => (
@@ -253,7 +247,7 @@ function AddGrantForm({
         that already has one replaces its role rather than adding a second grant.
       </p>
       <div className="pill-row">
-        <button className="pill accent" type="submit" disabled={busy || !group.trim() || targetId === ''}>
+        <button className="pill accent" type="submit" disabled={busy || !group.trim() || targetId === undefined}>
           Add grant
         </button>
         <button className="pill" type="button" disabled={busy} onClick={onCancel}>

@@ -45,20 +45,18 @@ export interface CompareSeries {
 }
 
 /** One bucket's pooled median, or null where the interval has no samples. */
-function medians(s: Series): { ts: Float64Array; med: (number | null)[] } {
-  const med: (number | null)[] = new Array(s.ts.length)
-  for (let i = 0; i < s.ts.length; i++) {
+type Medians = { ts: Float64Array; med: (number | null)[] }
+
+function medians(s: Series): Medians {
+  const med = Array.from(s.ts, (_, i) => {
     const start = s.offsets[i]
     const end = s.offsets[i + 1]
-    if (end <= start) {
-      // Sent and lost, or never attempted. Either way there is no latency to
-      // plot, and inventing one would draw a healthy line over an outage.
-      med[i] = null
-      continue
-    }
+    // Sent and lost, or never attempted. Either way there is no latency to
+    // plot, and inventing one would draw a healthy line over an outage.
+    if (end <= start) return null
     // Samples arrive sorted, which is what the storage format guarantees.
-    med[i] = s.values[start + ((end - start) >> 1)]
-  }
+    return s.values[start + ((end - start) >> 1)]
+  })
   return { ts: s.ts, med }
 }
 
