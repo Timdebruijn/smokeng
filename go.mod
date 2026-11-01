@@ -3,7 +3,7 @@ module github.com/timdebruijn/smokeng
 go 1.27.3
 
 require (
-	codeberg.org/miekg/dns v0.6.125
+	codeberg.org/miekg/dns v0.6.128
 	github.com/apache/arrow-go/v18 v18.8.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/google/flatbuffers v25.12.19+incompatible
@@ -12,15 +12,15 @@ require (
 	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.49.0
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/felixge/fgprof v0.9.5 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.7 // indirect
 	github.com/goccy/go-json v0.11.2 // indirect
-	github.com/google/pprof v0.0.0-20261016150608-1facf8f91b50 // indirect
+	github.com/google/pprof v0.0.0-20261026192309-dbd0ed30aa88 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.1 // indirect
