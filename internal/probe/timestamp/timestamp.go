@@ -52,19 +52,3 @@ type ErrQueueEntry struct {
 	TXStamp   *TXStamp
 	ICMPError *ICMPError
 }
-
-// EnableKernel attempts to enable kernel software timestamping on fd and
-// reports what was achieved. A zero Caps means full userspace fallback.
-func EnableKernel(fd int) Caps { return enableKernel(fd) }
-
-// FromOOB extracts the software RX timestamp from received control messages.
-// ok is false when none is present (caller uses its userspace clock).
-func FromOOB(oob []byte) (t time.Time, ok bool) { return fromOOB(oob) }
-
-// EnableICMPErrors turns on IP_RECVERR / IPV6_RECVERR, which routes ICMP
-// errors for our packets onto the error queue instead of discarding them.
-func EnableICMPErrors(fd int, ipv6 bool) bool { return enableICMPErrors(fd, ipv6) }
-
-// ReadErrQueue drains the socket error queue without blocking, returning
-// every entry it held. An empty queue returns (nil, nil).
-func ReadErrQueue(fd int) ([]ErrQueueEntry, error) { return readErrQueue(fd) }

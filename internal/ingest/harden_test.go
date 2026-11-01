@@ -274,7 +274,7 @@ func TestDecodeBatchRefusesOversizedDecompression(t *testing.T) {
 	body := buf.Bytes()
 
 	// The public path never gets this far: compression is refused outright.
-	if _, err := decodeBatch(body, 3, maxDecodeBytes); err == nil {
+	if _, err := DecodeBatch(body, 3); err == nil {
 		t.Fatal("a compressed batch got through the framing screen")
 	}
 

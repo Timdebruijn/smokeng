@@ -107,9 +107,7 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 	// Keyed on the target's configured host, not the resolved address, so the
 	// keyfile stays stable across DNS changes and matches what the operator
 	// wrote in the target. An endpoint with no key is probed without HMAC.
-	if k := irttKeyFor(net.JoinHostPort(spec.Host, strconv.Itoa(port))); k != nil {
-		cfg.HMACKey = k
-	}
+	cfg.HMACKey = irttKeyFor(net.JoinHostPort(spec.Host, strconv.Itoa(port)))
 	cfg.Interval = step
 	// One interval of room past the last packet's slot.
 	//

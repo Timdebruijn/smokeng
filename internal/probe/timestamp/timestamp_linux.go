@@ -16,7 +16,9 @@ const tsFlags = unix.SOF_TIMESTAMPING_RX_SOFTWARE |
 	unix.SOF_TIMESTAMPING_OPT_ID |
 	unix.SOF_TIMESTAMPING_OPT_TSONLY
 
-func enableKernel(fd int) Caps {
+// EnableKernel attempts to enable kernel software timestamping on fd and
+// reports what was achieved. A zero Caps means full userspace fallback.
+func EnableKernel(fd int) Caps {
 	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_TIMESTAMPING, tsFlags); err == nil {
 		return Caps{KernelRX: true, KernelTX: true}
 	}
@@ -46,7 +48,9 @@ const (
 	_ = uint(3*unsafe.Sizeof(unix.Timespec{}) - unsafe.Sizeof(scmTimestamping{}))
 )
 
-func fromOOB(oob []byte) (time.Time, bool) {
+// FromOOB extracts the software RX timestamp from received control messages.
+// ok is false when none is present (caller uses its userspace clock).
+func FromOOB(oob []byte) (time.Time, bool) {
 	cmsgs, err := unix.ParseSocketControlMessage(oob)
 	if err != nil {
 		return time.Time{}, false
@@ -61,14 +65,18 @@ func fromOOB(oob []byte) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func enableICMPErrors(fd int, ipv6 bool) bool {
+// EnableICMPErrors turns on IP_RECVERR / IPV6_RECVERR, which routes ICMP
+// errors for our packets onto the error queue instead of discarding them.
+func EnableICMPErrors(fd int, ipv6 bool) bool {
 	if ipv6 {
 		return unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_RECVERR, 1) == nil
 	}
 	return unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_RECVERR, 1) == nil
 }
 
-func readErrQueue(fd int) ([]ErrQueueEntry, error) {
+// ReadErrQueue drains the socket error queue without blocking, returning
+// every entry it held. An empty queue returns (nil, nil).
+func ReadErrQueue(fd int) ([]ErrQueueEntry, error) {
 	var out []ErrQueueEntry
 	// Timestamp entries carry no payload (OPT_TSONLY), but ICMP error entries
 	// return the offending datagram, which is what identifies the ping.

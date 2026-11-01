@@ -13,7 +13,7 @@ import (
 //
 // Two things in arrow-go's reader trust the stream. The metadata of each
 // message is read into make([]byte, n) with n taken straight off the wire, and
-// that allocation never passes through the allocator decodeBatch hands the
+// that allocation never passes through the allocator decodeFrames hands the
 // reader, so a header that claims a large length costs that much however short
 // the body is. The schema is a tree the reader expands reference by reference,
 // and a flatbuffer may name one table many times, so it is counted by what it

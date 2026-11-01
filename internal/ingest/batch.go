@@ -109,20 +109,13 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 // authenticated agent's id. The id is never taken from the payload: an agent
 // must not be able to write to another agent's series by saying so.
 func DecodeBatch(body []byte, agentID int64) ([]store.Measurement, error) {
-	return decodeBatch(body, agentID, maxDecodeBytes)
-}
-
-// decodeBatch is DecodeBatch with the allocation budget as a parameter, so a
-// test can exercise the real reader against a small one instead of having to
-// build a payload large enough to cross the production limit.
-func decodeBatch(body []byte, agentID int64, limit int) ([]store.Measurement, error) {
 	// Before arrow sees a byte: every length the stream declares has to fit in
 	// the payload that is actually here, and nothing may be compressed. See
 	// screenFrames for why the allocator below cannot do this on its own.
 	if err := screenFrames(body); err != nil {
 		return nil, err
 	}
-	return decodeFrames(body, agentID, limit)
+	return decodeFrames(body, agentID, maxDecodeBytes)
 }
 
 // MaxBatchRows bounds one submission. An agent sends at most pushBatch (2000)
@@ -135,7 +128,7 @@ func decodeBatch(body []byte, agentID int64, limit int) ([]store.Measurement, er
 // transaction.
 const MaxBatchRows = 10_000
 
-// decodeFrames is decodeBatch past the framing screen, with the allocation
+// decodeFrames is DecodeBatch past the framing screen, with the allocation
 // budget as a parameter so a test can run the real reader against a small one.
 // It is also what a test calls to check that its own limits hold without the
 // screen in front of it.
@@ -308,12 +301,10 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 				continue
 			}
 			if !icmp.IsNull(i) {
-				v := icmp.Value(i)
-				m.ICMPErr = &v
+				m.ICMPErr = new(icmp.Value(i))
 			}
 			if sendErrs != nil && !sendErrs.IsNull(i) {
-				v := sendErrs.Value(i)
-				m.SendErr = &v
+				m.SendErr = new(sendErrs.Value(i))
 			}
 			for _, name := range seriesColumns {
 				l := series[name]
