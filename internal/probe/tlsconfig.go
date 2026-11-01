@@ -191,9 +191,12 @@ func describeCerts(blob []byte) []string {
 		if block == nil {
 			return out
 		}
-		// The blob went through cleanCertificates: every block is a certificate
-		// that parses.
-		c, _ := x509.ParseCertificate(block.Bytes)
+		// The blob went through cleanCertificates, which refuses anything that
+		// is not a parseable certificate.
+		c, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
 		sum := sha256.Sum256(block.Bytes)
 		out = append(out, fmt.Sprintf("%s (sha256:%s)", c.Subject, hex.EncodeToString(sum[:])))
 	}
