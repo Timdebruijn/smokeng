@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -14,17 +13,6 @@ import (
 
 	"github.com/timdebruijn/smokeng/internal/store"
 )
-
-// EnrolStore is the slice of the store the enrolment endpoints need.
-type EnrolStore interface {
-	MintEnrolmentToken(ctx context.Context, name string, ttl time.Duration, now time.Time) (store.EnrolmentToken, error)
-	RedeemEnrolmentToken(ctx context.Context, tok string, pub ed25519.PublicKey, now time.Time) (store.AgentRecord, error)
-	ListEnrolmentTokens(ctx context.Context) ([]store.EnrolmentToken, error)
-	RevokeEnrolmentToken(ctx context.Context, id int64) error
-	RenameAgent(ctx context.Context, id int64, name string) (int, error)
-	SetAgentEnabled(ctx context.Context, id int64, enabled bool) error
-	RemoveAgent(ctx context.Context, id int64) error
-}
 
 // defaultTokenTTL is short on purpose: an enrolment token is meant to be used
 // in the minutes after it is minted, not to live in a wiki.

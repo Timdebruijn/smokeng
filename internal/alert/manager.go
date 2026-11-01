@@ -68,12 +68,9 @@ type Manager struct {
 	// smokeng has not observed since restart is not one it can judge against.
 	shapes map[stateKey]*shapeState
 	// golden holds captured reference distributions for golden-baseline shape
-	// rules, keyed by rule id. Loaded in Reload from the store.
-	golden map[int64][]uint32
-	// goldenMeta is what each reference was taken from, so the API can say which
-	// window and series a golden baseline came from rather than showing an
-	// anonymous curve.
-	goldenMeta map[int64]Baselined
+	// rules, keyed by rule id, with what each was taken from so the API can say
+	// which window and series it came from. Loaded in Reload from the store.
+	golden map[int64]Baselined
 }
 
 // NewManager evaluates rules and, when notifier is non-nil, delivers the
@@ -89,8 +86,7 @@ func NewManager(st Store, notifier Notifier) *Manager {
 		agentNames: map[int64]string{},
 		ancestors:  map[int64]map[int64]bool{},
 		shapes:     map[stateKey]*shapeState{},
-		golden:     map[int64][]uint32{},
-		goldenMeta: map[int64]Baselined{},
+		golden:     map[int64]Baselined{},
 	}
 }
 
@@ -128,11 +124,9 @@ func (m *Manager) Reload(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	golden := map[int64][]uint32{}
-	goldenMeta := map[int64]Baselined{}
+	golden := map[int64]Baselined{}
 	for _, b := range baselines {
-		golden[b.RuleID] = b.Samples
-		goldenMeta[b.RuleID] = b
+		golden[b.RuleID] = b
 	}
 
 	// Ancestor sets, so a silence scoped to a group can be matched against any
@@ -216,7 +210,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	}
 	m.byTarget, m.rules, m.states, m.agentNames = resolved, byID, kept, agentNames
 	m.ancestors = ancestors
-	m.golden, m.goldenMeta = golden, goldenMeta
+	m.golden = golden
 	// Silences are owned by the API between reloads (AddSilence/RemoveSilence
 	// keep the in-memory copy current the moment a change is made), so this
 	// wholesale refresh is only for a restart or a change made straight to the
@@ -259,7 +253,7 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 					ss = &shapeState{}
 					m.shapes[key] = ss
 				}
-				value, ok := ss.value(r, meas, m.golden[r.ID])
+				value, ok := ss.value(r, meas, m.golden[r.ID].Samples)
 				t = EvaluateValue(r, st, value, ok, meas.RTTTrusted, meas.TS, app.intervalS)
 			} else {
 				t = Evaluate(r, st, meas, app.intervalS)
@@ -289,24 +283,7 @@ func (m *Manager) Repeat(ctx context.Context) {
 	if m.notifier == nil {
 		return
 	}
-	var out []Alert
-	m.mu.Lock()
-	for key, st := range m.states {
-		if !st.Firing {
-			continue
-		}
-		r, ok := m.rules[key.ruleID]
-		if !ok {
-			continue
-		}
-		app, ok := m.byTarget[st.TargetID]
-		if !ok {
-			continue
-		}
-		out = append(out, m.alertLocked(r, st, app, true))
-	}
-	m.mu.Unlock()
-	m.deliver(ctx, out)
+	m.deliver(ctx, m.Firing())
 }
 
 // Firing returns the alerts currently firing, for the API. A silenced alert is
@@ -512,8 +489,7 @@ func (m *Manager) CaptureBaseline(ctx context.Context, b Baselined) error {
 		return err
 	}
 	m.mu.Lock()
-	m.golden[b.RuleID] = b.Samples
-	m.goldenMeta[b.RuleID] = b
+	m.golden[b.RuleID] = b
 	m.mu.Unlock()
 	return nil
 }
@@ -528,7 +504,6 @@ func (m *Manager) ClearBaseline(ctx context.Context, ruleID int64) (bool, error)
 	}
 	m.mu.Lock()
 	delete(m.golden, ruleID)
-	delete(m.goldenMeta, ruleID)
 	m.mu.Unlock()
 	return true, nil
 }
@@ -538,8 +513,8 @@ func (m *Manager) ClearBaseline(ctx context.Context, ruleID int64) (bool, error)
 func (m *Manager) Baselines() []Baselined {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]Baselined, 0, len(m.goldenMeta))
-	for _, b := range m.goldenMeta {
+	out := make([]Baselined, 0, len(m.golden))
+	for _, b := range m.golden {
 		out = append(out, b)
 	}
 	return out
@@ -591,10 +566,10 @@ func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64) ShapeRef
 		return ShapeRef{}
 	}
 	if r.Baseline == BaselineGolden {
-		s := m.golden[ruleID]
-		ref := ShapeRef{Samples: s, Kind: "golden", OK: len(s) > 0}
-		if meta, ok := m.goldenMeta[ruleID]; ok {
-			ref.Source, ref.HasSource = meta.TargetID, true
+		b, ok := m.golden[ruleID]
+		ref := ShapeRef{Samples: b.Samples, Kind: "golden", OK: len(b.Samples) > 0}
+		if ok {
+			ref.Source, ref.HasSource = b.TargetID, true
 		}
 		return ref
 	}
@@ -619,11 +594,6 @@ func (m *Manager) record(ctx context.Context, alerts []Alert) {
 	now := time.Now().Unix()
 	events := make([]Event, 0, len(alerts))
 	for _, a := range alerts {
-		// Since is when the condition started holding, and Evaluate clears it
-		// on the way out — so a resolved alert carries the zero time, whose
-		// Unix() is -62135596800. What the log wants is when the transition
-		// happened, which for a resolve is now and for a fire is when it
-		// started.
 		events = append(events, Event{
 			TS: transitionTS(a, now), RuleID: a.Rule.ID, TargetID: a.TargetID, AgentID: a.AgentID,
 			Firing: a.Firing, RuleName: a.Rule.Name, Describes: a.Rule.Describe(), Value: a.Value,

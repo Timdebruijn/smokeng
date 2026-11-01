@@ -12,13 +12,8 @@ import (
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
-// handleMetrics writes Prometheus text exposition about smokeng itself.
-//
-// Measurement data is deliberately absent. Latency and loss live in the store
-// at full resolution and are read as Arrow; sending them through Prometheus
-// would flatten every interval to one number, which is the exact loss this
-// project exists to avoid. These metrics answer "is smokeng healthy", never
-// "what is the network doing".
+// handleMetrics writes Prometheus text exposition about smokeng itself, never
+// measurement data (see package metrics).
 func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	var out []metrics.Metric
 

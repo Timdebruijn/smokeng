@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -76,10 +77,7 @@ func syncGrants(ctx context.Context, st Store, f File, tr *tree.Tree, targets []
 	}
 
 	// Deterministic order, so an import reports the same thing twice running.
-	keys := make([]key, 0, len(wanted))
-	for k := range wanted {
-		keys = append(keys, k)
-	}
+	keys := slices.Collect(maps.Keys(wanted))
 	slices.SortFunc(keys, func(a, b key) int {
 		return cmp.Or(cmp.Compare(a.group, b.group), cmp.Compare(a.id, b.id))
 	})

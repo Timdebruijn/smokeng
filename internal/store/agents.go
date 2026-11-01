@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -268,13 +270,8 @@ func (s *SQLite) attachPendingSeries(ctx context.Context, ms []Measurement) erro
 	// which fails the whole drain and leaves the outbox to retry the identical
 	// query every fifteen seconds forever. That is a harder failure than the
 	// table scan this replaced, so the query is split rather than risked.
-	pairs := make([][2]int64, 0, len(spans))
-	for pair := range spans {
-		pairs = append(pairs, pair)
-	}
-	for start := 0; start < len(pairs); start += pendingSeriesChunk {
-		end := min(start+pendingSeriesChunk, len(pairs))
-		if err := s.readPendingSeriesChunk(ctx, pairs[start:end], spans, byKey); err != nil {
+	for chunk := range slices.Chunk(slices.Collect(maps.Keys(spans)), pendingSeriesChunk) {
+		if err := s.readPendingSeriesChunk(ctx, chunk, spans, byKey); err != nil {
 			return err
 		}
 	}

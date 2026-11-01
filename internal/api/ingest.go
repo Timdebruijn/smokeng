@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/base64"
 	"log"
 	"net/http"
@@ -24,17 +23,6 @@ const maxIngestBody = 8 << 20
 // there are as many agents as an operator enrols, so without a bound the memory
 // is the number of agents sending together times that.
 const maxConcurrentDecodes = 4
-
-// PathStore reads the route change log.
-type PathStore interface {
-	PathChanges(ctx context.Context, targetID, agentID, from, to int64) ([]store.PathChange, error)
-}
-
-// AgentStore is the persistence the agent endpoints need.
-type AgentStore interface {
-	ListAgents(ctx context.Context) ([]store.AgentRecord, error)
-	TouchAgent(ctx context.Context, id, at int64, version string) error
-}
 
 // agentAuth verifies a signed agent request and returns the agent it came
 // from. A rejection is answered with one generic status: telling a caller
@@ -300,15 +288,11 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		// The public key is enrolment material, and belongs to whoever
 		// administers agents rather than to whoever reads their graphs.
 		if admin && len(a.PubKey) > 0 {
-			item["pubkey"] = encodeKey(a.PubKey)
+			item["pubkey"] = base64.StdEncoding.EncodeToString(a.PubKey)
 		}
 		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"agents": out})
-}
-
-func encodeKey(k ed25519.PublicKey) string {
-	return base64.StdEncoding.EncodeToString(k)
 }
 
 // agentVersion reads the version an agent claims to be running. Bounded and

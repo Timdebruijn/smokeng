@@ -3,12 +3,14 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io/fs"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/auth"
@@ -16,14 +18,6 @@ import (
 	"github.com/timdebruijn/smokeng/internal/probe"
 	"github.com/timdebruijn/smokeng/internal/store"
 )
-
-// AlertStore is the persistence the alert endpoints need, on top of Store.
-type AlertStore interface {
-	store.Store
-	ListAlertRules(ctx context.Context) ([]alert.Rule, error)
-	UpsertAlertRule(ctx context.Context, r *alert.Rule) error
-	DeleteAlertRule(ctx context.Context, id int64) error
-}
 
 // AlertView is what the API needs of the alert manager.
 type AlertView interface {
@@ -52,12 +46,24 @@ type AlertView interface {
 // Store is everything the API persists through: the measurement store plus
 // the alert and agent tables.
 type Store interface {
-	AlertStore
-	AgentStore
-	PathStore
-	EnrolStore
-	GrantStore
-	EventStore
+	store.Store
+	ListAlertRules(ctx context.Context) ([]alert.Rule, error)
+	UpsertAlertRule(ctx context.Context, r *alert.Rule) error
+	DeleteAlertRule(ctx context.Context, id int64) error
+	ListAlertEvents(ctx context.Context, limit int) ([]alert.Event, error)
+	ListAgents(ctx context.Context) ([]store.AgentRecord, error)
+	TouchAgent(ctx context.Context, id, at int64, version string) error
+	PathChanges(ctx context.Context, targetID, agentID, from, to int64) ([]store.PathChange, error)
+	MintEnrolmentToken(ctx context.Context, name string, ttl time.Duration, now time.Time) (store.EnrolmentToken, error)
+	RedeemEnrolmentToken(ctx context.Context, tok string, pub ed25519.PublicKey, now time.Time) (store.AgentRecord, error)
+	ListEnrolmentTokens(ctx context.Context) ([]store.EnrolmentToken, error)
+	RevokeEnrolmentToken(ctx context.Context, id int64) error
+	RenameAgent(ctx context.Context, id int64, name string) (int, error)
+	SetAgentEnabled(ctx context.Context, id int64, enabled bool) error
+	RemoveAgent(ctx context.Context, id int64) error
+	ListGrants(ctx context.Context) ([]store.Grant, error)
+	UpsertGrant(ctx context.Context, g *store.Grant) error
+	DeleteGrant(ctx context.Context, id int64) error
 }
 
 type server struct {

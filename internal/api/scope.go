@@ -1,22 +1,13 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"slices"
 	"strings"
 
 	"github.com/timdebruijn/smokeng/internal/auth"
-	"github.com/timdebruijn/smokeng/internal/store"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
-
-// GrantStore is the slice of the store scoped authorisation needs.
-type GrantStore interface {
-	ListGrants(ctx context.Context) ([]store.Grant, error)
-	UpsertGrant(ctx context.Context, g *store.Grant) error
-	DeleteGrant(ctx context.Context, id int64) error
-}
 
 // Scope is what one session may see and do, resolved against the tree
 // (DESIGN.md §7.4).
