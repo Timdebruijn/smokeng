@@ -3,7 +3,8 @@ package config
 import (
 	"context"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/timdebruijn/smokeng/internal/store"
@@ -106,12 +107,7 @@ func checkAgentRefs(nodes map[string]*tree.Target, declared, known map[string]bo
 		return nil
 	}
 	var problems []string
-	paths := make([]string, 0, len(nodes))
-	for p := range nodes {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	for _, p := range paths {
+	for _, p := range slices.Sorted(maps.Keys(nodes)) {
 		// Only what this file declares. A node that predates the import may
 		// name an agent that has since been removed, and failing the whole
 		// apply over something the operator did not just write would be a
@@ -155,11 +151,7 @@ func quoteAll(names []string) []string {
 // operator could have meant. A rejection that does not list the alternatives
 // makes them go and read the database.
 func agentRefError(problems []string, known map[string]bool) error {
-	names := make([]string, 0, len(known))
-	for n := range known {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(known))
 	return fmt.Errorf("config: %s\nenrolled agents are: %s\n"+
 		"enrol it first with `smokeng agent add`, or pass --allow-unknown-agents "+
 		"if the tree is meant to land before the agent does",

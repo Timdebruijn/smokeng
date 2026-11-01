@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -252,10 +253,7 @@ func Apply(ctx context.Context, st Store, f File, prune, allowUnknownAgents bool
 	overlayValues(&root.Settings, f.Defaults)
 
 	// 2. Upsert entries, creating missing ancestor groups, parents first.
-	paths := make([]string, 0, len(f.Targets))
-	for p := range f.Targets {
-		paths = append(paths, p)
-	}
+	paths := slices.Collect(maps.Keys(f.Targets))
 	slices.SortFunc(paths, func(a, b string) int {
 		return cmp.Or(cmp.Compare(strings.Count(a, "/"), strings.Count(b, "/")), cmp.Compare(a, b))
 	})

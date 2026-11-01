@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -261,11 +260,6 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"alerts": out, "enabled": true, "delivering": s.alerts.Delivering(),
 	})
-}
-
-// EventStore is the slice of the store alert history needs.
-type EventStore interface {
-	ListAlertEvents(ctx context.Context, limit int) ([]alert.Event, error)
 }
 
 // handleAlertEvents reports what alerting has done, as opposed to what it is
