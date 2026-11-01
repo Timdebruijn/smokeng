@@ -193,7 +193,7 @@ function AddGrantForm({
 }) {
   const ordered = orderedTargets(targets)
   const [group, setGroup] = useState('')
-  const [pick, setTargetId] = useState<number | null>(null)
+  const [pick, setPick] = useState<number | null>(null)
   // Until the user chooses, the first target.
   const targetId = pick ?? ordered[0]?.target.id
   const [role, setRole] = useState<Grant['role']>('viewer')
@@ -222,7 +222,7 @@ function AddGrantForm({
         <span>Target</span>
         <select
           value={targetId ?? ''}
-          onChange={(e) => setTargetId(Number(e.target.value))}
+          onChange={(e) => setPick(Number(e.target.value))}
         >
           {ordered.map(({ target, depth }) => (
             <option key={target.id} value={target.id}>
