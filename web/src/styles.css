@@ -596,6 +596,10 @@ a.button {
 }
 
 .appbar-inner {
+  /* The global header rule makes .appbar a flex container; without these the
+     inner row cannot shrink below its tabs and pushes a phone page sideways. */
+  flex: 1;
+  min-width: 0;
   max-width: 1280px;
   margin: 0 auto;
   padding: 0 clamp(12px, 3vw, 24px);
@@ -1625,4 +1629,112 @@ a.button {
 
 .series-picker label.muted {
   color: var(--muted);
+}
+
+/* ── Phones ────────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  /* One row for the brand and the header actions, the tabs on a second row
+     that scrolls sideways instead of wrapping into a third. */
+  .appbar-inner {
+    gap: 8px;
+    row-gap: 0;
+  }
+
+  .tabs {
+    order: 9;
+    flex: 1 0 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin: 0 -4px 6px;
+  }
+
+  .tab {
+    flex: none;
+  }
+
+  /* Room for the brand and the buttons on one row. The user menu also shows
+     the version, and a phone has no ⌘K. */
+  .appbar .version-tag,
+  .search-button kbd {
+    display: none;
+  }
+
+  /* Fixed figure columns: auto-sized ones collided ("181µs1.5ms") once the
+     row had less room than the numbers. */
+  .health-row,
+  .health-legend {
+    grid-template-columns: 8px minmax(0, 1fr) 48px repeat(3, 48px);
+    gap: 6px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .health-row .spark {
+    width: 48px;
+  }
+
+  .health-host {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .health-legend {
+    font-size: 11px;
+  }
+
+  /* A form row per setting: label above, value and its state below. A table
+     this wide pushed the page sideways. */
+  .settings,
+  .settings tbody {
+    display: block;
+  }
+
+  .settings tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    column-gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .settings th {
+    grid-column: 1 / -1;
+    padding: 0 0 4px;
+  }
+
+  .settings td {
+    padding: 0;
+    min-width: 0;
+  }
+
+  .settings select,
+  .settings input:not([type="checkbox"]) {
+    max-width: 100%;
+  }
+
+  /* Table rows wrap onto a second line instead of running off the card: the
+     cells read in order, and none of these tables has a header to lose. */
+  .alerts,
+  .alerts tbody {
+    display: block;
+  }
+
+  .alerts tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .alerts td,
+  .alerts th {
+    padding: 0;
+    border: none;
+  }
 }

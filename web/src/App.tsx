@@ -291,7 +291,9 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
   // monitoring page that starts empty is a page that hides a problem.
   const [hidden, setHidden] = useState<Set<number>>(new Set())
   const [graphSearch, setGraphSearch] = useState('')
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // Closed on a phone, where the filter list would otherwise sit above every
+  // graph; the toolbar button opens it.
+  const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia('(max-width: 640px)').matches)
   const [compareOn, setCompareOn] = useState(false)
   const shown = leaves.filter((t) => !hidden.has(t.id))
   const toggleShown = (id: number) =>
