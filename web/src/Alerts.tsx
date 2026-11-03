@@ -238,7 +238,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                   {isAdmin && (
                     <td>
                       <button
-                        className={r.enabled ? 'pill active' : 'pill'}
+                        className="pill"
                         onClick={() => void run(() => updateAlertRule(r.id, { enabled: !r.enabled }))}
                       >
                         {r.enabled ? 'Disable' : 'Enable'}
