@@ -12,7 +12,7 @@ package shape
 
 import (
 	"math"
-	"sort"
+	"slices"
 )
 
 // Wasserstein1 is the 1-D earth-mover distance between two empirical
@@ -108,6 +108,6 @@ func sortedFloats(x []uint32) []float64 {
 	for i, v := range x {
 		out[i] = float64(v)
 	}
-	sort.Float64s(out)
+	slices.Sort(out)
 	return out
 }

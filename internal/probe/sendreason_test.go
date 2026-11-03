@@ -41,8 +41,7 @@ func TestSendReasonClassification(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := sendReasonFor(c.err); got != c.want {
-			t.Errorf("%s: got %q, want %q", c.name,
-				store.SendReasonName(got), store.SendReasonName(c.want))
+			t.Errorf("%s: got reason %d, want %d", c.name, got, c.want)
 		}
 	}
 }
@@ -52,12 +51,11 @@ func TestSendReasonClassification(t *testing.T) {
 func TestSendReasonFallbacks(t *testing.T) {
 	other := errors.New("some other failure")
 	if got := sendReasonOr(other, store.SendReasonSessionEnded); got != store.SendReasonSessionEnded {
-		t.Errorf("unrecognised mid-session error = %q, want the session fallback",
-			store.SendReasonName(got))
+		t.Errorf("unrecognised mid-session error = reason %d, want the session fallback", got)
 	}
 	// A recognised error still wins over the fallback.
 	if got := sendReasonOr(syscall.ECONNREFUSED, store.SendReasonSessionEnded); got != store.SendReasonRefused {
-		t.Errorf("a refusal mid-session = %q, want refused", store.SendReasonName(got))
+		t.Errorf("a refusal mid-session = reason %d, want refused", got)
 	}
 }
 
@@ -65,16 +63,16 @@ func TestSendReasonFallbacks(t *testing.T) {
 func TestSendReasonForOpen(t *testing.T) {
 	timeout := irtt.Errorf(irtt.OpenTimeout, "no reply from server")
 	if got := sendReasonForOpen(timeout); got != store.SendReasonSessionNoReply {
-		t.Errorf("an open timeout = %q, want no reply", store.SendReasonName(got))
+		t.Errorf("an open timeout = reason %d, want no reply", got)
 	}
 	if got := sendReasonForOpen(context.DeadlineExceeded); got != store.SendReasonDeadline {
-		t.Errorf("our own deadline = %q, want deadline", store.SendReasonName(got))
+		t.Errorf("our own deadline = reason %d, want deadline", got)
 	}
 	if got := sendReasonForOpen(syscall.ECONNREFUSED); got != store.SendReasonRefused {
-		t.Errorf("a refused open = %q, want refused", store.SendReasonName(got))
+		t.Errorf("a refused open = reason %d, want refused", got)
 	}
 	// Only an unplaceable error falls back to calling it a refusal.
 	if got := sendReasonForOpen(errors.New("?")); got != store.SendReasonSessionRefused {
-		t.Errorf("an unplaceable open failure = %q", store.SendReasonName(got))
+		t.Errorf("an unplaceable open failure = reason %d", got)
 	}
 }

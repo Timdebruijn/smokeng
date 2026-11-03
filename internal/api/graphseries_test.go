@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -71,16 +72,7 @@ func TestGraphSeriesPatchForms(t *testing.T) {
 	if code != http.StatusBadRequest {
 		t.Fatalf("an unknown series name was accepted through the array form: %d %v", code, body)
 	}
-	if msg, _ := body["error"].(string); !contains(msg, "ipdv_sideways") {
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "ipdv_sideways") {
 		t.Errorf("error does not name the offending value: %v", body["error"])
 	}
-}
-
-func contains(hay, needle string) bool {
-	for i := 0; i+len(needle) <= len(hay); i++ {
-		if hay[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }

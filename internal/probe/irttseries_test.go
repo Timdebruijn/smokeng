@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/netip"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -363,8 +362,7 @@ func TestIRTTSendFailuresAreDistinguishable(t *testing.T) {
 	// Loopback to a closed port is a genuine refusal: the kernel answers with
 	// ICMP port-unreachable and the connected socket reports ECONNREFUSED.
 	if *m.SendErr != store.SendReasonRefused {
-		t.Errorf("SendErr = %d (%s), want SendReasonRefused",
-			*m.SendErr, store.SendReasonName(*m.SendErr))
+		t.Errorf("SendErr = %d, want SendReasonRefused", *m.SendErr)
 	}
 
 	// Silence is not refusal. A black-holed address answers nothing, and
@@ -384,33 +382,13 @@ func TestIRTTSendFailuresAreDistinguishable(t *testing.T) {
 	case store.SendReasonSessionNoReply, store.SendReasonDeadline, store.SendReasonUnreachable:
 		// All three are honest answers depending on how the host routes it.
 	default:
-		t.Errorf("a black-holed address gave %q; silence is not a refusal",
-			store.SendReasonName(*dm.SendErr))
+		t.Errorf("a black-holed address gave reason %d; silence is not a refusal", *dm.SendErr)
 	}
 
 	// A session that completes cleanly records no reason at all.
 	ok := irttOnce(t, irttServer(t))
 	if ok.SendErr != nil {
 		t.Errorf("a clean interval recorded send reason %d", *ok.SendErr)
-	}
-}
-
-// Every reason has a name, and an unknown code stays legible rather than being
-// guessed at, so a newer prober's data is still readable by an older browser.
-//
-// This used to be called TestSendReasonSurvivesTheStore and its comment
-// promised the reason reached the master. It never touched the store, the wire
-// or the API — the survival it claimed to prove is tested where it happens, in
-// the store and ingest packages.
-func TestSendReasonNames(t *testing.T) {
-	for r := uint8(1); r <= store.SendReasonDeadline; r++ {
-		name := store.SendReasonName(r)
-		if name == "" || strings.HasPrefix(name, "reason ") {
-			t.Errorf("reason %d has no name of its own: %q", r, name)
-		}
-	}
-	if got := store.SendReasonName(200); got != "reason 200" {
-		t.Errorf("SendReasonName(200) = %q", got)
 	}
 }
 
@@ -443,7 +421,7 @@ func TestShortSessionIsNotLoss(t *testing.T) {
 		t.Errorf("flags 0x%x: a short session is not a send failure", m.Flags)
 	}
 	if m.SendErr != nil {
-		t.Errorf("a short session recorded reason %q", store.SendReasonName(*m.SendErr))
+		t.Errorf("a short session recorded reason %d", *m.SendErr)
 	}
 
 	// A session that broke is the opposite: the tail was owed and never went
