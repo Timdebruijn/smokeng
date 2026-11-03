@@ -7,7 +7,7 @@ reference.
 | --- | --- | --- |
 | `tour.gif` | A short tour: overview, graphs, a crosshair sweep, a brush-zoom, a detail page, alerts. 960 px wide, 17 frames. | `README.md` |
 | `graphs.png` | **Graphs** — an uplink with evening congestion and loss, a wifi access point that splits into two bands, an irtt target with its userspace badges. | `README.md`, `reading-graphs.md` |
-| `overview.png` | **Overview** — KPI cards, the per-series list with sparklines, firing alerts and measurement quality. | `README.md`, `getting-started.md` |
+| `overview.png` | **Overview** — the stat strip, the per-series list with sparklines, firing alerts and measurement quality. | `README.md`, `getting-started.md` |
 | `compare.png` | **Compare** — two public resolvers, each from the master and from a branch-office agent. | `README.md`, `reading-graphs.md` |
 | `detail.png` | **Detail** — median, p95, spread and loss above the full-height smoke of the bimodal target. | `README.md`, `reading-graphs.md` |
 | `alerts.png` | **Alerts** — a firing bimodality rule and a latency rule, the rule list, silences, history. | `README.md`, `alerting.md` |

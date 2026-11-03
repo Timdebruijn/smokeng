@@ -129,7 +129,6 @@ function SignIn() {
     <main>
       <section className="signin">
         <div className="card signin-card">
-          <span className="brand-mark large">s</span>
           <h1>Sign in to smokeng</h1>
           <p className="hint">
             Latency monitoring with the full RTT distribution, at full resolution, forever. Sign
@@ -174,7 +173,6 @@ function AppHeader({
     <header className="appbar">
       <div className="appbar-inner">
         <button className="brand" onClick={() => onView('overview')}>
-          <span className="brand-mark">s</span>
           <span className="brand-name">smokeng</span>
           {me?.version && <span className="version-tag">{me.version}</span>}
         </button>
@@ -187,7 +185,7 @@ function AppHeader({
         </nav>
         <span className="spacer" />
         <button className="search-button" onClick={onOpenPalette}>
-          <span>Search…</span>
+          <span>Search</span>
           <kbd>⌘K</kbd>
         </button>
         <A11yMenu
@@ -522,7 +520,7 @@ function TargetSidebar({
         className="filter"
         value={search}
         onChange={(e) => onSearch(e.target.value)}
-        placeholder="Filter targets…"
+        placeholder="Filter targets"
       />
       {rows.map((r) => (
         <Fragment key={r.group}>
