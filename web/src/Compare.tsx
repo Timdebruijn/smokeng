@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fetchSeries, type Series } from './api'
 import { fmtUs } from './format'
 import { useWidth } from './shared'
@@ -91,7 +91,7 @@ export default function Compare({
   // when they change, so the toggle takes effect at once even while paused.
   const [theme, setTheme] = useState(0)
 
-  const keys = useMemo(() => series.map((s) => s.key).join('|'), [series])
+  const keys = series.map((s) => s.key).join('|')
 
   useEffect(() => {
     let cancelled = false

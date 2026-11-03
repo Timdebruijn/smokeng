@@ -12,9 +12,7 @@ import Compare, { type CompareSeries } from './Compare'
 import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
-import { RANGES, resolveSeries, type PlotSeries } from './util'
-
-const REFRESH_MS = 10_000
+import { RANGES, REFRESH_MS, resolveSeries, type PlotSeries } from './util'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
