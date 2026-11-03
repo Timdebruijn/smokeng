@@ -38,6 +38,10 @@ export function csvCell(v: string | number): string {
   return `"${safe.replace(/"/g, '""')}"`
 }
 
+// How often the live screens refresh. One value, so "live" means the same thing
+// on Overview as on Graphs.
+export const REFRESH_MS = 10_000
+
 export const RANGES: { label: string; seconds: number }[] = [
   { label: '15m', seconds: 900 },
   { label: '1h', seconds: 3600 },

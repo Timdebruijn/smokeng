@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 /**
  * Presentation settings that belong to the person reading the graphs rather
@@ -70,9 +70,7 @@ export function useA11y(): [A11yState, (k: keyof A11yState) => void] {
     }
   }, [state])
 
-  const toggle = useCallback((k: keyof A11yState) => {
-    setState((s) => ({ ...s, [k]: !s[k] }))
-  }, [])
+  const toggle = (k: keyof A11yState) => setState((s) => ({ ...s, [k]: !s[k] }))
 
   return [state, toggle]
 }

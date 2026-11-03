@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fetchTargets, type Target } from './api'
 
 export interface PaletteAction {
@@ -37,22 +37,19 @@ export default function Palette({
       .catch(() => setTargets([]))
   }, [])
 
-  const items = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const targetItems: PaletteAction[] = targets
-      .filter((t) => t.host !== null)
-      .map((t) => ({
-        id: `target-${t.id}`,
-        label: t.title ?? t.path,
-        hint: t.host ?? '',
-        run: () => onOpenDetail(t.id),
-      }))
-    const all = [...actions, ...targetItems]
-    if (q === '') return all.slice(0, 12)
-    return all
-      .filter((a) => a.label.toLowerCase().includes(q) || a.hint.toLowerCase().includes(q))
-      .slice(0, 12)
-  }, [query, targets, actions, onOpenDetail])
+  const q = query.trim().toLowerCase()
+  const targetItems: PaletteAction[] = targets
+    .filter((t) => t.host !== null)
+    .map((t) => ({
+      id: `target-${t.id}`,
+      label: t.title ?? t.path,
+      hint: t.host ?? '',
+      run: () => onOpenDetail(t.id),
+    }))
+  const all = [...actions, ...targetItems]
+  const items = (
+    q === '' ? all : all.filter((a) => a.label.toLowerCase().includes(q) || a.hint.toLowerCase().includes(q))
+  ).slice(0, 12)
 
   useEffect(() => setCursor(0), [query])
 

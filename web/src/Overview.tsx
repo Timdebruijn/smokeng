@@ -12,12 +12,9 @@ import {
 } from './api'
 import { fmtLoss, fmtUs } from './format'
 import { Stat } from './shared'
-import { minMax, resolveSeries, summarise } from './util'
+import { minMax, REFRESH_MS, resolveSeries, summarise } from './util'
 
 const WINDOW_S = 3600
-// Matches the Graphs screen's REFRESH_MS (App.tsx) — the same "live" claim
-// should mean the same thing everywhere it's made.
-const REFRESH_MS = 10_000
 
 interface Row {
   target: Target
