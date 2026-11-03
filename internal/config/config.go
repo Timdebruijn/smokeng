@@ -310,9 +310,7 @@ func Apply(ctx context.Context, st Store, f File, prune, allowUnknownAgents bool
 		if !allowUnknownAgents {
 			return sum, agentRefError(problems, known)
 		}
-		for _, p := range problems {
-			sum.Warnings = append(sum.Warnings, p)
-		}
+		sum.Warnings = append(sum.Warnings, problems...)
 	}
 
 	sum.Created = len(created)

@@ -3,7 +3,6 @@ package store
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/timdebruijn/smokeng/internal/series"
 
@@ -109,33 +108,6 @@ const (
 	// operator hunting a firewall that is not there.
 	SendReasonDeadline uint8 = 9
 )
-
-// SendReasonName renders a reason for a person. An unknown code is shown as
-// itself rather than guessed at, so data from a newer prober stays legible.
-func SendReasonName(r uint8) string {
-	switch r {
-	case SendReasonSocket:
-		return "the socket refused the write"
-	case SendReasonRefused:
-		return "connection refused"
-	case SendReasonUnreachable:
-		return "no route to the target"
-	case SendReasonNoAddress:
-		return "no address to send to"
-	case SendReasonSessionRefused:
-		return "the session was refused"
-	case SendReasonSessionEnded:
-		return "the session broke part-way"
-	case SendReasonSessionShort:
-		return "the session sent fewer probes than asked"
-	case SendReasonSessionNoReply:
-		return "the session got no reply"
-	case SendReasonDeadline:
-		return "this prober's own deadline expired before sending"
-	default:
-		return fmt.Sprintf("reason %d", r)
-	}
-}
 
 // Measurement-quality flags (DESIGN.md §3.4). Zero means a clean measurement:
 // full kernel timestamping over a datagram ICMP socket, no dropped packets,

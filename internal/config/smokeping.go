@@ -744,8 +744,8 @@ func continues(v string) bool {
 // every line before deciding anything else about it. A continued line is the
 // exception and never reaches here: SmokePing reads that one raw.
 func stripComment(s string) string {
-	if i := strings.Index(s, "#"); i >= 0 {
-		return strings.TrimSpace(s[:i])
+	if before, _, found := strings.Cut(s, "#"); found {
+		return strings.TrimSpace(before)
 	}
 	return s
 }

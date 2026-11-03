@@ -35,8 +35,8 @@ func TestEveryReasonHasABrowserName(t *testing.T) {
 	}
 	for r := int(SendReasonSocket); r <= int(SendReasonDeadline); r++ {
 		if !known[r] {
-			t.Errorf("reason %d (%q) has no entry in SEND_REASONS, so the graph would call it %q",
-				r, SendReasonName(uint8(r)), "reason "+strconv.Itoa(r))
+			t.Errorf("reason %d has no entry in SEND_REASONS, so the graph would call it %q",
+				r, "reason "+strconv.Itoa(r))
 		}
 	}
 	// And nothing in the browser that Go cannot produce, which would be a name
