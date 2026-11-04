@@ -68,12 +68,12 @@ provider. Moving it to a file afterwards does not un-publish it.
 ## Roles
 
 `admin` comes from the ID token: if the claim named by `--oidc-admin-claim` contains
-`--oidc-admin-value`, the user is a global admin. The claim is read as a string, a comma-
-or space-separated list, or an array. smokeng will not start with `--oidc-issuer` and no
-`--oidc-admin-value` unless you pass `--oidc-everyone-is-admin`: without a group, **every
-authenticated user is an admin**, which is fine for a small team that controls who the
-provider lets through and wrong for anyone else. (Earlier versions did that and
-logged it at startup.)
+`--oidc-admin-value`, the user is a global admin. The claim is read as an array or as a
+comma-separated string; a space is part of a group name, so `Domain Admins` is one group.
+smokeng will not start with `--oidc-issuer` and no `--oidc-admin-value` unless you pass
+`--oidc-everyone-is-admin`: without a group, **every authenticated user is an admin**, which
+is fine for a small team that controls who the provider lets through and wrong for anyone
+else. (Earlier versions did that and logged it at startup.)
 
 Everyone else gets what their **grants** give them, plus whatever `--default-role` allows
 a user with no grants. That is where per-subtree access lives — one customer seeing only

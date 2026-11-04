@@ -108,11 +108,15 @@ func TestRoleFromClaims(t *testing.T) {
 		"not a member": {
 			map[string]any{"groups": []any{"staff"}}, "groups", "smokeng-admins", RoleViewer,
 		},
-		"space-separated string": {
-			map[string]any{"groups": "staff smokeng-admins"}, "groups", "smokeng-admins", RoleAdmin,
-		},
 		"comma-separated string": {
-			map[string]any{"roles": "a,smokeng-admins,b"}, "roles", "smokeng-admins", RoleAdmin,
+			map[string]any{"roles": "a, smokeng-admins,b"}, "roles", "smokeng-admins", RoleAdmin,
+		},
+		// A space is part of a group name, not a separator.
+		"name containing the admin value after a space": {
+			map[string]any{"groups": "x smokeng-admins"}, "groups", "smokeng-admins", RoleViewer,
+		},
+		"admin value with a space": {
+			map[string]any{"groups": "staff,Smokeng Admins"}, "groups", "Smokeng Admins", RoleAdmin,
 		},
 		"claim missing entirely": {
 			map[string]any{}, "groups", "smokeng-admins", RoleViewer,
