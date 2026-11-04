@@ -215,7 +215,16 @@ func (a *Authenticator) groupsFor(idToken *oidc.IDToken) []string {
 func groupsFromClaims(claims map[string]any, claimName string) []string {
 	switch v := claims[claimName].(type) {
 	case string:
-		return strings.FieldsFunc(v, func(r rune) bool { return r == ' ' || r == ',' })
+		// A list in one string is comma-separated. Spaces are part of a name
+		// ("Domain Admins"); splitting on them would let a group called
+		// "x smokeng-admins" match an admin value of "smokeng-admins".
+		var out []string
+		for _, s := range strings.Split(v, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
 	case []any:
 		out := make([]string, 0, len(v))
 		for _, item := range v {
