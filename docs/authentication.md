@@ -70,8 +70,8 @@ provider. Moving it to a file afterwards does not un-publish it.
 `admin` comes from the ID token: if the claim named by `--oidc-admin-claim` contains
 `--oidc-admin-value`, the user is a global admin. The claim is read as an array or as a
 comma-separated string; a space is part of a group name, so `Domain Admins` is one group.
-smokeng will not start with `--oidc-issuer` and no `--oidc-admin-value` unless you pass `--oidc-everyone-is-admin`: without a group, **every
-authenticated user is an admin**, which is fine for a small team that controls who the
+smokeng will not start with `--oidc-issuer` and no `--oidc-admin-value` unless you pass
+`--oidc-everyone-is-admin`: without a group, **every authenticated user is an admin**, which is fine for a small team that controls who the
 provider lets through and wrong for anyone else. (Earlier versions did that and
 logged it at startup.)
 
