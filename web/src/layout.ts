@@ -94,3 +94,16 @@ export function inferSpan(ts: Float64Array | ArrayLike<number>, n: number): numb
   diffs.sort((a, b) => a - b)
   return diffs[Math.floor(diffs.length / 2)] || 60
 }
+
+/**
+ * Where a line must break before row j: more than one and a half inferred
+ * spans after row j-1. A missed interval or a run of them breaks it; timing
+ * jitter does not. On a pooled read the span is a column's width, so omitted
+ * columns break it; a read pooled for its sample count has fewer intervals
+ * than columns, the span is then the interval, and the empty columns between
+ * neighbours do not.
+ */
+export function gapsBefore(ts: ArrayLike<number>): boolean[] {
+  const limit = 1.5 * inferSpan(ts, ts.length)
+  return Array.from({ length: ts.length }, (_, j) => j > 0 && ts[j] - ts[j - 1] > limit)
+}

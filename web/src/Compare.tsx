@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchSeries, type Series } from './api'
 import { fmtUs } from './format'
+import { gapsBefore } from './layout'
 import { useWidth } from './shared'
 
 /**
@@ -48,8 +49,11 @@ export interface CompareSeries {
   agentId: number
 }
 
-/** One bucket's pooled median, or null where the interval has no samples. */
-type Medians = { ts: Float64Array; med: (number | null)[] }
+/**
+ * One bucket's pooled median, or null where the interval has no samples; gap
+ * marks a row that follows a stretch with no rows at all.
+ */
+type Medians = { ts: Float64Array; med: (number | null)[]; gap: boolean[] }
 
 function medians(s: Series): Medians {
   const med = Array.from(s.ts, (_, i) => {
@@ -61,7 +65,7 @@ function medians(s: Series): Medians {
     // Samples arrive sorted, which is what the storage format guarantees.
     return s.values[start + ((end - start) >> 1)]
   })
-  return { ts: s.ts, med }
+  return { ts: s.ts, med, gap: gapsBefore(s.ts) }
 }
 
 export default function Compare({
@@ -78,9 +82,7 @@ export default function Compare({
   refreshKey: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [data, setData] = useState<Map<string, { ts: Float64Array; med: (number | null)[] }>>(
-    new Map(),
-  )
+  const [data, setData] = useState<Map<string, Medians>>(new Map())
   const [error, setError] = useState<string | null>(null)
   // The canvas is width:100%, so its box changes without any of the draw
   // effect's data dependencies changing — a sidebar toggle, a window resize,
@@ -114,7 +116,7 @@ export default function Compare({
       ),
     ).then((pairs) => {
       if (cancelled) return
-      const next = new Map<string, { ts: Float64Array; med: (number | null)[] }>()
+      const next = new Map<string, Medians>()
       let failed = 0
       for (const [k, v] of pairs) {
         if (v) next.set(k, v)
@@ -224,10 +226,12 @@ export default function Compare({
       let drawing = false
       for (let j = 0; j < d.med.length; j++) {
         const v = d.med[j]
+        // Break the line rather than bridge it, both at an interval with no
+        // samples and across a stretch with no rows at all. A straight segment
+        // across a gap asserts a measurement that was never taken, which is the
+        // one thing these graphs must not do.
+        if (d.gap[j]) drawing = false
         if (v === null) {
-          // Break the line rather than bridge it. A straight segment across a
-          // gap asserts a measurement that was never taken, which is the one
-          // thing these graphs must not do.
           drawing = false
           continue
         }
