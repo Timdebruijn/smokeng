@@ -73,8 +73,8 @@ Configure [authentication](authentication.md) and put a TLS-terminating reverse 
 front of it if it is reachable by anyone but you.
 
 The Ansible role installs the same unit (`ReadWritePaths=` in place of `StateDirectory=`)
-and, optionally, a second unit for the standalone prober. Remote agents are not covered by
-the role; see [agents](agents.md).
+and, optionally, a second unit for the standalone prober. With `smokeng_mode: agent` it
+installs a remote agent instead; see [the role's README](../deploy/ansible/README.md#remote-agents).
 
 ### Hardening, and what was left out
 

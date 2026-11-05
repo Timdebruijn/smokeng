@@ -1,5 +1,11 @@
 {{ ansible_managed | comment }}
+{% if smokeng_mode == 'agent' %}
+# A remote agent: the prober on its own host, reporting to the master at
+# {{ smokeng_master_url }}. What follows about the split-off prober applies,
+# except that the master is not on this host.
+{% else %}
 # The prober as its own process, on the same host as the master.
+{% endif %}
 #
 # smokeng's single binary runs the scheduler, the probing engine, the database
 # and the web UI together, which is the right shape for one host. This unit is

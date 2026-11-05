@@ -1,7 +1,7 @@
 # Deploying smokeng with Ansible
 
 An idempotent role that installs smokeng as a systemd service on a Debian-family
-host: release binary checked against the release's own `SHA256SUMS`, a system
+host — a master, or a [remote agent](#remote-agents) that reports to one: release binary checked against the release's own `SHA256SUMS`, a system
 user, unprivileged ICMP granted to that user's group alone, a hardened unit, and
 an optional declarative import of the target tree.
 
@@ -55,6 +55,9 @@ The ones that matter:
 
 | Variable | Default | Notes |
 | --- | --- | --- |
+| `smokeng_mode` | `master` | `master` or `agent`; see [Remote agents](#remote-agents). |
+| `smokeng_master_host` | `""` | Agent only: the master's inventory name. |
+| `smokeng_master_url` | the master's `smokeng_external_url` | Agent only: where the agent reaches the master. https, or a literal loopback address. |
 | `smokeng_version` | see [`defaults/main.yml`](roles/smokeng/defaults/main.yml) | Pin it. Moving it upgrades the host on the next run; see [Upgrades](#upgrades). |
 | `smokeng_repo` | `Timdebruijn/smokeng` | GitHub repository the release is downloaded from. |
 | `smokeng_user`, `smokeng_group` | `smokeng` | The service user and group. |
@@ -85,8 +88,8 @@ The ones that matter:
 | `smokeng_ping_group_range` | `""` | Empty narrows `ping_group_range` to the service group's gid. Set a literal `"low high"` pair to widen it. |
 | `smokeng_rmem_max` | `4194304` | Value for `net.core.rmem_max`, the ceiling for the 4 MiB receive buffer the prober asks for. `0` skips the task; it does not undo an earlier run. See [../../docs/operations.md](../../docs/operations.md). |
 | `smokeng_prober_enabled` | `false` | Run the prober as its own process next to the master; see [below](#splitting-the-prober-off). |
-| `smokeng_prober_agent_name` | `local-probe` | The name a target's `agents` must list to be measured there. |
-| `smokeng_prober_master_url`, `smokeng_prober_key`, `smokeng_prober_db` | loopback URL on the listen port, files in `<state_dir>` | Where the prober reaches the master and keeps its key and database. |
+| `smokeng_prober_agent_name` | `local-probe`; on an agent, the inventory name | The name a target's `agents` must list to be measured there. |
+| `smokeng_prober_master_url`, `smokeng_prober_key`, `smokeng_prober_db` | loopback URL on the listen port (on an agent, `smokeng_master_url`), files in `<state_dir>` | Where the prober reaches the master and keeps its key and database. |
 
 ### Version notes
 
@@ -167,9 +170,48 @@ and a target only measures in the new process once its `agents` setting names
 `local-probe`. Why you might want that, and what it costs, is in
 [../../docs/operations.md](../../docs/operations.md#running-the-prober-separately).
 
-## Adding a remote agent
+## Remote agents
 
-The role installs a master. To measure the same targets from somewhere else, see
-[../../docs/agents.md](../../docs/agents.md): enrol the agent's public key with
-`smokeng agent add` on this host, then run `smokeng agent run` on the other one.
-Each vantage point becomes its own series, never an average of the two.
+To measure the same targets from somewhere else, put the other host in the play with
+`smokeng_mode: agent` in its group_vars:
+
+```ini
+[home]
+smokeng.example.lan ansible_host=192.0.2.10
+
+[ams]
+ams-01 ansible_host=198.51.100.7
+
+[smokeng:children]
+home
+ams
+```
+
+```yaml
+# group_vars/ams.yml
+smokeng_mode: agent
+smokeng_master_host: smokeng.example.lan
+```
+
+On the agent host the role installs the binary, the user and the ICMP sysctls as on a
+master, then runs the prober as `smokeng-prober`, the same unit as
+[the split-off prober](#splitting-the-prober-off), pointed at the master. It generates the
+agent's key there and enrols it by running `smokeng agent add` **on the master**, so:
+
+- the controller needs SSH and sudo on the master as well, and the master must be installed
+  first, in an earlier run or earlier in the same one;
+- the master's paths are taken to be this role's defaults (`smokeng_bin`, `smokeng_db`,
+  `smokeng_user`). If you changed them for the master, set the same values for the agent;
+- the agent is named after its inventory name, which is what a target's `agents` lists.
+  Set `smokeng_prober_agent_name` to choose another.
+
+Every step is idempotent, as on the master. Re-keying an agent host (deleting its key)
+makes the next run's enrolment fail, because the name is taken by the old key: remove the
+old agent on the master first (`smokeng agent remove`).
+
+The agent reaches the master at `smokeng_master_url`, by default the master's
+`smokeng_external_url`. It must be https: the signature authenticates the agent but does not
+encrypt. The master's certificate is checked against the agent host's system trust store.
+None of the master's settings — listen address, OIDC, webhook, targets — apply on an agent.
+`smokeng_irtt_hmac_keys` does: an agent measuring an HMAC-protected irtt server needs its
+own entries. More in [../../docs/agents.md](../../docs/agents.md).

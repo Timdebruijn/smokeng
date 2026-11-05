@@ -150,9 +150,11 @@ authenticate on its own; see [API](api.md). To enrol a few agents, the realistic
 UI: mint a token per agent, paste the command, repeat. If you do script it, reuse an admin
 session cookie from a browser, and treat that cookie as the admin credential it is.
 
-The Ansible role installs only the master and, optionally, the local prober. It does not
-install or enrol remote agents. For a handful of hosts, the `smokeng agent key` plus
-`smokeng agent add` route is the one that fits a provisioning tool: both are idempotent.
+The Ansible role installs agents too: `smokeng_mode: agent` generates the key on the agent
+host and enrols it with `smokeng agent add` on the master, without a token. See
+[the role's README](../deploy/ansible/README.md#remote-agents). Without Ansible, that same
+`smokeng agent key` plus `smokeng agent add` route is the one that fits a provisioning
+tool: both are idempotent.
 
 ## Assigning targets
 

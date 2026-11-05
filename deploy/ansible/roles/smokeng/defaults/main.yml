@@ -4,6 +4,25 @@
 smokeng_version: v0.24.0
 smokeng_repo: Timdebruijn/smokeng
 
+# "master" installs smokeng serve: the database, the UI and the built-in
+# prober. "agent" installs only a prober that reports to a master elsewhere —
+# a second vantage point. An agent host gets the binary, the user, the ICMP
+# sysctls and the smokeng-prober unit; none of the master's settings below
+# (listen, OIDC, webhook, targets) apply to it.
+smokeng_mode: master
+
+# Agent mode only. The inventory name of the master host: the role enrols the
+# agent by running `smokeng agent add` there, so the controller needs SSH and
+# sudo on it, and the master's paths are taken to be this role's defaults.
+smokeng_master_host: ""
+# Agent mode only. Where the agent reaches the master; https, since the
+# signature authenticates the agent but does not encrypt. Defaults to the
+# master's smokeng_external_url. The master's certificate is verified against
+# the agent host's system trust store.
+smokeng_master_url: >-
+  {{ hostvars[smokeng_master_host]['smokeng_external_url'] | default('')
+     if smokeng_master_host | length > 0 else '' }}
+
 smokeng_user: smokeng
 smokeng_group: smokeng
 smokeng_bin: /usr/local/bin/smokeng
@@ -98,16 +117,20 @@ smokeng_irtt_hmac_keyfile: "{{ smokeng_state_dir }}/irtt-hmac-keys.toml"
 # "local" prober, and a target measures here only once its `agents` setting
 # names smokeng_prober_agent_name.
 smokeng_prober_enabled: false
-smokeng_prober_agent_name: local-probe
-# Where the prober reaches the master. Always loopback: the prober is on the
-# same host, so nothing has to leave it, and plain http is accepted for exactly
-# that reason.
+# In agent mode the agent's name defaults to the host's inventory name: it is
+# what a target's `agents` lists, and each vantage point needs its own.
+smokeng_prober_agent_name: "{{ inventory_hostname if smokeng_mode == 'agent' else 'local-probe' }}"
+# Where the prober reaches the master. On a master this is loopback: the prober
+# is on the same host, so nothing has to leave it, and plain http is accepted
+# for exactly that reason. On an agent it is smokeng_master_url.
 #
 # Only the port is taken from smokeng_listen. Reusing the whole value breaks
 # the moment the master binds a wildcard — "0.0.0.0:8080" is where to listen,
 # not somewhere to connect, and the agent rightly refuses it as neither HTTPS
 # nor loopback.
-smokeng_prober_master_url: "http://127.0.0.1:{{ smokeng_listen.split(':') | last }}"
+smokeng_prober_master_url: >-
+  {{ smokeng_master_url if smokeng_mode == 'agent'
+     else 'http://127.0.0.1:' ~ smokeng_listen.split(':') | last }}
 smokeng_prober_key: "{{ smokeng_state_dir }}/prober.key"
 smokeng_prober_db: "{{ smokeng_state_dir }}/prober.db"
 
