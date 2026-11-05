@@ -56,7 +56,7 @@ flags every measurement as taken over a raw socket. `"0 2147483647"` also works,
 lets every user on the host open ICMP sockets.
 
 Do not use `setcap cap_net_raw` instead. The hardened unit drops all capabilities, so the
-file capability does nothing there. [Operations](operations.md#running-as-a-service)
+file capability does nothing there. [Operations](operations.md#install-and-run-as-a-service)
 explains what the raw-socket route needs.
 
 On macOS, unprivileged datagram ICMP works out of the box; kernel timestamping does not,
@@ -98,7 +98,7 @@ prunes — absence always disables there.
 
 ## 4. Run it
 
-Install the systemd unit from [Operations](operations.md#running-as-a-service), then:
+Install the systemd unit from [Operations](operations.md#install-and-run-as-a-service), then:
 
 ```bash
 sudo systemctl daemon-reload

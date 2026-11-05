@@ -116,7 +116,7 @@ sudo -u smokeng sh -c 'umask 077 && python3 -c "import sqlite3; s=sqlite3.connec
 ```
 
 Do not `cp` the file while smokeng runs. The copy holds the session signing key, so keep it
-private and move it off the host. More in [../../docs/operations.md](../../docs/operations.md#backups).
+private and move it off the host. More in [../../docs/operations.md](../../docs/operations.md#backup-and-restore).
 
 The role verifies the SHA-256 checksum only. For a check that ties the binary to the release
 workflow, run this on a downloaded copy before you change the pin:
@@ -165,7 +165,7 @@ step is idempotent, so the play can be re-run.
 It changes nothing by itself. The master keeps its built-in prober under the name `local`,
 and a target only measures in the new process once its `agents` setting names
 `local-probe`. Why you might want that, and what it costs, is in
-[../../docs/operations.md](../../docs/operations.md#running-the-prober-as-its-own-process).
+[../../docs/operations.md](../../docs/operations.md#running-the-prober-separately).
 
 ## Adding a remote agent
 
