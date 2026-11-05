@@ -9,15 +9,55 @@ smokeng config import --db smokeng.db targets.toml   # apply a file
 smokeng config export --db smokeng.db > targets.toml # write the tree back out
 ```
 
-`import` is declarative and idempotent. Anything present in the file is created or
-updated; anything missing from it is **disabled**, so a mistake in the file never silently
-destroys history. Add `--prune` to delete instead of disable — a command-line-only
-option. The same operation is available in the web UI under **Targets** ("Import TOML"),
-which calls `PUT /api/v1/config`; it never prunes, so from the UI absence always means
-disabled, never deleted.
+`import` is declarative and idempotent. Anything present in the file is created or updated;
+anything missing from it is **disabled**, so a mistake in the file never silently destroys
+history. `--prune` deletes instead. See [Config as code](#config-as-code) for the CLI against
+the UI, and for what a round trip loses.
 
 `export` writes only *local* values — settings a node sets itself, not the ones it
 inherits — so an export can be re-imported without flattening the tree.
+
+## Config as code
+
+Keep the TOML in Git and apply it. Two ways in, one code path:
+
+| | `smokeng config import` | UI "Import TOML" / `PUT /api/v1/config` |
+| --- | --- | --- |
+| Where it runs | On the master host, on the database file (`--db`, default `smokeng.db`) | Any browser or client with a global-admin session |
+| `--prune` | Yes: deletes what the file omits | Never; absence always disables |
+| Unknown agent names | `--allow-unknown-agents` | `?allow_unknown_agents=1` |
+
+Both call the same function, so validation is identical. Everything is validated before the
+first write, and a file with an error changes nothing.
+
+**An import is not transactional.** After validation it writes node by node. A failure or a
+crash halfway leaves a partly applied tree, and an edit made in the UI at the same time can be
+overwritten or interleaved. Run imports when nobody else is editing, and re-run after a
+failure; the import is idempotent.
+
+**Drift detection.** `config export` writes the live tree. Commit an export as the baseline,
+then compare it later:
+
+```bash
+smokeng config export --db /var/lib/smokeng/smokeng.db > live.toml
+diff -u targets.toml live.toml
+```
+
+Export writes only local values, so a hand-written file differs in ordering and comments even
+when it means the same thing. Diff an export against an earlier export, not against a file
+written by hand.
+
+**What does not round-trip.** The TOML carries the target tree, alert rules and grants. It does
+not carry:
+
+- silences, which live only in the database;
+- enrolled agents and their keys; enrol them with `smokeng agent add` ([Remote agents](agents.md));
+- the reference of a `golden` baseline: the rule says `baseline = "golden"`, but the captured
+  distribution is measured data and is taken from the UI or the API;
+- measurements and path history.
+
+An export that has no grants omits the key, and an import without it leaves grants alone. An
+explicit empty `grants` list removes them all.
 
 ## The target tree
 
@@ -94,32 +134,39 @@ how wide the window is.
 ## Probe settings reference
 
 All of these are inheritable, and all are valid in `[defaults]` and in any `[targets."…"]`
-table.
+table. "Types" says which probe types read the setting; a setting that does not apply to a
+type is stored and ignored. What each type measures: [Probes](probes.md).
 
-| Key | Type | Root default | Constraint | Meaning |
-| --- | --- | --- | --- | --- |
-| `probe_type` | string | `"icmp"` | `icmp`, `dns`, `tcp`, `http`, `https`, `irtt` | What the N probes of an interval are — see [Probe types](#probe-types) |
-| `interval_s` | int | `60` | > 0 | Seconds between measurement intervals |
-| `pings_per_interval` | int | `20` | > 0 | Probes sent per interval — this is the width of your distribution |
-| `probe_mode` | string | `"burst"` | `burst` or `spread` | See below |
-| `burst_gap_ms` | int | `10` | ≥ 0 | Milliseconds between probes in burst mode |
-| `timeout_ms` | int | `1000` | > 0 | How long a reply may take before it counts as lost |
-| `packet_size` | int | `56` | 12–65000 | Payload bytes; `icmp` and `irtt` only |
-| `dscp` | int | `0` | 0–63 | DSCP marking, for measuring a specific traffic class |
-| `probe_port` | int | unset | 1–65535 | Port for the types that have one; unset means the type's default |
-| `dns_query` | string | unset | a domain name | What a `dns` probe asks for |
-| `dns_rr_type` | string | unset | `A`, `AAAA`, `CNAME`, `MX`, `NS`, `PTR`, `SOA`, `SRV`, `TXT` | Which record a `dns` probe asks for |
-| `http_path` | string | unset | a path | What an `http` or `https` probe requests; unset means `/` |
-| `tls_skip_verify` | bool | `false` | | Turn off certificate verification for an `https` probe — read the caveat below |
-| `agents` | array | `["local"]` | every name must be enrolled | Which vantage points measure this target |
-| `trace_interval_s` | int | `300` | ≥ 0 | Seconds between traceroutes; `0` disables path discovery |
-| `retention_s` | int | `0` | ≥ 0 | Seconds to keep raw measurements; `0` keeps them forever. Older intervals are deleted whole, never downsampled — see [Operations](operations.md#storage-growth) |
-| `graph_series` | string | `all` | `all`, `""`, or names | Which extra per-packet distributions are drawn beside the round trip. Display only — everything measured is stored regardless. See below |
+| Key | Types | Type | Root default | Constraint | Meaning |
+| --- | --- | --- | --- | --- | --- |
+| `probe_type` | all | string | `"icmp"` | `icmp`, `dns`, `tcp`, `http`, `https`, `irtt` | What the probes of an interval are |
+| `interval_s` | all | int | `60` | 1 – 86 400 | Seconds between measurement intervals |
+| `pings_per_interval` | all | int | `20` | 1 – 1000 | Probes per interval: the width of your distribution |
+| `probe_mode` | all | string | `"burst"` | `burst` or `spread` | `burst` sends the probes back to back; `spread` distributes them across the interval. See [Probes](probes.md#politeness-how-much-load-a-target-gets) |
+| `burst_gap_ms` | all | int | `10` | 0 – 600 000 | Milliseconds between probes in burst mode. `irtt` needs more than 0. `pings_per_interval × burst_gap_ms` must be less than `interval_s × 1000` |
+| `timeout_ms` | all | int | `1000` | 1 – 600 000, and no longer than the interval | How long a reply may take before it counts as lost |
+| `packet_size` | `icmp`, `irtt` | int | `56` | 12 – 9000 | Payload bytes (`icmp`) or packet length (`irtt`) |
+| `dscp` | `icmp`, `dns`, `tcp`, `http`, `https`, `irtt` | int | `0` | 0 – 63 | DSCP marking. Admin-only to set; see [Probes](probes.md#which-settings-apply) |
+| `probe_port` | `dns`, `tcp`, `http`, `https`, `irtt` | int | unset | 1 – 65535 | Port; unset means the type's default (`tcp` has none and needs it) |
+| `dns_query` | `dns` | string | unset | a domain name | What to ask. Unset asks `.` NS |
+| `dns_rr_type` | `dns` | string | unset | `A`, `AAAA`, `CNAME`, `MX`, `NS`, `PTR`, `SOA`, `SRV`, `TXT` | Which record to ask for |
+| `http_path` | `http`, `https` | string | unset | a path | What to request; unset means `/` |
+| `tls_skip_verify` | `https` | bool | `false` | | Turn off certificate verification for this target. See [Probes](probes.md#internal-certificates) |
+| `agents` | all | array | `["local"]` | every name must be enrolled | Which vantage points measure this target |
+| `trace_interval_s` | path discovery | int | `300` | 0, or 30 – 604 800 | Seconds between traceroutes; `0` disables path discovery |
+| `retention_s` | all | int | `0` | 0, or 3600 – 315 360 000 | Seconds to keep raw measurements; `0` keeps them forever. Older intervals are deleted whole, never downsampled; see [Operations](operations.md). Admin-only to set |
+| `graph_series` | `irtt` | string | `all` | `all`, `""`, or names | Which extra per-packet distributions are drawn. Display only |
 
-### Extra graphs (`graph_series`)
+`agents` is checked against the agents you have enrolled. A name that matches none is refused,
+with the offending name and the list of what exists, because the alternative is a target
+measured by nobody, which draws like one that never answers. Pass `--allow-unknown-agents` when
+the tree is deliberately applied before the agents that will serve it. A space-separated string
+(`agents = "local ams-01"`) is still accepted; an export always writes the array form.
 
-An `irtt` target measures more per packet than the round trip. smokeng keeps all of it
-from the one session, and this setting chooses what is drawn:
+### `graph_series`
+
+An `irtt` session measures more per packet than the round trip. smokeng stores all of it; this
+setting chooses what is drawn.
 
 | Series | What it is |
 | --- | --- |
@@ -133,54 +180,25 @@ graph_series = "ipdv_send ipdv_receive"   # just the two directions
 graph_series = ""                         # none; only the round trip
 ```
 
-`all` and an explicit list are not the same thing over time: `all` picks up a series added
-in a later release, a list does not.
+`all` picks up a series added in a later release; an explicit list does not.
 
-This changes what is **shown**, never what is **kept** — so turning a graph on later shows
-the history it already has rather than starting it from that moment. Only `irtt` produces
-any of these, and only where the far end returns timestamps; where it does not, the graph
-says the series was not measured rather than drawing a flat line at zero.
+This changes what is **shown**, never what is **kept**, so turning a graph on later shows the
+history it already has. Where the far end does not return timestamps, the graph says the series
+was not measured instead of drawing a flat line at zero. Absolute one-way delay is not graphed;
+see [Probes](probes.md#irtt).
 
-smokeng does not graph absolute one-way delay, which irtt also reports. That figure
-subtracts one machine's wall clock from another's and is wrong by however far apart they
-have drifted, so it measures NTP as much as the network. Inter-packet delay variation
-compares consecutive packets on the monotonic clock, so the offset cancels and the number
-holds without the two ends being synchronised.
+### Probe types
 
-`agents` is checked against the agents you have actually enrolled. A name that
-matches none of them is refused, with the offending name and the list of what
-exists — because the alternative is a target measured by nobody, drawing exactly
-like one that is measured and never answers. Pass `--allow-unknown-agents` when
-the tree is deliberately applied before the agents that will serve it.
-
-A space-separated string (`agents = "local ams-01"`) is still accepted and means
-the same thing; an export always writes the array form.
-
-In burst mode the pings go out back to back, `burst_gap_ms` apart, and the distribution
-describes the network *at one moment*. In spread mode they are distributed evenly across
-the interval, and the distribution describes the network *over the interval*. Both are
-legitimate; they answer different questions. Burst is the SmokePing-compatible default.
-
-A burst must fit inside its interval: `pings_per_interval × burst_gap_ms` must be less
-than `interval_s × 1000`, or the import is rejected.
-
-## Probe types
-
-`probe_mode` says *when* the probes of an interval go out. `probe_type` says *what* they
-are. It is inherited like everything else, so a whole subtree can be measured over HTTPS
-by setting it once on the group.
-
-Every type produces a distribution of N round-trip times per interval. That is the
-admission rule, not a coincidence: a check that yields one number, or an up/down verdict,
-is a different kind of instrument and does not belong on these graphs.
+`probe_type` is inherited like everything else, so a whole subtree can be measured over HTTPS by
+setting it once on the group.
 
 | Type | Measures | Default port | Extra settings |
 | --- | --- | --- | --- |
-| `icmp` | Echo request to echo reply | — | `packet_size` |
-| `dns` | A query against this host **as a resolver** | 53 | `dns_query`, `dns_rr_type`, `probe_port` |
-| `tcp` | The TCP handshake — SYN to SYN-ACK | none; **required** | `probe_port` |
-| `http` | Request to first response byte | 80 | `http_path`, `probe_port` |
-| `https` | As `http`, including the TLS handshake | 443 | `http_path`, `probe_port` |
+| `icmp` | Echo request to echo reply | none | `packet_size` |
+| `dns` | A query against this host as a resolver | 53 | `dns_query`, `dns_rr_type`, `probe_port` |
+| `tcp` | The TCP handshake | none; **required** | `probe_port` |
+| `http` | Request to response headers | 80 | `http_path`, `probe_port` |
+| `https` | As `http`, including the TLS handshake | 443 | `http_path`, `probe_port`, `tls_skip_verify` |
 | `irtt` | A UDP session against `irtt server` | 2112 | `packet_size`, `probe_port` |
 
 ```toml
@@ -198,166 +216,8 @@ dns_query = "gemeentex.nl"
 dns_rr_type = "A"
 ```
 
-### What each one is for
-
-**`icmp`** is the default and the cheapest. It measures the path, not the service.
-
-**`dns`** points at a resolver and times a query against it. The host is the resolver
-being measured, not the name being asked about. A resolver going slow is invisible to
-ICMP — the box answers pings promptly while every lookup behind it crawls.
-
-**`tcp`** measures a handshake, which goes through a queue ICMP does not share. A router
-that deprioritises ICMP, or a middlebox that answers pings on a dead host's behalf, both
-look healthy to an echo request. There is no default port and none is guessed: a `tcp`
-target without `probe_port` is **not measured at all**, and says so in the log and on the
-target's page in the UI.
-
-**`http`/`https`** measure the service rather than the path. Each probe builds a fresh
-connection — TCP, then TLS for `https`, then the request — because reusing one would make
-the first sample of a session include a handshake the others skipped, and a distribution
-split between two unrelated populations is worse than a slower one. Timing stops at the
-response headers: how fast a page transfers is a bandwidth question, and mixing it in
-would make a large page look like a slow network.
-
-Two consequences worth knowing before you point one at production:
-
-- **A response of 400 or above counts as loss.** The transport worked and the server
-  answered, but it did not serve what was asked for, and drawing a healthy green band over
-  an outage would be the wrong answer. The status is named once per interval in the log,
-  so "100% loss" does not send you looking at the network for a fault in the application.
-- **Redirects are not followed.** A 3xx is one round trip to this host and is recorded as
-  such. Following it would add a second round trip, to a second host, and report the pair
-  as one measurement of the first.
-- **Certificates are verified**, and an unverifiable one reads as total loss. For an
-  internal PKI the right answer is to trust the issuing CA — see below — which keeps
-  verification on. `tls_skip_verify = true` turns it off for one target, as a last resort.
-
-**`irtt`** needs [`irtt server`](https://github.com/heistp/irtt) running at the far end,
-so it only works where you control both sides. What it buys is a measurement the network
-has no reason to treat specially: ordinary UDP, not rate-limited by the control plane the
-way ICMP echo is on most routers, and never answered by a middlebox on the target's
-behalf. It runs one session per interval rather than N independent probes — the far end
-paces the train itself and reports each packet — and it honours `probe_mode`, so switching
-a target between `icmp` and `irtt` changes what the packets are, not when they go out.
-
-`irtt` in burst mode needs a `burst_gap_ms` above zero: a zero send interval is one the
-library rejects before a packet leaves, so smokeng refuses such a target up front rather
-than schedule it to fail every interval. When a session cannot open at all — the server is
-down, or the far end is unreachable — the interval is recorded as a *send failure*, flagged
-as smokeng's own, rather than as clean network loss: no round trip was attempted, so
-blaming the far end for losing one would be the wrong story.
-
-IRTT also measures one-way delay in each direction, which is more than smokeng stores.
-Only the round trip is kept: a measurement here is one distribution per interval, and
-splitting it would change what a measurement *is*.
-
-#### Authenticating to an irtt server
-
-An open irtt server is a UDP reflection and amplification vector, and UDP is spoofable, so
-a server you expose should require an HMAC key — `irtt server --hmac=<secret>`. It then
-drops any packet without a valid HMAC, so only a prober holding the key can use it. (The
-HMAC authenticates and protects the packets; it does not encrypt the timing, which is not
-a secret.)
-
-The key is a shared secret, so it is **not** a target setting — a secret in the tree would
-travel through the API and the exported TOML. It lives instead in a keyfile on whichever
-host runs the probe, mapping each irtt endpoint to its secret:
-
-```toml
-# /var/lib/smokeng/irtt-hmac-keys.toml — mode 0600, deploy from a vault
-"resolver.gemeentex.nl:2112" = "the-shared-secret"
-"10.30.0.5:2112"             = "another-secret"
-```
-
-```bash
-smokeng serve --irtt-hmac-keys /var/lib/smokeng/irtt-hmac-keys.toml
-```
-
-The endpoint is the target's *configured* host and port — the host as written in the
-target, not its resolved address — so the mapping is stable across DNS changes and
-different servers can hold different keys. An endpoint with no entry is probed without
-HMAC; if its server requires one, the session is refused and recorded as a flagged send
-failure, which tells you the key is missing rather than the server down. The Ansible role
-renders this file from `smokeng_irtt_hmac_keys` (keep the values in a vault). A remote
-agent needs its own keyfile — see [Remote agents](agents.md).
-
-### Internal certificates
-
-Most `https` targets worth watching are internal, and an internal certificate is issued by
-a CA the host does not trust. Two ways out, and they are not equivalent.
-
-**Trust the CA.** Verification stays on; the probe simply knows who signed the certificate.
-
-```bash
-smokeng serve --tls-ca-file /etc/ssl/certs/gemeentex-root.pem
-```
-
-The flag takes a comma-separated list, and each file may hold any number of certificates.
-They are added to the system roots rather than replacing them, so public endpoints keep
-working — a file that parses to no certificate at all is an error rather than a silent
-no-op, because the intent was to trust something.
-
-A file may hold **only** certificates. A master hands every file to all of its agents, so a
-bundle with a private key appended (a "fullchain" with the key added is a common mistake)
-is refused at startup, with the block type named and nothing of its contents. Anything in
-the text that looks like a private key is refused too, however it is mangled, and what is
-handed to agents is the certificates themselves, parsed and encoded again, never the file
-as it was written (a comment line in it is not passed on).
-
-It is a flag rather than a target setting because a CA is a property of the deployment,
-not of one measurement — and trusting a CA is not the same as measuring anything through
-it.
-
-**Remote agents get these CAs from the master**, delivered with their assignments, so a
-root is placed in one file and a rotation reaches every agent within a poll. They apply to
-https probes only, never to an agent's own connection to its master. An agent can add its
-own with `--tls-ca-file`, or refuse the master's with `--no-remote-cas`; see
-[Remote agents](agents.md#certificates-the-agent-has-to-trust).
-
-**Or turn verification off for that target.**
-
-```toml
-[targets."Klanten/GemeenteX/oud-apparaat"]
-host = "10.20.0.9"
-address_family = "v4"
-probe_type = "https"
-tls_skip_verify = true
-```
-
-It is inheritable like any other setting, so it can cover a subtree — but prefer not to.
-A measurement taken this way says something answered on port 443; it does not say it was
-the service this target names. smokeng shows it on the target's page and next to the graph
-for exactly that reason, rather than leaving it to be discovered in a settings table.
-
-There is no instance-wide switch for it. Turning verification off is a decision about one
-endpoint, and a flag that quietly weakened every https target at once is not a decision
-anybody reviewed.
-
-### Timing accuracy
-
-`icmp` and `dns` are kernel-timestamped, so what they report is the network rather than
-the network plus whatever delayed the prober. `tcp`, `http`, `https` and `irtt` are timed
-around a userspace call and carry the `userspace TX/RX` quality flag on every measurement.
-That flag is not a defect being hidden; it is the reason the flag exists. A band widened
-by a busy prober must never be readable as a slow service.
-
-The difference is worth a number. Measured on a two-core Debian VM, loopback, with the
-machine under heavy load from the instance's own API — spread within an interval, which is
-the width of the band the graph draws:
-
-| | idle | under load |
-| --- | --- | --- |
-| `icmp` (kernel) | 8 µs | 8 µs |
-| `dns` (kernel) | 46 µs | 41 µs |
-| `tcp` (userspace) | 139 µs | **1764 µs** |
-
-The kernel-stamped types do not move. The userspace-timed one widens thirteenfold, and
-none of that is the network. If that matters for your `tcp`/`http` targets, run the prober
-as its own process — see [Operations](operations.md#running-the-prober-as-its-own-process).
-
-`tcp`, `http` and `https` cannot be fixed this way: their handshakes complete inside the
-kernel and userspace only observes the call returning, so there is no packet for us to
-stamp.
+Semantics, loss rules and caveats per type are in [Probes](probes.md). Internal certificates
+and the irtt HMAC keyfile are there too.
 
 ## Presentation and lifecycle
 
@@ -375,10 +235,7 @@ These are per-node and are not inherited.
 
 ## Alert rules in TOML
 
-Alert rules are inheritable too, but they **replace** rather than accumulate: a node that
-declares any rules uses exactly those, and ignores its ancestors'. This makes an
-exception explicit — you can see the whole rule set of a node in one place, instead of
-reconstructing it from four ancestors.
+Rules inherit by replacement, not accumulation; see [Alerting](alerting.md).
 
 ```toml
 [default_alerts.loss]
@@ -399,7 +256,7 @@ threshold = 5
 [targets."Datacenter/Core/sw-core-01".alerts."shape shift"]
 metric = "shape"
 op = ">"
-threshold = 4
+threshold = 4   # in auto mode this is the z cutoff; 4 is only the UI form default
 mode = "auto"
 baseline = "rolling"
 ```
@@ -457,9 +314,8 @@ for_intervals = 2
 
 ## Editing without TOML
 
-Everything above is also editable in the web UI under **Targets**, by a user with the
-admin role. Changes made there are picked up by the prober without a restart, and
-`config export` will include them. An edit from the UI or the API is one transaction from the read to the
-commit, so two edits that would together make a cycle cannot both succeed. `config import`
-is not: it reads the tree, then writes node by node, so run it when nobody else is editing. Deleting a node
-deletes its alert rules and their state with it.
+Everything above is also editable in the web UI under **Targets**, by a user with the admin
+role. The prober picks up changes without a restart, and `config export` includes them. An edit
+from the UI or the API is one transaction from the read to the commit, so two edits that would
+together make a cycle cannot both succeed. Deleting a node deletes its alert rules and their
+state with it.
