@@ -615,7 +615,15 @@ test('a pooled read decodes to its columns, in the shape of a series', () => {
   assert.deepEqual(rows(s), want.quantiles)
   // Nothing per interval is invented for a column.
   assert.ok(s.icmpErrors.every((v) => v === null) && s.sendErrors.every((v) => v === null))
-  assert.deepEqual(s.extra, {})
+  // The extra series, pooled: values, measured-and-empty, and null, as written.
+  for (const series of SERIES_NAMES) {
+    const perRow: (number[] | null)[] = want.series[series]
+    const got = s.extra[series]
+    assert.ok(got, `${series} present`)
+    assert.deepEqual(Array.from(got.measured), perRow.map((r) => (r === null ? 0 : 1)))
+    const flat = perRow.map((_, i) => Array.from(got.values.subarray(got.offsets[i], got.offsets[i + 1])))
+    assert.deepEqual(flat, perRow.map((r) => r ?? []))
+  }
   // And a plain read is not mistaken for one.
   assert.equal(decodeSeries(load('small.arrow')).pooled, undefined)
 })

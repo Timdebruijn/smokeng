@@ -613,7 +613,8 @@ intervals comes back as above, untouched. One that holds more is pooled on the w
 the window is cut into N equal columns, every interval goes to the column its start falls
 in, and a column carries the sums of sent and received, the number of intervals in it,
 its flags, and the pooled samples — all of them up to 256, otherwise 256 order statistics
-at evenly spaced ranks. That is what the renderer did with the raw rows anyway (§8.2),
+at evenly spaced ranks. The irtt series are pooled into the same columns the same way, in
+a second pass over their own table. That is what the renderer did with the raw rows anyway (§8.2),
 moved before the network: the quantiles are taken over the pooled samples, so the median
 is never a median of medians, and every value sent is a sample that was measured.
 256 is about a plot's height in pixels, the resolution the density is drawn at. Nothing
@@ -623,7 +624,7 @@ narrower window shows them again.
 The decision is made in one pass: rows are kept until there are more than N and then
 folded into columns, since a count over this table walks the same pages as the read.
 Only one column's samples are in memory at a time. What bounds the cost is the rows
-walked, so a pooled read stops at 10 million: measured on two cores of an arm64 VM, at
+walked, so a pooled read stops at 10 million, series rows included: measured on two cores of an arm64 VM, at
 1000 columns, 30 days of a 60 s series took 0.07 s, a year of it 1.0 s, and 30 days of a
 1 s series (2.6 million intervals) 4.7 s — about 550,000 intervals a second
 (`BenchmarkQueryColumns`).

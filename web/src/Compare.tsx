@@ -37,6 +37,10 @@ const LINE_COLOURS = [
   '#117733',
 ]
 
+// The line area's horizontal padding, shared by the read and the draw.
+const PAD_L = 52
+const PAD_R = 8
+
 export interface CompareSeries {
   key: string
   label: string
@@ -95,9 +99,16 @@ export default function Compare({
 
   useEffect(() => {
     let cancelled = false
+    // A line has a point per device pixel at most, so a long window is read
+    // pooled into that many columns; each column's median is then the median
+    // of every sample in it. Zero means not laid out yet; boxW changes when it is.
+    const dpr = window.devicePixelRatio || 1
+    const lineW = (canvasRef.current?.clientWidth || boxW) - PAD_L - PAD_R
+    const columns = Math.round(lineW * dpr)
+    if (columns <= 0) return
     Promise.all(
       series.map((s) =>
-        fetchSeries(s.targetId, s.agentId, from, to)
+        fetchSeries(s.targetId, s.agentId, from, to, columns)
           .then((r) => [s.key, medians(r)] as const)
           .catch(() => [s.key, null] as const),
       ),
@@ -116,7 +127,7 @@ export default function Compare({
       cancelled = true
     }
     // keys rather than series: the array identity changes on every render.
-  }, [keys, from, to, refreshKey])
+  }, [keys, from, to, refreshKey, boxW])
 
   useEffect(() => {
     const mo = new MutationObserver(() => setTheme((t) => t + 1))
@@ -145,8 +156,8 @@ export default function Compare({
     const dim = css.getPropertyValue('--dim').trim() || '#888'
     const border = css.getPropertyValue('--border').trim() || '#ccc'
 
-    const padL = 52
-    const padR = 8
+    const padL = PAD_L
+    const padR = PAD_R
     const padT = 8
     const padB = 22
     const w = cssW - padL - padR

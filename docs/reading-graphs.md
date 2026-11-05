@@ -134,10 +134,13 @@ intervals that start in it:
   Zoom in to see the intervals themselves.
 
 The detail view's median, p95, spread and loss are taken over the whole window the same way,
-pooled into one column.
+pooled into one column. The irtt plots (IPDV, server processing) pool their series per column
+too, and **compare** draws each line's median per pixel column, from all of that column's
+samples.
 
-One read walks at most 10 million intervals, about thirty days of a one-second target. A
-longer window of such a target is refused with a message that says so; ask for less.
+One read walks at most 10 million rows, about thirty days of a one-second target (an irtt
+target's series rows count too). A longer window of such a target is refused with a message
+that says so; ask for less.
 
 ### Reaching the data outside the UI
 

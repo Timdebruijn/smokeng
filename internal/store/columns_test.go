@@ -117,7 +117,7 @@ func TestQuantilesAreSamplesAtTheMidRanks(t *testing.T) {
 	if got := quantiles(pool, 4); !slices.Equal(got, []uint32{125, 375, 625, 875}) {
 		t.Errorf("0..999, q=4: %v, want 125 375 625 875", got)
 	}
-	if got := quantiles(nil, 4); len(got) != 0 {
+	if got := quantiles([]uint32(nil), 4); len(got) != 0 {
 		t.Errorf("no samples: %v, want none", got)
 	}
 }
@@ -209,5 +209,66 @@ func TestTooManySamplesForRawArePooled(t *testing.T) {
 	raw, cols, err := s.QueryColumns(ctx, 1, 0, 0, 240, 100)
 	if err != nil || raw != nil || len(cols) != 4 {
 		t.Errorf("4 intervals of 40 in 100 columns: raw %d, cols %d, %v; want 4 columns", len(raw), len(cols), err)
+	}
+}
+
+// The extra series pool into the same columns, signed, and keep the three
+// states a series has: measured with values, measured with nothing to give
+// (one reply, nothing to difference), and not measured at all — absent.
+func TestQueryColumnsPoolsTheExtraSeries(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	var ms []Measurement
+	for i := range 30 { // three 600 s columns of ten intervals
+		m := rowWith(int64(i*60), 3)
+		switch {
+		case i < 10:
+			m.Series = map[string][]int32{SeriesIPDVSend: {int32(-i), int32(i)}}
+		case i < 20:
+			m.Series = map[string][]int32{SeriesIPDVSend: {}}
+		}
+		ms = append(ms, m)
+	}
+	if err := s.WriteMeasurements(ctx, ms); err != nil {
+		t.Fatal(err)
+	}
+	_, cols, err := s.QueryColumns(ctx, 1, 0, 0, 1800, 3)
+	if err != nil || len(cols) != 3 {
+		t.Fatalf("%d columns, %v", len(cols), err)
+	}
+	var want []int32
+	for i := range 10 {
+		want = append(want, int32(-i), int32(i))
+	}
+	slices.Sort(want)
+	if got, ok := cols[0].Series[SeriesIPDVSend]; !ok || !slices.Equal(got, want) {
+		t.Errorf("column 0: %v (present %v), want the pooled values %v", got, ok, want)
+	}
+	if got, ok := cols[1].Series[SeriesIPDVSend]; !ok || len(got) != 0 {
+		t.Errorf("column 1: %v (present %v), want present and empty", got, ok)
+	}
+	if _, ok := cols[2].Series[SeriesIPDVSend]; ok {
+		t.Errorf("column 2: present, want absent (nothing measured it)")
+	}
+}
+
+// The series rows count against the same bound as the measurements.
+func TestTheSeriesCountTowardsTheWalkBound(t *testing.T) {
+	old := maxPooledRows
+	maxPooledRows = 15
+	t.Cleanup(func() { maxPooledRows = old })
+	s := openTemp(t)
+	ctx := t.Context()
+	var ms []Measurement
+	for i := range 10 {
+		m := rowWith(int64(i*60), 1)
+		m.Series = map[string][]int32{SeriesIPDVSend: {1}}
+		ms = append(ms, m)
+	}
+	if err := s.WriteMeasurements(ctx, ms); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.QueryColumns(ctx, 1, 0, 0, 600, 2); !errors.Is(err, ErrRangeTooLarge) {
+		t.Errorf("10 intervals and 10 series rows against 15: err = %v, want ErrRangeTooLarge", err)
 	}
 }

@@ -59,6 +59,11 @@ var pooledSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "flags", Type: arrow.PrimitiveTypes.Uint8},
 	{Name: "flagged", Type: arrow.PrimitiveTypes.Uint32},
 	{Name: "quantiles", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint32)},
+	// The extra series pooled the same way, null where no interval in the
+	// column measured them.
+	{Name: store.SeriesIPDVSend, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
+	{Name: store.SeriesIPDVReceive, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
+	{Name: store.SeriesServerProcessing, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
 }, nil)
 
 // handleMeasurements streams one series over [from, to) as Arrow IPC.
@@ -148,6 +153,12 @@ func writePooledArrow(w io.Writer, cols []store.Column, batchRows int) {
 	flaggedB := rb.Field(6).(*array.Uint32Builder)
 	listB := rb.Field(7).(*array.ListBuilder)
 	valB := listB.ValueBuilder().(*array.Uint32Builder)
+	seriesB := make([]*array.ListBuilder, len(store.KnownSeries))
+	seriesV := make([]*array.Int32Builder, len(store.KnownSeries))
+	for i := range store.KnownSeries {
+		seriesB[i] = rb.Field(8 + i).(*array.ListBuilder)
+		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
+	}
 
 	flush := func() bool {
 		rec := rb.NewRecord()
@@ -164,6 +175,15 @@ func writePooledArrow(w io.Writer, cols []store.Column, batchRows int) {
 		flaggedB.Append(uint32(c.Flagged))
 		listB.Append(true)
 		valB.AppendValues(c.Quantiles, nil)
+		for j, name := range store.KnownSeries {
+			vals, ok := c.Series[name]
+			if !ok {
+				seriesB[j].AppendNull()
+				continue
+			}
+			seriesB[j].Append(true)
+			seriesV[j].AppendValues(vals, nil)
+		}
 		if (i+1)%batchRows == 0 && !flush() {
 			return
 		}

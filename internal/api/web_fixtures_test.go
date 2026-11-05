@@ -225,14 +225,15 @@ func variants() map[string][]byte {
 
 // pooledJSON is what a pooled fixture holds.
 type pooledJSON struct {
-	TS        []int64    `json:"ts"`
-	End       []int64    `json:"ts_end"`
-	Rounds    []int      `json:"rounds"`
-	Sent      []int      `json:"sent"`
-	Received  []int      `json:"received"`
-	Flags     []int      `json:"flags"`
-	Flagged   []int      `json:"flagged"`
-	Quantiles [][]uint32 `json:"quantiles"`
+	TS        []int64               `json:"ts"`
+	End       []int64               `json:"ts_end"`
+	Rounds    []int                 `json:"rounds"`
+	Sent      []int                 `json:"sent"`
+	Received  []int                 `json:"received"`
+	Flags     []int                 `json:"flags"`
+	Flagged   []int                 `json:"flagged"`
+	Quantiles [][]uint32            `json:"quantiles"`
+	Series    map[string][]*[]int32 `json:"series"`
 }
 
 func fixtureColumns() []store.Column {
@@ -247,6 +248,16 @@ func fixtureColumns() []store.Column {
 		if i == 4 {
 			c.Sent, c.Received = 70_000, 0
 		}
+		// Every state a pooled series has: values, measured and empty, absent.
+		c.Series = map[string][]int32{}
+		for j, name := range store.KnownSeries {
+			switch (i + j) % 3 {
+			case 0:
+				c.Series[name] = []int32{-7, 0, 9}
+			case 1:
+				c.Series[name] = []int32{}
+			}
+		}
 		cols = append(cols, c)
 	}
 	return cols
@@ -256,7 +267,7 @@ func pooledFixture() (arrowBytes, jsonBytes []byte) {
 	cols := fixtureColumns()
 	var buf bytes.Buffer
 	writePooledArrow(&buf, cols, 2) // three batches: 2, 2, 1
-	want := pooledJSON{}
+	want := pooledJSON{Series: map[string][]*[]int32{}}
 	for _, c := range cols {
 		want.TS = append(want.TS, c.From)
 		want.End = append(want.End, c.To)
@@ -266,6 +277,14 @@ func pooledFixture() (arrowBytes, jsonBytes []byte) {
 		want.Flags = append(want.Flags, int(c.Flags))
 		want.Flagged = append(want.Flagged, c.Flagged)
 		want.Quantiles = append(want.Quantiles, append([]uint32{}, c.Quantiles...))
+		for _, name := range store.KnownSeries {
+			if v, ok := c.Series[name]; ok {
+				v := append([]int32{}, v...)
+				want.Series[name] = append(want.Series[name], &v)
+			} else {
+				want.Series[name] = append(want.Series[name], nil)
+			}
+		}
 	}
 	j, err := json.MarshalIndent(want, "", " ")
 	if err != nil {
