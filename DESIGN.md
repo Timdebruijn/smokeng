@@ -32,7 +32,7 @@ It also buys accuracy, but only for the types that need it. `icmp` is unaffected
 construction — kernel timestamps are taken as the packet crosses the wire, so no amount of
 userspace work can move them, which is the whole reason §5.2 takes them there. The
 userspace-timed types include scheduler delay in the RTT by definition, and a measured
-comparison (docs/operations.md) put their p99 3–4× lower in a separate process under load,
+comparison (Appendix A) put their p99 3–4× lower in a separate process under load,
 with the median almost unchanged. That is the signature of GC and scheduler contention, and
 on an instrument built to keep the distribution, a tail inflated by the prober itself is
 the one kind of error the design cannot tolerate.

@@ -5,16 +5,17 @@ running, see that it is measuring, back it up and get it back. Agents have their
 [agents](agents.md).
 
 1. [Install and run as a service](#install-and-run-as-a-service)
-2. [Reverse proxy and TLS](#reverse-proxy-and-tls)
-3. [Monitoring smokeng itself](#monitoring-smokeng-itself)
-4. [Logs](#logs)
-5. [Backup and restore](#backup-and-restore)
-6. [Upgrade and rollback](#upgrade-and-rollback)
-7. [Tuning](#tuning)
-8. [Running the prober separately](#running-the-prober-separately)
-9. [Storage growth and sizing](#storage-growth-and-sizing)
-10. [Limits](#limits)
-11. [Uninstall](#uninstall)
+2. [What the web server does for itself](#what-the-web-server-does-for-itself)
+3. [Reverse proxy and TLS](#reverse-proxy-and-tls)
+4. [Monitoring smokeng itself](#monitoring-smokeng-itself)
+5. [Logs](#logs)
+6. [Backup and restore](#backup-and-restore)
+7. [Upgrade and rollback](#upgrade-and-rollback)
+8. [Tuning](#tuning)
+9. [Running the prober separately](#running-the-prober-separately)
+10. [Storage growth and sizing](#storage-growth-and-sizing)
+11. [Limits](#limits)
+12. [Uninstall](#uninstall)
 
 ## Install and run as a service
 
@@ -65,13 +66,8 @@ WantedBy=multi-user.target
 ```
 
 The service user needs to be in a group covered by `net.ipv4.ping_group_range` — see
-[Getting started](getting-started.md). It does **not** need root, and `NoNewPrivileges`
-above is compatible with unprivileged ICMP. It is not compatible with the `CAP_NET_RAW`
-fallback: if you rely on `setcap` instead of the sysctl, drop that line and replace the
-empty `CapabilityBoundingSet=` with `CapabilityBoundingSet=CAP_NET_RAW` next to
-`AmbientCapabilities=CAP_NET_RAW`. An ambient capability outside the bounding set is
-dropped *without an error*: the unit starts, `CapAmb` in `/proc/<pid>/status` stays empty,
-and ICMP fails when the socket is opened (checked on systemd 259).
+[Getting started](getting-started.md). It does **not** need root. If you rely on `setcap`
+instead of the sysctl, see the `CAP_NET_RAW` note under Hardening.
 
 Configure [authentication](authentication.md) and put a TLS-terminating reverse proxy in
 front of it if it is reachable by anyone but you.
@@ -89,6 +85,13 @@ systemd 247, and an older one logs that it ignores it. The example unit itself w
 scored separately; how the hardening score was measured is in
 [DESIGN.md](../DESIGN.md#appendix-a-operations-benchmarks-and-provenance).
 
+**`CAP_NET_RAW` fallback.** `NoNewPrivileges` above is compatible with unprivileged ICMP but
+not with `CAP_NET_RAW`. If you rely on `setcap` instead of the sysctl, drop that line and
+replace the empty `CapabilityBoundingSet=` with `CapabilityBoundingSet=CAP_NET_RAW` next to
+`AmbientCapabilities=CAP_NET_RAW`. An ambient capability outside the bounding set is
+dropped *without an error*: the unit starts, `CapAmb` in `/proc/<pid>/status` stays empty,
+and ICMP fails when the socket is opened (checked on systemd 259).
+
 Three directives that look free are not in it, on purpose:
 
 - **`ProcSubset=pid`** hides `/proc/net`, where the kernel counts the replies a socket dropped
@@ -101,35 +104,24 @@ Three directives that look free are not in it, on purpose:
 - **`PrivateUsers=`** worked on that kernel; how ICMP socket permission (checked against group
   ids) behaves in a user namespace has changed between kernels.
 
-### What the web server does for itself
+## What the web server does for itself
 
-- **Cross-site changes are refused.** A request that changes something (anything but
-  GET, HEAD and OPTIONS) is refused with 403 when the browser says it came from another
-  site: `Sec-Fetch-Site` other than `same-origin` or `none`, or, from a browser that does
-  not send that, an `Origin` whose scheme, host and port are neither those of the `Host` it
-  was sent to (an http origin is refused where the request is known to be https) nor those
-  of `--external-url`.
-  A request that sends neither header is not from a browser (`curl`, an agent) and is
-  let through: it carries no session cookie to ride on. `SameSite=Lax` alone does not stop
-  a page on a sibling subdomain.
-- **Security headers** on every response: a Content-Security-Policy that allows only the
-  UI's own scripts, styles, fonts and workers and forbids framing, `nosniff`,
-  `Referrer-Policy: no-referrer`, and same-origin cross-origin policies. HSTS is left to the
-  proxy, which knows whether the name should be pinned to https. If you serve other content
-  on the same name through the proxy, it inherits these headers too.
-- **Without authentication, only its own names are answered.** A server started with no
-  `--oidc-issuer` on a loopback address answers only `localhost`, loopback addresses and the
-  host of `--external-url`; anything else gets 403. A page on any site can otherwise
-  point a name of its own at `127.0.0.1` and read the API from the user's browser. If you
-  put a proxy that does its own login in front of an unauthenticated smokeng, set
-  `--external-url` to the name the proxy serves. The same setting covers a proxy that
-  rewrites the `Host` header over plain http, where the browser sends only `Origin`.
-- **Timeouts.** 10 s to send headers, 2 min for the whole request, 5 min to write a response,
-  2 min idle.
-- **Ingest memory.** At most four agent batches are decoded at once; a fifth gets `503`
-  with `Retry-After`, which an agent treats as "keep it buffered", not as a bad batch. A
-  schema that expands to more than 256 fields (counting nested ones and metadata
-  entries) or nests more than 4 deep is refused.
+What an operator must configure; the rules themselves are in [api](api.md).
+
+- **Cross-site changes are refused** with 403 when the browser says the request came from
+  another site. Set `--external-url` to the name browsers use, or a proxy that rewrites
+  `Host` will make legitimate requests look cross-site. `curl` and agents send neither
+  header and are let through.
+- **Without authentication, only its own names are answered.** Started with no
+  `--oidc-issuer` on a loopback address, smokeng answers only `localhost`, loopback
+  addresses and the host of `--external-url`; anything else gets 403. Behind a proxy with
+  its own login, set `--external-url` to the name the proxy serves.
+- **Security headers** (CSP, `nosniff`, `Referrer-Policy`) are set on every response, so
+  other content served on the same name through the proxy inherits them. HSTS is left to
+  the proxy.
+- **Timeouts:** 10 s to send headers, 2 min per request, 5 min to write a response, 2 min idle.
+- **Ingest memory:** at most four agent batches are decoded at once; a fifth gets `503` with
+  `Retry-After`, which an agent treats as "keep it buffered".
 
 ### Liveness check
 
@@ -271,11 +263,6 @@ What each of those rules is telling you:
   measurement was contained rather than allowed to end the process, so the damage is a gap
   in one series — but the log holds the stack, and it is worth reporting.
 
-**Failed webhook deliveries have no metric.** A refused or unreachable alert webhook shows up
-only in the log (`alert: deliver N alert(s): ...`). A dead Alertmanager therefore does not
-alert on its own: watch the log. This is a limit. `smokeng_alerts_firing` says rules are
-firing, not that anyone was told.
-
 ## Logs
 
 smokeng logs with Go's standard `log` package to stderr, with UTC timestamps
@@ -392,6 +379,11 @@ re-sending the same bytes forever means never delivering anything again, but it
 means the cost of breaking this rule is the buffered measurements, not just a
 delay.
 
+**The exception is an agent newer than the master.** If the master cannot decode a batch it
+answers 400, and the agent discards that batch (`agent: master could not decode a batch ...`
+in the agent's log) instead of retrying it forever. Those measurements are lost. When a
+release changes the batch format, upgrade the master first.
+
 ## Tuning
 
 ### Receive buffer
@@ -490,8 +482,7 @@ unimplemented and unplanned for that reason.
 - **A single SQLite writer.** One file, one process. Do not point two masters at it.
 - **Recovery is restore from backup.** Measurements since the last backup are lost; agents
   re-send only what they still buffer.
-- **Failed webhook deliveries are visible only in the log.** See
-  [Monitoring smokeng itself](#monitoring-smokeng-itself).
+- **Failed webhook deliveries are only logged and have no metric**; see [alerting](alerting.md).
 - **No readiness check.** `/healthz` is liveness only.
 - **No API tokens.** Prometheus scrapes need `--metrics-public`.
 
