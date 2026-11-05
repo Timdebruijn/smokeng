@@ -221,7 +221,7 @@ is configured, not that deliveries succeed. To acknowledge, `POST /api/v1/alerts
 ### Alert rules and silences
 
 A rule's JSON uses the TOML keys: `name`, `metric`, `op`, `threshold`, `for_intervals`,
-`clear_intervals`, `mode` and `baseline`, plus `target_id`. On the wire an on/off switch is
+`clear_intervals`, `mode`, `baseline` and `severity`, plus `target_id`. On the wire an on/off switch is
 `enabled`, where TOML has `disabled`. See [alerting.md](alerting.md).
 
 A silence takes `target_id`, `agent_id` and `rule_id` (all optional; null means all), a
@@ -244,7 +244,7 @@ Each element of the array:
 | `labels.host` | The target's host. |
 | `labels.agent` | The vantage point that saw it. `local` is the master's own prober. |
 | `labels.metric` | The rule's metric: `loss`, `median`, `p95`, `spread`, `shape` or `bimodality`. |
-| `labels.severity` | Always `warning`. It is fixed in the code and cannot be set per rule; route on `alertname` or `target` instead. |
+| `labels.severity` | The rule's `severity`: `critical`, `warning` (the default) or `info`. |
 | `annotations.summary` | `<rule> on <target>: <metric> is <value><unit>`. The unit is `%` for loss and `ms` for every other metric. |
 | `annotations.description` | `Rule "<name>" (<condition>) has been satisfied for <target>.` |
 | `startsAt` | RFC 3339, UTC. When the condition started holding. Omitted when unknown. |

@@ -84,7 +84,7 @@ func (w *Webhook) Notify(ctx context.Context, alerts []Alert) error {
 				"host":      a.TargetHost,
 				"agent":     a.AgentName,
 				"metric":    string(a.Rule.Metric),
-				"severity":  "warning",
+				"severity":  string(a.Rule.Severity),
 			},
 			Annotations: map[string]string{
 				"summary": fmt.Sprintf("%s on %s: %s is %.3g%s",
