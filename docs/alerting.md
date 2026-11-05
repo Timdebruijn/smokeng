@@ -135,7 +135,7 @@ the reference distribution and the current one drawn together — so you can see
 rather than take the number on faith. It is the same commitment the graphs make.
 
 Shape rules are ordinary rules in every other respect: they inherit down the tree, take
-`for`/`clear_for` hysteresis, can be acknowledged and silenced, and deliver over the same
+`for_intervals`/`clear_intervals` hysteresis, can be acknowledged and silenced, and deliver over the same
 webhook. They stay quiet while warming up after a restart, and when a flat history gives
 them no scale to judge by — a monitoring tool that cries wolf gets ignored, so these err
 towards saying nothing.
@@ -173,8 +173,8 @@ Firing and resolved alerts are POSTed to a webhook in Alertmanager's v2 format:
 smokeng serve --alert-webhook https://alertmanager.example.org/api/v2/alerts
 ```
 
-The fields are listed in [api.md](api.md#webhook-payload). The payload is a JSON array of alert objects, so anything that speaks Alertmanager —
-Alertmanager itself, Grafana OnCall, ntfy shims, a small script — takes it unmodified.
+The fields are listed in [api.md](api.md#webhook-payload). The payload is a JSON array of
+alert objects, so anything that speaks Alertmanager — Alertmanager itself, Grafana OnCall, ntfy shims, a small script — takes it unmodified.
 Resolved alerts are sent as well, so receivers that track state stay in sync, and firing
 alerts are repeated — once a minute by default, `--alert-repeat` sets the interval —
 because Alertmanager expires an alert it stops hearing about.
