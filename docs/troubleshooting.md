@@ -21,7 +21,8 @@ Symptoms:
 ## The service will not start
 
 `smokeng serve` refuses before it touches the database where it can. The message is the first
-line of the log. Flags are in [Configuration](configuration.md) and [Authentication](authentication.md).
+line of the log. Flags are in [Configuration](configuration.md) and
+[Authentication](authentication.md).
 
 | You see | Cause and fix |
 |---|---|
@@ -69,7 +70,8 @@ Check in this order:
 5. **Does the name resolve?** `probe: target … ("…"): resolve: …` means no measurement for that
    interval, which the graph shows as a gap. `smokeng_dns_failures_total` counts them.
 6. **Is the time window right?** The UI goes back 24 hours. Older data is available through
-   the API or CSV export: [Reading graphs](reading-graphs.md), [API](api.md).
+   the API (Arrow): [Reading graphs](reading-graphs.md), [API](api.md). There is no CSV
+   export of measurements.
 7. **Are writes failing?** `probe: write … measurements: …; they are dropped and not alerted on`
    (also `smokeng_measurement_write_errors_total`), or `probe: results backlog full, dropping
    measurement for target …` (also `smokeng_measurements_dropped_total`). Check disk space and
@@ -99,15 +101,13 @@ sysctl net.ipv4.ping_group_range
 id -G "$(systemctl show -p User --value smokeng)"
 ```
 
-Fix, preferred: put the service group's gid inside the range.
+Fix, preferred: put the service group's gid inside the range, and persist it in
+`/etc/sysctl.d/99-smokeng.conf`. The recipe is step 2 of [Getting started](getting-started.md).
+The wide range in the log line is a hint, not the advice: give it to the service group only.
+The Ansible role does exactly that.
 
-```bash
-sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
-echo 'net.ipv4.ping_group_range = 0 2147483647' | sudo tee /etc/sysctl.d/99-smokeng.conf
-sudo systemctl restart smokeng
-```
-
-Fix, alternative: `sudo setcap cap_net_raw+ep /usr/local/bin/smokeng`. **This does not work under the
+Fix, alternative: `sudo setcap cap_net_raw+ep /usr/local/bin/smokeng`. **This does not work
+under the
 hardened unit.** `NoNewPrivileges=true` stops a file capability from taking effect. Use
 `AmbientCapabilities=CAP_NET_RAW` with `CapabilityBoundingSet=CAP_NET_RAW` and drop
 `NoNewPrivileges`. An ambient capability outside the bounding set is dropped without an error:
@@ -130,7 +130,8 @@ probe: v4 socket receive buffer is … bytes, asked for 4194304 (raise net.core.
 probe: v4 socket drop counter unavailable; loss on this socket may include replies we failed to read in time, and cannot be told apart
 ```
 
-- The first line says what the kernel granted, not that anything was lost. The deciding signal is the
+- The first line says what the kernel granted, not that anything was lost. The deciding signal
+  is the
   `dropped replies` badge, or `smokeng_socket_overflow_measurements_total` rising.
 - The second line means smokeng cannot read the kernel's drop counter for that socket, so it
   cannot flag overflow. Loss on that socket may include replies smokeng failed to read in time.
@@ -170,7 +171,7 @@ smokeng agent list --db /path/to/smokeng.db
 | Agent: `agent: refusing to send an enrolment token to "…" over plain HTTP …` | The same, at enrolment. |
 | Agent: `agent: push: … x509: …` or `agent: initial pull failed: … x509: …` | The master's certificate is not trusted by the agent host. `--tls-ca-file` does **not** apply to the connection to the master. Install the CA in the agent host's system trust store. |
 | Agent: `agent: pull assignments: …` with a timeout or connection error | Wrong `--master` URL, DNS, or a firewall. |
-| Agent: `agent: master could not decode a batch of … measurement(s) …; discarding it` | The master is older than the agent. Upgrade the master first. |
+| Agent: `agent: master could not decode a batch of … measurement(s) …; discarding it` | The master answered 400 to a batch it could not decode. The agent discards that batch, because re-sending the same bytes would block every later one. This is rare: columns are resolved by name, so master and agent may be upgraded in either order. See [Operations](operations.md) for the upgrade rules. If it repeats, compare the versions on both sides. |
 | Agent: `this agent is not enrolled yet. Either: …` | No `--token` and no recorded id. Follow the message. |
 
 Check reachability from the agent host:
@@ -247,7 +248,8 @@ journalctl -u smokeng --since "1 hour ago" | grep 'alert:'
 ```
 
 - `alert: deliver … alert(s): alert: webhook …: …`: the receiver is unreachable or timed out.
-- `alert: deliver … alert(s): alert: webhook … returned 4xx/5xx …`: the receiver answered with an error.
+- `alert: deliver … alert(s): alert: webhook … returned 4xx/5xx …`: the receiver answered with
+  an error.
 - `alert: the delivery queue is full; dropped a batch of … alert(s), the oldest`: the receiver is
   slow or down for long enough to fill the queue (64 batches). The oldest batches are lost.
 - No line at all: the rule is silenced, or has not been in breach for `for_intervals` yet.
@@ -257,45 +259,40 @@ Set up a log alert on `alert: deliver`, or you will find out from the users. Det
 
 ## Everything is up, but the graph says loss
 
-The service answers for you but the probe counts the interval as loss. Each of these is logged
-once per interval, on the first probe:
+A TCP refusal and an HTTP status of 400 or higher count as loss, and so does a rejected
+certificate. The log names the first two once per interval. Tables and the fixes (for example
+`http_path`, `--tls-ca-file`): [Probes](probes.md).
 
-| Probe | Counted as loss when | Log line |
-|---|---|---|
-| tcp | The connection is refused. The host answered, the service did not. | `probe: target … (…): tcp/… refused the connection; counted as loss` |
-| http, https | The response status is 400 or higher. The server answered but did not serve the page. | `probe: target … (…): … returned HTTP …; counted as loss` |
-| https | The certificate is rejected, for example an internal CA that the prober does not trust. | None. Add the CA with `--tls-ca-file` ([Probes](probes.md)). |
-| any | The probe times out, or the connection is reset. | None. |
-
-An http target that returns 401 or 404 to the prober's path is a permanent outage as far as the
-graph goes. Set `http_path` to a URL that returns 2xx or 3xx.
-
-A **send failure** is a different case. When the prober itself cannot send (no route, a local
-firewall rule, or out of file descriptors or ports), the interval carries the `not sent` badge with
-a reason. The stored row still counts the probe as sent and unanswered, so it contributes to the
-loss figure; the badge says the fault may be this host, not the target. For tcp and http, the log
-says `request to … failed locally: …; recorded as a send failure, not loss` and
-`tcp/…: dial failed locally: …; recorded as a send failure, not loss`. Fix the local cause
-(`ulimit -n`, `LimitNOFILE=`, the route or firewall), not the target.
-
-Detail: [Probes](probes.md), [Reading graphs](reading-graphs.md).
+A probe this host could not send carries the `not sent` badge with a reason (see below). Fix
+the local cause (`ulimit -n`, `LimitNOFILE=`, route, firewall), not the target.
 
 ## Quality badges
 
-A badge means smokeng weakened its own measurement and says so next to the data. They are in
-the graph header, and the Overview counts series flagged in the last hour.
+Meanings: [Reading graphs](reading-graphs.md). What to do:
 
-| Badge | Meaning | What to do |
-|---|---|---|
-| `userspace TX`, `userspace RX` | Timestamps were taken in userspace, not by the kernel. The band is widened by scheduler jitter. | Expected on macOS. On Linux, find out why kernel timestamping is not in use before trusting sub-millisecond detail. |
-| `raw socket` | The datagram ICMP socket was refused and a raw socket is in use. | Set `ping_group_range`: [see above](#icmp-permission-denied). |
-| `dropped replies` | The receive queue overflowed. Some loss shown is smokeng's, not the network's. | Raise `net.core.rmem_max` and restart: [see above](#dropped-replies). |
-| `clock step` | The wall clock jumped. Round-trip times in those intervals cannot be trusted. | Check NTP: `timedatectl`, `chronyc tracking`. Ignore the spike. |
-| `cut short` | The interval was closed before its window ended, by a restart or a settings change. Its loss figure is not comparable with a whole interval. | Nothing to fix. Do not read a one-off loss there as an outage. |
-| `not sent` plus a reason | The probes never went out. The reason names whether the fault is here or at the far end: `the socket refused the write`; `connection refused — the far end, or a router speaking for it, rejected the traffic`; `no route to the target`; `no address to send to`; `the session was refused`; `the session broke part-way`; `the session sent fewer probes than asked — this prober fell short, not the network`; `the session got no reply — silence, which is not the same as refusal`; `this prober's own deadline expired before sending — nothing was asked of the target`. | The last three and `the socket refused the write` point at this host: check load, descriptors, firewall. `no route` and `no address` point at routing and DNS. `connection refused` points at the target side. |
-| An ICMP error name (`host unreachable`, `administratively filtered`, `TTL exceeded`, …) | The target or a router answered with an ICMP error instead of staying silent. The loss is refusal, not a black hole. | Look at the router or firewall named by the error. `administratively filtered` is a filter rule. |
+| Badge | Action |
+|---|---|
+| `userspace TX`, `userspace RX` | Expected on macOS. On Linux, find out why kernel timestamping is not in use before trusting sub-millisecond detail. |
+| `raw socket` | Set `ping_group_range`: [see above](#icmp-permission-denied). |
+| `dropped replies` | Raise `net.core.rmem_max` and restart: [see above](#dropped-replies). |
+| `clock step` | Check NTP: `timedatectl`, `chronyc tracking`. Ignore the spike. |
+| `cut short` | Nothing to fix. Do not read a one-off loss there as an outage. |
+| `not sent` plus a reason | See the next table. |
+| An ICMP error name (`host unreachable`, `administratively filtered`, `TTL exceeded`, ...) | Look at the router or firewall the error names. `administratively filtered` is a filter rule. |
 
-Detail: [Reading graphs](reading-graphs.md).
+The `not sent` reasons, and where to look:
+
+| Reason | Look at |
+|---|---|
+| `the socket refused the write` | This host: load, descriptors, firewall. |
+| `connection refused — the far end, or a router speaking for it, rejected the traffic` | The target side. |
+| `no route to the target` | Routing on this host. |
+| `no address to send to` | DNS or the target's address family. |
+| `the session was refused` | The irtt server refused the session. |
+| `the session broke part-way` | The path or the irtt server. |
+| `the session got no reply — silence, which is not the same as refusal` | A filter or a server that is down. |
+| `this prober's own deadline expired before sending — nothing was asked of the target` | This host: it is overloaded. |
+| `the session sent fewer probes than asked — this prober fell short, not the network` | Retired. It can appear only on old data. |
 
 ## Still stuck
 
