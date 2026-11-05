@@ -45,8 +45,8 @@ hysteresis both ways, and their state survives a restart.
 
 **3. It flags its own faults.** ICMP and DNS are kernel-timestamped on Linux. Anything that isn't, and
 any interval with dropped replies, a clock step or an ICMP error, carries a badge on the graph, so you
-can tell "the network was bad" from "the monitor was busy". Intervals that are smokeng's own fault are
-kept out of the alert metrics they would distort. No data is drawn as a gap, never as a line or a
+can tell "the network was bad" from "the monitor was busy". Dropped replies are kept out of loss
+and clock steps out of latency, so they cannot fire an alert. No data is drawn as a gap, never as a line or a
 fake 0%, and real loss under 0.1% reads `<0.1%`, not `0.0%`.
 
 <img src="docs/images/graphs.png" width="100%" alt="The graphs page: three targets stacked on a shared time axis, each drawn as density smoke with its pooled median line and a loss rail beneath; one uplink shows evening congestion with loss, a wifi access point splits into two latency bands">
@@ -60,9 +60,11 @@ Linux (amd64 below; arm64, arm and 386 builds too, plus macOS for development):
 curl -fsSLO https://github.com/Timdebruijn/smokeng/releases/latest/download/smokeng-linux-amd64
 curl -fsSL  https://github.com/Timdebruijn/smokeng/releases/latest/download/SHA256SUMS |
   grep smokeng-linux-amd64 | sha256sum -c -
+# (SHA256SUMS only catches a broken download; Getting started shows the attestation check)
 chmod +x smokeng-linux-amd64 && sudo mv smokeng-linux-amd64 /usr/local/bin/smokeng
 
-# 2. Allow unprivileged ICMP (no root, no setuid helper), now and after a reboot
+# 2. Allow unprivileged ICMP (no root, no setuid helper), now and after a reboot.
+#    This allows every group; for a service, narrow it to its gid (Getting started, step 2)
 echo 'net.ipv4.ping_group_range = 0 2147483647' | sudo tee /etc/sysctl.d/99-smokeng.conf
 sudo sysctl -p /etc/sysctl.d/99-smokeng.conf
 
@@ -112,7 +114,7 @@ uptime nor downtime.
 
 **Find the cause.** Six probe types, each producing a real RTT distribution: `icmp`, `dns`, `tcp`,
 `http`, `https` and `irtt`. A resolver that crawls behind a box that pings fine, TCP where ICMP is
-rate-limited, HTTPS for what users actually wait on. Route changes are marked on the same time axis.
+rate-limited, HTTPS for what users actually wait on. Route changes seen from the master are marked on the same time axis.
 Drop an agent elsewhere and compare vantage points: each one is its own series, never averaged.
 
 **Run it for other people.** One subtree per customer or site, an agent at each. OIDC grants scope a
@@ -129,7 +131,7 @@ with `--default-role none`.) [Access control →](docs/access-control.md)
 | **Remote agents** | The same binary in another mode. Push-only, so they work behind NAT. One-time enrolment tokens, Ed25519-signed requests, first write wins, and a local buffer that rides out a master outage and back-fills the graphs. Agents receive data, never code. [Agents →](docs/agents.md) |
 | **Alerting** | Loss, median, p95, spread, shape and bimodality. Acknowledge, silences and booked maintenance windows built in; delivery to an Alertmanager v2 webhook. [Alerting →](docs/alerting.md) |
 | **Target tree** | Settings inherit down the tree, and the admin UI shows per value whether it is set here or inherited, and from where. [Configuration →](docs/configuration.md) |
-| **GitOps** | The whole configuration, alert rules and grants included, round-trips through one TOML file. Import is declarative: absent targets are disabled, not deleted. |
+| **GitOps** | Targets, alert rules and grants round-trip through one TOML file; silences and enrolled agents stay in the database. Import is declarative: absent targets are disabled, not deleted. [Configuration →](docs/configuration.md) |
 | **Access** | OIDC login (Authentik, Keycloak, Entra, Okta, …). Viewer and editor grants per subtree; admin is global. [Access control →](docs/access-control.md) |
 | **Reports** | Availability per vantage point over 24 h, 7 d or 30 d, with an outage list, CSV export and an API. |
 | **Operations** | Prometheus `/metrics` for smokeng's own health, documented systemd hardening, an Ansible role, and releases with SHA256SUMS and signed build provenance. [Operations →](docs/operations.md) |
@@ -152,7 +154,7 @@ with `--default-role none`.) [Access control →](docs/access-control.md)
 **What is stored.** One row per target, vantage point and interval: sent, received, a quality
 bitfield, an ICMP error code, and the sorted RTTs in microseconds as delta-varints. Nothing is
 averaged or downsampled when it is written, when it ages or when it is drawn. At a 60 s interval
-that is about **28 MB per series per year** ([estimate and examples](docs/operations.md#storage-growth));
+that is about **28 MB per series per year** ([estimate and examples](docs/operations.md#storage-growth-and-sizing));
 SQLite stays comfortable into the low thousands of series. Retention is opt-in per subtree and
 deletes whole intervals; it never coarsens them.
 
@@ -173,16 +175,31 @@ deletes whole intervals; it never coarsens them.
 | Badge | What it tells you |
 |---|---|
 | `userspace TX` / `RX` | scheduler jitter is in the number; the smoke is wider than the network |
-| `raw socket` | the `ping_group_range` sysctl is not set; accuracy unaffected |
+| `raw socket` | the `ping_group_range` sysctl is not set, so smokeng fell back to a raw socket |
 | `dropped replies` | the socket receive queue overflowed, so some of the loss is smokeng's |
 | `clock step` | wall clock and monotonic clock diverged; those RTTs are not trusted |
 | ICMP error, by name | "administratively prohibited" is a different finding from silence |
-| `send refused` | the local stack would not transmit; counted as lost, not drawn as empty |
+| `not sent` | the probes never went out; the reason says why. Counted as lost, not drawn as empty |
 
 The data model, encoding and render pipeline: [DESIGN.md](DESIGN.md) and
-[Reading the graphs](docs/reading-graphs.md).
+[Reading the graphs](docs/reading-graphs.md). What each probe can and cannot tell you:
+[Probes](docs/probes.md).
 
 </details>
+
+## Limits, up front
+
+- **Latency-shaped probes only.** No up/down checks, no SNMP, no status pages.
+- **One notifier:** an Alertmanager v2 webhook. Email, chat and escalation go through Alertmanager.
+- **Linux for real measurements.** Kernel timestamps, drop counting, clock-step detection and path
+  discovery are Linux-only; macOS works for development with every measurement flagged.
+- **`tcp`, `http(s)` and `irtt` are userspace-timed**, and say so on the graph.
+- **SQLite scale:** comfortable into the low thousands of series. No downsampling, by design.
+- **No local accounts:** OIDC, or unauthenticated on loopback. Agents need NTP within ±5 minutes.
+- **One master, no HA.** A single SQLite writer; recovery is a restore from backup.
+- **No API tokens.** The API takes the browser session; automation goes through the CLI on the host.
+- **No container image yet;** a binary, systemd units and an Ansible role.
+- **One maintainer.** Security reports go through [SECURITY.md](SECURITY.md).
 
 ## How it compares
 
@@ -208,25 +225,12 @@ rollups; **heliograph** keeps raw samples on TimescaleDB with mTLS agents; **smo
 traceroute and latency on one time axis. smokeng's trade-off is exact samples at about 28 MB per
 series per year, with shape alerting, self-flagged measurements and subtree tenancy on top.
 
-## Limits, up front
-
-- **Latency-shaped probes only.** No up/down checks, no SNMP, no status pages.
-- **One notifier:** an Alertmanager v2 webhook. Email, chat and escalation go through Alertmanager.
-- **Linux for real measurements.** Kernel timestamps, drop counting, clock-step detection and path
-  discovery are Linux-only; macOS works for development with every measurement flagged.
-- **`tcp`, `http(s)` and `irtt` are userspace-timed**, and say so on the graph.
-- **SQLite scale:** comfortable into the low thousands of series. No downsampling, by design.
-- **No local accounts:** OIDC, or unauthenticated on loopback. Agents need NTP within ±5 minutes.
-- **No container image yet;** a binary, systemd units and an Ansible role.
-- **One maintainer.** Security reports go through [SECURITY.md](SECURITY.md).
-
 ## Documentation
 
-[Getting started](docs/getting-started.md) · [Configuration](docs/configuration.md) ·
-[Reading the graphs](docs/reading-graphs.md) · [Alerting](docs/alerting.md) ·
-[Remote agents](docs/agents.md) · [Authentication](docs/authentication.md) ·
-[Access control](docs/access-control.md) · [Operations](docs/operations.md) ·
-[Migrating from SmokePing](docs/migrating-from-smokeping.md) · Why it's built this way: [DESIGN.md](DESIGN.md)
+Start at the [documentation index](docs/README.md). The most used pages:
+[Getting started](docs/getting-started.md) · [Proving a problem](docs/proving-a-problem.md) ·
+[Reading the graphs](docs/reading-graphs.md) · [Troubleshooting](docs/troubleshooting.md) ·
+[Operations](docs/operations.md) · Why it's built this way: [DESIGN.md](DESIGN.md)
 
 ## Build from source
 
