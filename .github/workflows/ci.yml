@@ -13,7 +13,34 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request that touches only documentation skips the jobs below. They
+  # are required checks, and a skipped job passes one; a workflow filtered out
+  # with paths-ignore never reports them and leaves the pull request unmergeable.
+  # Pushes to main always run everything.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          code=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] &&
+             ! git diff --name-only "$BASE"...HEAD | grep -qvE '^docs/|\.md$'; then
+            code=false
+          fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -47,6 +74,8 @@ jobs:
   # A stale committed web/dist would ship a frontend that does not match the
   # source, and nothing else would catch it: the binary builds either way.
   frontend:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -83,6 +112,8 @@ jobs:
   # where Timespec is int32 — that break was found by compiling, not by
   # reading.
   cross-compile:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
