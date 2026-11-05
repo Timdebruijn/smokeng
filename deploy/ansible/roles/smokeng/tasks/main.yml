@@ -109,6 +109,13 @@
     owner: root
     group: root
     mode: "0755"
+    # GitHub's asset CDN can take ~10 s, or answer 504 for a few minutes, on a
+    # release that was just published. The default 10 s timeout then fails.
+    timeout: 60
+  register: smokeng_download
+  until: smokeng_download is succeeded
+  retries: 4
+  delay: 30
   # Both, or the prober keeps running the binary it started with: replacing the
   # file leaves the running process on the old inode, which /proc reports as
   # "(deleted)". The master would move to the new release and the prober would
