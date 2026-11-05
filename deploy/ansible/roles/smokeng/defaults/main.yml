@@ -28,8 +28,8 @@ smokeng_allow_unauthenticated: false
 # scrapable at all.
 smokeng_metrics_public: false
 
-# Alertmanager-compatible endpoint. Empty means rules are stored but never
-# evaluated.
+# Alertmanager-compatible endpoint. Empty means rules are evaluated but
+# nothing is delivered.
 smokeng_alert_webhook: ""
 # The URL is written here, service-owned and 0600, and passed to smokeng as a
 # file: it is often the credential (a token in the path), and a command line is
