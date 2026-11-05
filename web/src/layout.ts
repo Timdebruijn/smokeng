@@ -1,4 +1,4 @@
-import { fmtUs } from './format'
+import { fmtUs } from './format.ts'
 
 /**
  * Plot geometry in CSS pixels, shared by the worker renderer (which scales it
@@ -33,6 +33,29 @@ export function fmtSigned(us: number): string {
     return (v > 0 ? '+' : '\u2212') + Math.abs(v).toFixed(1) + 'µs'
   }
   return (us > 0 ? '+' : '\u2212') + fmtUs(a)
+}
+
+/**
+ * A time-axis label for a window `span` seconds wide: the time of day while the
+ * window is a day or less, the date and hour up to four days, and the date
+ * alone beyond that, where an hour would repeat under every tick.
+ */
+export function axisLabel(unixSeconds: number, span: number): string {
+  const d = new Date(unixSeconds * 1000)
+  const p = (n: number) => String(n).padStart(2, '0')
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`
+  if (span <= 86400) return hm
+  const date = `${d.getDate()} ${MONTHS[d.getMonth()]}`
+  return span <= 4 * 86400 ? `${date} ${hm}` : date
+}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** A moment, with the date when it is not today: for readouts over long windows. */
+export function fmtWhen(unixSeconds: number): string {
+  const d = new Date(unixSeconds * 1000)
+  const today = new Date()
+  const sameDay = d.toDateString() === today.toDateString()
+  return sameDay ? fmtClock(unixSeconds) : `${d.getDate()} ${MONTHS[d.getMonth()]} ${fmtClock(unixSeconds).slice(0, 5)}`
 }
 
 export function fmtClock(unixSeconds: number): string {

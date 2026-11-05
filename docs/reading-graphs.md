@@ -38,7 +38,10 @@ the same distribution the prober recorded then. There are no consolidation windo
 averaged-away RRAs. Retention, if you set it, deletes old intervals whole; see
 [Operations](operations.md).
 
-The UI only reaches back 24 hours, though; see [Reaching older data](#reaching-older-data).
+A window longer than the plot is wide — a week, a month — holds more intervals than there are
+pixel columns, so each column pools every interval that starts in it. The server does that
+pooling when it reads the window, from the stored intervals; nothing coarser is kept. See
+[Long windows](#long-windows).
 
 ### What N means
 
@@ -97,29 +100,55 @@ route is recorded, rather than a wrong one.
 ## Interaction
 
 - **Hover** — a crosshair follows the cursor across every plot at once, with a readout of
-  the interval under it: time, median, replies received out of sent, and any ICMP error.
+  the interval under it: time, median, replies received out of sent, and any ICMP error. On a
+  long window it is the pixel column under it instead; see [Long windows](#long-windows).
 - **Drag** — on the graphs view, select a time span to zoom every plot to it (at least five
   seconds). `reset zoom` returns to the trailing window. The detail view does not take a
   drag; use its range buttons.
-- **Range buttons** — 15m, 1h, 6h, 24h; `log` toggles between logarithmic and linear
-  latency, and `live` follows the present.
+- **Range buttons** — 15m, 1h, 6h, 24h, 7d, 30d; `log` toggles between logarithmic and
+  linear latency, and `live` follows the present. A trailing window refreshes every ten
+  seconds, or about once per pixel column when that is longer: a month every 43 minutes.
+- **custom** — type a start and end. Any window, as far back as the data goes.
+- **zoom out** — twice as much time around the same centre. A window that would reach past
+  now becomes a live, trailing one.
 
 Logarithmic is the default because latency is multiplicative: the difference between 1 ms
 and 4 ms matters as much as the one between 100 ms and 400 ms, and a linear axis hides the
 first. In linear mode the top 0.5 % is clipped so a single outlier cannot flatten
 everything else.
 
-### Reaching older data
+### Long windows
 
-The range buttons stop at 24 hours, and a drag can only narrow the window you already have.
-Neither goes further back. To look at an older window:
+When a window holds more intervals than the plot has pixel columns, each column pools the
+intervals that start in it:
+
+- the smoke is drawn from the pooled samples (up to 256 of them per column, as evenly spaced
+  ranks past that), and the median line is the median of all of them, not a median of
+  per-interval medians;
+- the loss rail is lost probes over sent probes for the whole column;
+- the hover readout gives the column's span, its median, replies out of sent, and how many
+  intervals it holds, with coverage against the target's current interval. A column whose
+  intervals are missing reads as low coverage, and one with none is a gap;
+- quality flags are listed without counts, and ICMP errors are named only as "ICMP errors":
+  a column knows which flags its intervals carried, not how many of each, nor which error.
+  Zoom in to see the intervals themselves.
+
+The detail view's median, p95, spread and loss are taken over the whole window the same way,
+pooled into one column.
+
+One read walks at most 10 million intervals, about thirty days of a one-second target. A
+longer window of such a target is refused with a message that says so; ask for less.
+
+### Reaching the data outside the UI
 
 - **Availability** covers 7 and 30 days in the detail view, and `GET /api/v1/availability`
   takes any `from` and `to` (Unix seconds). This includes the outage list.
 - **Raw intervals** come from `GET /api/v1/measurements?target_id=…&agent_id=…&from=…&to=…`
   as an Arrow IPC stream (`application/vnd.apache.arrow.stream`), not CSV. One request is
   refused when the window could hold more than 200 000 intervals, worked out at one interval
-  per second, so ask for a day or so at a time. The sample lists are in microseconds.
+  per second, so ask for a day or so at a time. The sample lists are in microseconds. With
+  `columns=N` the same request returns the window pooled as the graphs see it; see
+  [API](api.md#pooled-measurements).
 - **Path changes** for a window come from `GET /api/v1/paths` with the same query.
 
 Whatever protects the UI protects the API, and there are no API tokens. See

@@ -59,7 +59,7 @@ Give the reader something they can open and something they can check.
 5. **The outage list**, copied from the same section. It is not in the CSV.
 6. **For a longer window or the raw intervals**, the API: `GET /api/v1/availability` and
    `GET /api/v1/measurements`, as described in
-   [Reaching older data](reading-graphs.md#reaching-older-data). Measurements come as Arrow,
+   [Reaching the data outside the UI](reading-graphs.md#reaching-the-data-outside-the-ui). Measurements come as Arrow,
    not CSV.
 
 These are the only exports there are. There is no PDF report and no CSV of the smoke.

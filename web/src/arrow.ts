@@ -149,7 +149,7 @@ class Table {
 }
 
 interface IntSpec {
-  bytes: 1 | 2 | 4
+  bytes: 1 | 2 | 4 | 8
   signed: boolean
 }
 type ColSpec =
@@ -157,11 +157,15 @@ type ColSpec =
   | { name: string; kind: 'timestamp' }
   | { name: string; kind: 'list'; int: IntSpec }
 
-/** An integer of 8, 16 or 32 bits: what fits a typed array without changing. */
+/**
+ * An integer of 8 to 64 bits. A 64-bit value is read only if it is exact as a
+ * number (readInt), so the width is allowed here and the value checked there;
+ * which columns may be 64-bit at all is pinned per shape in assemble.
+ */
 function intSpec(t: Table): IntSpec {
   const bits = t.i32(4, 0)
-  if (bits !== 8 && bits !== 16 && bits !== 32) return fail(`an integer of ${bits} bits`)
-  return { bytes: (bits / 8) as 1 | 2 | 4, signed: t.u8(6, 0) !== 0 }
+  if (bits !== 8 && bits !== 16 && bits !== 32 && bits !== 64) return fail(`an integer of ${bits} bits`)
+  return { bytes: (bits / 8) as 1 | 2 | 4 | 8, signed: t.u8(6, 0) !== 0 }
 }
 
 function readSchema(schema: Table): ColSpec[] {
@@ -232,8 +236,12 @@ function readInt(body: Uint8Array, view: DataView, off: number, len: number, row
         return spec.signed ? view.getInt8(p) : body[p]
       case 2:
         return spec.signed ? view.getInt16(p, true) : view.getUint16(p, true)
-      default:
+      case 4:
         return spec.signed ? view.getInt32(p, true) : view.getUint32(p, true)
+      default: {
+        const n = Number(spec.signed ? view.getBigInt64(p, true) : view.getBigUint64(p, true))
+        return Number.isSafeInteger(n) ? n : fail('a 64-bit value that cannot be read exactly')
+      }
     }
   }
 }
@@ -388,27 +396,82 @@ function readInt64(view: DataView, off: number, len: number, rows: number) {
   }
 }
 
-function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
-  const index = (name: string, kind: ColSpec['kind']) => cols.findIndex((c) => c.name === name && c.kind === kind)
-  const need = (name: string, kind: ColSpec['kind']) => {
-    const i = index(name, kind)
-    return i >= 0 ? i : fail(`the response has no ${name} column of the right type`)
-  }
-  const iTs = need('ts', 'timestamp')
+/**
+ * The integer columns of a pooled read (pooledSchema): one row per pixel column.
+ * Sent and received are sums, 64 bits wide on the wire.
+ */
+const POOLED_INTS: readonly (readonly [string, 'int' | 'list', 1 | 2 | 4 | 8, boolean])[] = [
+  ['rounds', 'int', 4, false],
+  ['sent', 'int', 8, false],
+  ['received', 'int', 8, false],
+  ['flags', 'int', 1, false],
+  ['flagged', 'int', 4, false],
+  ['quantiles', 'list', 4, false],
+]
 
-  // The width and signedness of every other column, as the server writes them
-  // (measurementsSchema). Pinned, not merely "an integer that fits": a width that
-  // changed in the schema, one byte of it, would make the reader take a column
-  // of 16-bit values for 8-bit ones and read every second byte.
+/**
+ * The column index of each expected integer column, checked for width and
+ * signedness as the server writes them. Pinned, not merely "an integer that
+ * fits": a width that changed in the schema, one byte of it, would make the
+ * reader take a column of 16-bit values for 8-bit ones and read every second
+ * byte.
+ */
+function pinned(
+  cols: ColSpec[],
+  expected: readonly (readonly [string, 'int' | 'list', 1 | 2 | 4 | 8, boolean])[],
+): Record<string, number> {
   const at: Record<string, number> = {}
-  for (const [name, kind, bytes, signed] of EXPECTED_INTS) {
-    const i = need(name, kind)
+  for (const [name, kind, bytes, signed] of expected) {
+    const i = need(cols, name, kind)
     const spec = (cols[i] as { int: IntSpec }).int
     if (spec.bytes !== bytes || spec.signed !== signed) {
       fail(`the ${name} column is not ${signed ? 'a signed' : 'an unsigned'} ${bytes * 8}-bit integer`)
     }
     at[name] = i
   }
+  return at
+}
+
+function need(cols: ColSpec[], name: string, kind: ColSpec['kind']): number {
+  const i = cols.findIndex((c) => c.name === name && c.kind === kind)
+  return i >= 0 ? i : fail(`the response has no ${name} column of the right type`)
+}
+
+/** Concatenate one list column across batches into offsets and values. */
+function lists(cols: ColSpec[], chunks: Chunk[][], rows: number, col: number) {
+  const signed = (cols[col] as { int: IntSpec }).int.signed
+  const offsets = new Uint32Array(rows + 1)
+  let total = 0
+  for (const ch of chunks) total += ch[col].offsets![ch[col].rows]
+  const values = signed ? new Int32Array(total) : new Uint32Array(total)
+  const measured = new Uint8Array(rows)
+  let r = 0
+  let w = 0
+  for (const ch of chunks) {
+    const c = ch[col]
+    for (let i = 0; i < c.rows; i++, r++) {
+      for (let k = c.offsets![i]; k < c.offsets![i + 1]; k++) values[w++] = c.child!(k)
+      offsets[r + 1] = w
+      measured[r] = c.valid(i) ? 1 : 0
+    }
+  }
+  return { offsets, values, measured }
+}
+
+/** A null in a column every row has is not a value, and is refused. */
+function noNulls(cols: ColSpec[], chunks: Chunk[][], which: number[]) {
+  for (const ch of chunks) {
+    for (const col of which) {
+      for (let i = 0; i < ch[col].rows; i++) if (!ch[col].valid(i)) fail(`a null in the ${cols[col].name} column`)
+    }
+  }
+}
+
+function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
+  // Only a pooled read has rounds; the two shapes are told apart by it.
+  if (cols.some((c) => c.name === 'rounds')) return assemblePooled(cols, chunks, rows)
+  const iTs = need(cols, 'ts', 'timestamp')
+  const at = pinned(cols, EXPECTED_INTS)
   const iSent = at.sent
   const iRecv = at.received
   const iFlags = at.flags
@@ -423,32 +486,9 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
   const icmpErrors: (number | null)[] = new Array(rows)
   const sendErrors: (number | null)[] = new Array(rows)
 
-  const lists = (col: number, signed: boolean) => {
-    const offsets = new Uint32Array(rows + 1)
-    let total = 0
-    for (const ch of chunks) total += ch[col].offsets![ch[col].rows]
-    const values = signed ? new Int32Array(total) : new Uint32Array(total)
-    const measured = new Uint8Array(rows)
-    let r = 0
-    let w = 0
-    for (const ch of chunks) {
-      const c = ch[col]
-      for (let i = 0; i < c.rows; i++, r++) {
-        for (let k = c.offsets![i]; k < c.offsets![i + 1]; k++) values[w++] = c.child!(k)
-        offsets[r + 1] = w
-        measured[r] = c.valid(i) ? 1 : 0
-      }
-    }
-    return { offsets, values, measured }
-  }
-
   // A null in a column every interval has is not a value: read as the zero
   // sitting in its slot, a null `received` would be a hundred percent loss.
-  for (const ch of chunks) {
-    for (const col of [iTs, iSent, iRecv, iFlags, iSamples]) {
-      for (let i = 0; i < ch[col].rows; i++) if (!ch[col].valid(i)) fail(`a null in the ${cols[col].name} column`)
-    }
-  }
+  noNulls(cols, chunks, [iTs, iSent, iRecv, iFlags, iSamples])
 
   let r = 0
   for (const ch of chunks) {
@@ -462,19 +502,63 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
     }
   }
 
-  const samples = lists(iSamples, false)
+  const samples = lists(cols, chunks, rows, iSamples)
   // A series that is null on every row means the target measures nothing of the
   // sort; it is left out, since an empty graph would invite the reader to
   // conclude the jitter was zero.
   const extra: Record<string, ExtraSeries> = {}
   for (const [name, kind] of EXPECTED_INTS) {
     if (kind !== 'list' || name === 'samples') continue
-    const e = lists(at[name], true)
+    const e = lists(cols, chunks, rows, at[name])
     if (e.measured.some((m) => m === 1)) extra[name] = { offsets: e.offsets, values: e.values as Int32Array, measured: e.measured }
   }
   return {
     ts, sent, received, flags,
     offsets: samples.offsets, values: samples.values as Uint32Array,
     icmpErrors, sendErrors, extra,
+  }
+}
+
+/**
+ * A pooled read: one row per pixel column (store.Column). It comes back in the
+ * shape of a series, so the renderer and the readouts take it as they take
+ * intervals — ts is the column's start, sent and received its sums, and the
+ * samples its quantiles — with what only a column has kept in `pooled`. There
+ * are no per-interval errors or extra series in it.
+ */
+function assemblePooled(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
+  const iTs = need(cols, 'ts', 'timestamp')
+  const iEnd = need(cols, 'ts_end', 'timestamp')
+  const at = pinned(cols, POOLED_INTS)
+  noNulls(cols, chunks, [iTs, iEnd, ...POOLED_INTS.map(([name]) => at[name])])
+
+  const ts = new Float64Array(rows)
+  const ends = new Float64Array(rows)
+  const rounds = new Float64Array(rows)
+  const sent = new Float64Array(rows)
+  const received = new Float64Array(rows)
+  const flags = new Uint8Array(rows)
+  const flagged = new Float64Array(rows)
+  let r = 0
+  for (const ch of chunks) {
+    for (let i = 0; i < ch[iTs].rows; i++, r++) {
+      ts[r] = ch[iTs].int!(i)
+      ends[r] = ch[iEnd].int!(i)
+      if (ends[r] <= ts[r]) fail('a column that ends before it starts')
+      rounds[r] = ch[at.rounds].int!(i)
+      sent[r] = ch[at.sent].int!(i)
+      received[r] = ch[at.received].int!(i)
+      flags[r] = ch[at.flags].int!(i)
+      flagged[r] = ch[at.flagged].int!(i)
+    }
+  }
+  const q = lists(cols, chunks, rows, at.quantiles)
+  return {
+    ts, sent, received, flags,
+    offsets: q.offsets, values: q.values as Uint32Array,
+    icmpErrors: new Array(rows).fill(null),
+    sendErrors: new Array(rows).fill(null),
+    extra: {},
+    pooled: { ends, rounds, flagged },
   }
 }

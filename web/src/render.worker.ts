@@ -11,7 +11,7 @@
  * so text, line weights and the blur keep their intended size on any display.
  */
 import { fmtUs } from './format'
-import { AXIS_W, AXIS_H, RAIL_H, RAIL_GAP, fmtSigned, inferSpan } from './layout'
+import { AXIS_W, AXIS_H, RAIL_H, RAIL_GAP, axisLabel, fmtSigned, inferSpan } from './layout'
 
 interface SeriesMsg {
   ts: Float64Array
@@ -19,6 +19,13 @@ interface SeriesMsg {
   received: Float64Array
   offsets: Uint32Array
   values: Uint32Array | Int32Array
+  /**
+   * The rows are the server's pixel columns (a pooled read), asked for at this
+   * canvas's width: each goes into the one column its start falls in. Mapping
+   * its end as well, as an interval's is, can reach the next column by a
+   * rounding, and would draw one column's samples in two.
+   */
+  pooled?: boolean
 }
 
 interface ViewMsg {
@@ -177,7 +184,7 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   const colRows: number[][] = Array.from({ length: plotW }, () => [])
   for (let i = 0; i < n; i++) {
     const x0 = Math.max(0, Math.floor((d.ts[i] - t0) / dt))
-    const x1 = Math.min(plotW - 1, Math.ceil((d.ts[i] + span - t0) / dt) - 1)
+    const x1 = d.pooled ? Math.min(plotW - 1, x0) : Math.min(plotW - 1, Math.ceil((d.ts[i] + span - t0) / dt) - 1)
     for (let x = x0; x <= x1; x++) colRows[x].push(i)
   }
 
@@ -288,8 +295,7 @@ function render(cv: OffscreenCanvas, d: SeriesMsg, view: ViewMsg) {
   for (let i = 0; i <= 4; i++) {
     const t = t0 + ((t1 - t0) * i) / 4
     const x = axisW + (plotW * i) / 4
-    const dte = new Date(t * 1000)
-    const label = `${String(dte.getHours()).padStart(2, '0')}:${String(dte.getMinutes()).padStart(2, '0')}`
+    const label = axisLabel(t, t1 - t0)
     ctx.fillText(label, Math.min(Math.max(x, axisW + 18 * dpr), w - 18 * dpr), h - axisH + 4 * dpr)
   }
 

@@ -9,7 +9,7 @@ import {
 } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
 import { fmtLoss, fmtUs } from './format'
-import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, inferSpan, rowAt } from './layout'
+import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt } from './layout'
 import { useRenderWorker, useWidth } from './shared'
 
 interface Props {
@@ -42,6 +42,8 @@ interface RowIndex {
   icmpErrors: (number | null)[]
   sendErrors: (number | null)[]
   span: number
+  /** A pooled read: each row is a pixel column [ts, ends), of `rounds` intervals. */
+  pooled?: { ends: Float64Array; rounds: Float64Array }
 }
 
 /**
@@ -91,6 +93,26 @@ function tally(flags: Uint8Array, codes: (number | null)[], bit: number): [numbe
     if (c !== null && c !== undefined) counts.set(c, (counts.get(c) ?? 0) + 1)
   }
   return [...counts].sort((a, b) => b[1] - a[1])
+}
+
+/**
+ * The flags of a pooled read. A column says which flags any of its intervals
+ * carried, not how many carried each, nor which ICMP error or send failure it
+ * was: so the labels are shown without counts, and the per-interval detail is
+ * what zooming in is for.
+ */
+function pooledFlags(flags: Uint8Array): { label: string; title: string; count: number }[] {
+  let any = 0
+  for (let i = 0; i < flags.length; i++) any |= flags[i]
+  const out = FLAGS.filter((f) => any & f.bit).map((f) => ({ label: f.label, title: f.title, count: 0 }))
+  if (any & FLAG_ICMP_ERROR) {
+    out.push({
+      label: 'ICMP errors',
+      title: 'Probes were refused with an ICMP error rather than going unanswered. Zoom in to see which.',
+      count: 0,
+    })
+  }
+  return out
 }
 
 function flagCounts(
@@ -233,17 +255,25 @@ export default function Plot({
     ctx.lineWidth = 1
     vline(Math.round(x) + 0.5)
 
-    // Readout for the interval under the cursor
+    // Readout for the interval (or, pooled, the column) under the cursor
     const rows = rowsRef.current
     if (!rows || rows.ts.length === 0) return
     const idx = rowAt(rows.ts, t)
-    if (idx < 0 || t > rows.ts[idx] + rows.span) return
+    if (idx < 0 || t >= (rows.pooled ? rows.pooled.ends[idx] : rows.ts[idx] + rows.span)) return
 
     const lines = [
-      fmtClock(rows.ts[idx]),
+      rows.pooled ? `${fmtWhen(rows.ts[idx])} – ${fmtWhen(rows.pooled.ends[idx])}` : fmtClock(rows.ts[idx]),
       Number.isNaN(rows.median[idx]) ? 'no reply' : `median ${fmtUs(rows.median[idx])}`,
       `${rows.received[idx]}/${rows.sent[idx]} replies${rows.loss[idx] > 0 ? ` · ${fmtLoss(rows.loss[idx] * 100)} loss` : ''}`,
     ]
+    if (rows.pooled) {
+      // Coverage against the interval the target has now: one that changed
+      // inside the window makes this an estimate, which the cap admits.
+      const rounds = rows.pooled.rounds[idx]
+      const interval = Number(target.settings.interval_s.effective) || 0
+      const cover = interval > 0 ? Math.min(1, (rounds * interval) / (rows.pooled.ends[idx] - rows.ts[idx])) : NaN
+      lines.push(`${rounds} interval${rounds === 1 ? '' : 's'}${Number.isNaN(cover) ? '' : ` · ${Math.round(cover * 100)}% covered`}`)
+    }
     const err = rows.icmpErrors[idx]
     if (err !== null && err !== undefined) lines.push(icmpErrorName(err))
     const se = rows.sendErrors[idx]
@@ -269,7 +299,7 @@ export default function Plot({
     ctx.textAlign = 'left'
     ctx.textBaseline = 'top'
     lines.forEach((l, i) => ctx.fillText(l, bx + 7, 12 + i * 14))
-  }, [timeToX])
+  }, [timeToX, target.settings.interval_s.effective])
 
   // Redraw the overlay whenever the shared cursor moves — no React re-render.
   useEffect(() => {
@@ -283,7 +313,14 @@ export default function Plot({
     let cancelled = false
     const dpr = window.devicePixelRatio || 1
     const dark = matchMedia('(prefers-color-scheme: dark)').matches
-    fetchSeries(target.id, agentId, from, to)
+    // Measured before the fetch, since the read is sized to it: the server pools
+    // a long window into exactly the pixel columns the worker draws, computed
+    // the way the worker computes them. A zero width means the element has not
+    // been laid out yet; `width` changes when it is, and this runs again.
+    const cssW = stackRef.current?.clientWidth || width
+    const columns = Math.round(cssW * dpr) - Math.round(AXIS_W * dpr)
+    if (cssW === 0 || columns <= 0) return
+    fetchSeries(target.id, agentId, from, to, columns)
       .then((series) => {
         if (cancelled || !workerRef.current) return
         setFetchError(null)
@@ -297,27 +334,25 @@ export default function Plot({
           icmpErrors: series.icmpErrors,
           sendErrors: series.sendErrors,
           span: inferSpan(series.ts, n),
+          pooled: series.pooled && { ends: series.pooled.ends.slice(), rounds: series.pooled.rounds.slice() },
         }
         for (let i = 0; i < n; i++) {
           const a = series.offsets[i]
           const b = series.offsets[i + 1]
-          // Samples are stored sorted ascending, so the median is a lookup.
+          // Samples are stored sorted ascending, so the median is a lookup; a
+          // pooled column's quantiles are too, at even ranks, so the same lookup
+          // is the median of everything the column pooled.
           rows.median[i] = b > a ? series.values[a + ((b - a) >> 1)] : NaN
           rows.loss[i] = series.sent[i] > 0 ? 1 - series.received[i] / series.sent[i] : NaN
         }
-        // Measure here rather than when the effect started: at effect time
-        // the element may not have been laid out, and a zero width renders an
-        // empty plot that never recovers. `width` only drives re-renders on
-        // resize; the live measurement is what gets drawn.
-        const cssW = stackRef.current?.clientWidth || width
-        if (cssW === 0) return
         rowsRef.current = rows
-        setQuality(flagCounts(series.flags, series.icmpErrors, series.sendErrors))
-        setRowCount(n)
+        setQuality(series.pooled ? pooledFlags(series.flags) : flagCounts(series.flags, series.icmpErrors, series.sendErrors))
+        // Counts are per interval; a pooled read has columns, so none are shown.
+        setRowCount(series.pooled ? 0 : n)
         workerRef.current.postMessage(
           {
             type: 'render',
-            series,
+            series: { ...series, pooled: series.pooled !== undefined },
             view: { cssW, cssH: PLOT_HEIGHT, dpr, t0: from, t1: to, dark, log: logScale },
           },
           [

@@ -223,8 +223,69 @@ func variants() map[string][]byte {
 	}
 }
 
+// pooledJSON is what a pooled fixture holds.
+type pooledJSON struct {
+	TS        []int64    `json:"ts"`
+	End       []int64    `json:"ts_end"`
+	Rounds    []int      `json:"rounds"`
+	Sent      []int      `json:"sent"`
+	Received  []int      `json:"received"`
+	Flags     []int      `json:"flags"`
+	Flagged   []int      `json:"flagged"`
+	Quantiles [][]uint32 `json:"quantiles"`
+}
+
+func fixtureColumns() []store.Column {
+	var cols []store.Column
+	for i := 0; i < 5; i++ {
+		c := store.Column{
+			From: 1_756_400_000 + int64(i)*600, To: 1_756_400_000 + int64(i+1)*600,
+			Rounds: 10 - i, Sent: 200 + i, Received: 190 - 10*i, Flags: uint8(i % 3), Flagged: i % 3,
+			// 70 000 sent fits 16 bits no longer: the sums are why the wire is 64.
+			Quantiles: []uint32{1000 + uint32(i), 2000, 3000}[:i%4],
+		}
+		if i == 4 {
+			c.Sent, c.Received = 70_000, 0
+		}
+		cols = append(cols, c)
+	}
+	return cols
+}
+
+func pooledFixture() (arrowBytes, jsonBytes []byte) {
+	cols := fixtureColumns()
+	var buf bytes.Buffer
+	writePooledArrow(&buf, cols, 2) // three batches: 2, 2, 1
+	want := pooledJSON{}
+	for _, c := range cols {
+		want.TS = append(want.TS, c.From)
+		want.End = append(want.End, c.To)
+		want.Rounds = append(want.Rounds, c.Rounds)
+		want.Sent = append(want.Sent, c.Sent)
+		want.Received = append(want.Received, c.Received)
+		want.Flags = append(want.Flags, int(c.Flags))
+		want.Flagged = append(want.Flagged, c.Flagged)
+		want.Quantiles = append(want.Quantiles, append([]uint32{}, c.Quantiles...))
+	}
+	j, err := json.MarshalIndent(want, "", " ")
+	if err != nil {
+		panic(err)
+	}
+	return buf.Bytes(), append(j, '\n')
+}
+
+// pooledHugeSum is a pooled read whose sent sum is past 2^53, which a reader
+// holding numbers cannot represent exactly. It has to refuse it rather than
+// round it.
+func pooledHugeSum() []byte {
+	var buf bytes.Buffer
+	writePooledArrow(&buf, []store.Column{{From: 1, To: 2, Rounds: 1, Sent: 1<<53 + 1}}, 8192)
+	return buf.Bytes()
+}
+
 func fixtureFiles() map[string][]byte {
-	files := map[string][]byte{"null-received.arrow": nullReceived()}
+	files := map[string][]byte{"null-received.arrow": nullReceived(), "pooled-huge-sum.arrow": pooledHugeSum()}
+	files["pooled.arrow"], files["pooled.json"] = pooledFixture()
 	for name, data := range variants() {
 		files[name] = data
 	}

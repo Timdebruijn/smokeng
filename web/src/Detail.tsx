@@ -112,7 +112,9 @@ export default function Detail({
       return
     }
     let cancelled = false
-    fetchSeries(target.id, agentId, from, to)
+    // One column: the server pools the whole window, so these are taken over
+    // every sample in it (its 256 quantiles past that many), at any length.
+    fetchSeries(target.id, agentId, from, to, 1)
       .then((s) => !cancelled && setStats(summarise(s)))
       .catch(() => !cancelled && setStats(null))
     return () => {
