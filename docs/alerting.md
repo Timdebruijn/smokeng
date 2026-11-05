@@ -33,15 +33,6 @@ threshold = 150
 
 Or in the web UI under **Alerts**, as an admin.
 
-| Field | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `metric` | string | required | `loss`, `median`, `p95` or `spread` |
-| `op` | string | required | `>` or `<` |
-| `threshold` | float | required | The value to compare against |
-| `for_intervals` | int | `3` | Consecutive breaching intervals before firing |
-| `clear_intervals` | int | `3` | Consecutive non-breaching intervals before clearing |
-| `disabled` | bool | `false` | Keep the rule but stop evaluating it |
-
 ## The metrics
 
 | Metric | Unit | What it catches |
@@ -58,8 +49,35 @@ whole distribution. A link whose median is unchanged but whose spread has triple
 degrading — a saturated uplink, a failing radio, a queue that has started to build — and
 neither an average nor a p95 alone will tell you.
 
-A sensible starting set is loss above 20 %, median above whatever your baseline plus a
-margin is, and spread above roughly three times its usual value.
+### Starting points
+
+These are starting points, not recommendations. Look at the graphs for a week, then move each
+threshold to just beyond what the link does on a normal day.
+
+| Target | Rule | Why |
+| --- | --- | --- |
+| Uplink to the internet | `loss > 5`, `p95 > 100` ms | Loss over a few percent is already visible to users; the tail shows a filling queue first |
+| LAN gateway | `loss > 1`, `median > 5` ms | A wired hop should be near-perfect; anything else is a local fault |
+| Resolver | `loss > 2`, `median > 100` ms | A cached answer is fast, so a high median points at the resolver or its upstream |
+
+Keep `for_intervals` at the default or higher on a one-minute interval. One bad interval is
+noise.
+
+## Rule fields
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `metric` | string | required | One of the metrics above |
+| `op` | string | required | `>` or `<`. `shape` and `bimodality` accept only `>` |
+| `threshold` | float | required | The value to compare against, in the metric's unit |
+| `for_intervals` | int | `3` | Consecutive breaching intervals before firing |
+| `clear_intervals` | int | `3` | Consecutive non-breaching intervals before clearing |
+| `disabled` | bool | `false` | Keep the rule but stop evaluating it (`enabled` in the API) |
+| `mode` | string | none | `auto` or `tunable`. Required for `shape` and `bimodality`, unused otherwise |
+| `baseline` | string | none | `rolling` or `golden`. Required for `shape`, unused otherwise |
+
+`mode` and `baseline` are explained [below](#alerting-on-the-shape-of-the-distribution). A TOML
+rule that leaves out `for_intervals` or `clear_intervals` gets the default `3`, not `1`.
 
 ## Alerting on the shape of the distribution
 
@@ -155,7 +173,7 @@ Firing and resolved alerts are POSTed to a webhook in Alertmanager's v2 format:
 smokeng serve --alert-webhook https://alertmanager.example.org/api/v2/alerts
 ```
 
-The payload is a JSON array of alert objects, so anything that speaks Alertmanager —
+The fields are listed in [api.md](api.md#webhook-payload). The payload is a JSON array of alert objects, so anything that speaks Alertmanager —
 Alertmanager itself, Grafana OnCall, ntfy shims, a small script — takes it unmodified.
 Resolved alerts are sent as well, so receivers that track state stay in sync, and firing
 alerts are repeated — once a minute by default, `--alert-repeat` sets the interval —
@@ -174,7 +192,10 @@ dropped, with a log line, to keep the newest: a lost transition is logged, and a
 still-firing alert is repeated on the next `--alert-repeat`. On shutdown what is queued is
 delivered, for up to five seconds; a resolved alert is not announced again, so it is not
 dropped lightly. `delivering` in `GET /api/v1/alerts` says a webhook is configured, not that
-every batch got through; drops and failures are in the log.
+every batch got through.
+
+**Delivery failures are only logged.** There is no metric for them, so a dead receiver does not
+show up on a dashboard. Watch the smokeng log for lines starting `alert: deliver`.
 
 **Rules are evaluated whether or not `--alert-webhook` is set.** Firing state and the
 transition history are live either way; a missing webhook only means a transition is
@@ -189,6 +210,29 @@ Prometheus, scrape [`/metrics`](operations.md) and skip the webhook entirely.
 Webhook delivery is the only notifier implemented. Email and chat integrations are
 deliberately not built: every organisation already has a router for those, and it is not
 smokeng's job to become a second one.
+
+### Alertmanager example
+
+`severity` is always `warning` and cannot be set per rule, so route on `alertname` or `target`.
+This sends alerts under `/Home` to a Slack channel and everything else to the default receiver.
+
+```yaml
+route:
+  receiver: default
+  group_by: [alertname, target]
+  routes:
+    - matchers: [target=~"/Home/.*"]
+      receiver: slack-network
+receivers:
+  - name: default
+  - name: slack-network
+    slack_configs:
+      - api_url_file: /etc/alertmanager/slack-url
+        channel: "#network"
+        send_resolved: true
+        title: '{{ .CommonLabels.alertname }} on {{ .CommonLabels.target }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }} (from {{ .Labels.agent }}){{ "\n" }}{{ end }}'
+```
 
 ## Acknowledging and silencing
 
@@ -212,23 +256,29 @@ node — which covers that node and its whole subtree — and optionally to one 
 rule. It comes in two shapes: a duration from now (the quick "silence this for two hours"
 on a firing alert), or an explicit `[from, until)` window booked ahead of time, which is a
 maintenance window. Both are managed under **Alerts → Silences & maintenance windows**, or
-over the API. Who set a silence (`created_by`), captured a baseline (`captured_by`) or
-acknowledged an alert (`acked_by`) is the e-mail address from their session (or the name
-or subject when the identity provider sends none). It is shown only to callers who may
-change that node (for an alert, the target that fired), and for a global silence only to
-administrators.
-Everyone else sees the same entry with the field empty.
+over the API. Silences are not part of the TOML file and `smokeng config export` does not
+write them: they live only in the database.
+
+Who set a silence (`created_by`), captured a baseline (`captured_by`) or acknowledged an alert
+(`acked_by`) is the e-mail address from their session (or the name or subject when the identity
+provider sends none). It is shown only to callers who may change that node (for an alert, the
+target that fired), and for a global silence only to administrators. Everyone else sees the same
+entry with the field empty.
+
+These calls need a session, or an instance without OIDC reached on `localhost`; see
+[api.md](api.md#authentication). Without OIDC they work as written, because `curl` sends no
+`Origin` header.
 
 ```bash
 # Silence everything under /Production for two hours, from now.
-curl -X POST http://localhost:8080/api/v1/silences \
+curl -m8 -X POST http://localhost:8080/api/v1/silences \
   -d '{"target_id": 4, "duration_s": 7200, "reason": "DB cluster upgrade"}'
 
 # Book a maintenance window ahead of time.
-curl -X POST http://localhost:8080/api/v1/silences \
+curl -m8 -X POST http://localhost:8080/api/v1/silences \
   -d '{"target_id": 4, "starts_at": 1793000000, "ends_at": 1793007200, "reason": "planned"}'
 ```
 
 If you deliver to Alertmanager, its own silences work too and may fit a cross-tool workflow
-better; smokeng's are for native use and for expressing a maintenance window declaratively
-against the target tree.
+better; smokeng's are for native use and for a maintenance window booked against a node of the
+target tree.
