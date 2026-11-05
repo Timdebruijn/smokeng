@@ -24,6 +24,11 @@ var (
 	maxAvailabilityRows = 2_000_000
 	// maxPathRows bounds the route changes one read returns.
 	maxPathRows = 100_000
+	// maxPooledRows bounds the intervals one pooled read walks. What it returns
+	// is bounded by its columns, but the time it takes is not: about 550,000
+	// intervals a second were measured on two cores, so this is under 20 s —
+	// thirty days of a one-second series, or nineteen years of a minute one.
+	maxPooledRows = 10_000_000
 )
 
 // ErrRangeTooLarge is what a read returns when the range holds more than one

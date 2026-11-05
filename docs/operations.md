@@ -481,7 +481,8 @@ of short write locks rather than one that stalls the prober.
 
 Retention never coarsens. An old interval is deleted whole, not averaged into a summary, so
 history before the horizon reads as absent — never as a downsampled figure. Downsampling is
-unimplemented and unplanned for that reason.
+unimplemented and unplanned for that reason. A graph of a long window pools the samples of
+each pixel column when it reads them; nothing coarser is ever stored.
 
 ## Limits
 

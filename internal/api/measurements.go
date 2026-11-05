@@ -45,6 +45,22 @@ var measurementsSchema = arrow.NewSchema([]arrow.Field{
 	{Name: store.SeriesServerProcessing, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
 }, nil)
 
+// pooledSchema is the wire schema of a pooled read: one row per pixel column
+// that holds any interval (see store.Column). A reader tells it from
+// measurementsSchema by its fields; "rounds" is only here.
+var pooledSchema = arrow.NewSchema([]arrow.Field{
+	{Name: "ts", Type: &arrow.TimestampType{Unit: arrow.Second, TimeZone: "UTC"}},
+	{Name: "ts_end", Type: &arrow.TimestampType{Unit: arrow.Second, TimeZone: "UTC"}},
+	{Name: "rounds", Type: arrow.PrimitiveTypes.Uint32},
+	// Sums over the column. 64 bits, because a wide column of a dense series
+	// sums more probes than 32 hold.
+	{Name: "sent", Type: arrow.PrimitiveTypes.Uint64},
+	{Name: "received", Type: arrow.PrimitiveTypes.Uint64},
+	{Name: "flags", Type: arrow.PrimitiveTypes.Uint8},
+	{Name: "flagged", Type: arrow.PrimitiveTypes.Uint32},
+	{Name: "quantiles", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint32)},
+}, nil)
+
 // handleMeasurements streams one series over [from, to) as Arrow IPC.
 // Defaults: agent_id 0 (local), to now, from one hour before to.
 const (
@@ -55,11 +71,23 @@ const (
 	// maxRowsPerRequest is generous for any window a plot asks for — a day of
 	// one-second data is 86 400 — and far below what exhausts memory.
 	maxRowsPerRequest = 200_000
+	// maxColumns bounds columns=: wider than any screen a plot is drawn on,
+	// at device pixels.
+	maxColumns = 8192
 )
 
 func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	targetID, agentID, from, to, ok := s.seriesQuery(w, r)
 	if !ok {
+		return
+	}
+	if v := r.URL.Query().Get("columns"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > maxColumns {
+			badRequestMsg(w, fmt.Sprintf("columns must be between 1 and %d", maxColumns))
+			return
+		}
+		s.handlePooled(w, r, targetID, agentID, from, to, n)
 		return
 	}
 	// QueryRange materialises every row, samples decoded, before a byte is
@@ -82,6 +110,67 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 	// A trailing window's contents change every interval; never cache it.
 	w.Header().Set("Cache-Control", "no-store")
 	writeMeasurementsArrow(w, ms, batchRows)
+}
+
+// handlePooled answers a read for a plot n columns wide. The window-width guard
+// above does not apply: what it returns is bounded by n, what it holds in memory
+// by one column's samples, and the time it takes by the intervals the store
+// will walk (see store.QueryColumns), all three counted rather than guessed.
+func (s *server) handlePooled(w http.ResponseWriter, r *http.Request, targetID, agentID, from, to int64, n int) {
+	raw, cols, err := s.st.QueryColumns(r.Context(), targetID, agentID, from, to, n)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.apache.arrow.stream")
+	w.Header().Set("Cache-Control", "no-store")
+	if cols == nil {
+		writeMeasurementsArrow(w, raw, batchRows)
+		return
+	}
+	writePooledArrow(w, cols, batchRows)
+}
+
+// writePooledArrow writes columns as an Arrow IPC stream, as
+// writeMeasurementsArrow writes intervals.
+func writePooledArrow(w io.Writer, cols []store.Column, batchRows int) {
+	writer := ipc.NewWriter(w, ipc.WithSchema(pooledSchema))
+	defer writer.Close()
+
+	rb := array.NewRecordBuilder(memory.DefaultAllocator, pooledSchema)
+	defer rb.Release()
+	tsB := rb.Field(0).(*array.TimestampBuilder)
+	endB := rb.Field(1).(*array.TimestampBuilder)
+	roundsB := rb.Field(2).(*array.Uint32Builder)
+	sentB := rb.Field(3).(*array.Uint64Builder)
+	recvB := rb.Field(4).(*array.Uint64Builder)
+	flagsB := rb.Field(5).(*array.Uint8Builder)
+	flaggedB := rb.Field(6).(*array.Uint32Builder)
+	listB := rb.Field(7).(*array.ListBuilder)
+	valB := listB.ValueBuilder().(*array.Uint32Builder)
+
+	flush := func() bool {
+		rec := rb.NewRecord()
+		defer rec.Release()
+		return writer.Write(rec) == nil
+	}
+	for i, c := range cols {
+		tsB.Append(arrow.Timestamp(c.From))
+		endB.Append(arrow.Timestamp(c.To))
+		roundsB.Append(uint32(c.Rounds))
+		sentB.Append(uint64(c.Sent))
+		recvB.Append(uint64(c.Received))
+		flagsB.Append(c.Flags)
+		flaggedB.Append(uint32(c.Flagged))
+		listB.Append(true)
+		valB.AppendValues(c.Quantiles, nil)
+		if (i+1)%batchRows == 0 && !flush() {
+			return
+		}
+	}
+	if rb.Field(0).Len() > 0 {
+		flush()
+	}
 }
 
 // writeMeasurementsArrow writes measurements as an Arrow IPC stream: the schema,

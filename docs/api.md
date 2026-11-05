@@ -103,10 +103,12 @@ prober), `from` and `to`. `availability` takes the same, plus `down_threshold`.
 | `agent_id` | `0`; for availability, every agent the target is assigned to | Vantage point. |
 | `from`, `to` | `to` = now, `from` = `to` minus 3600 | Unix seconds. |
 | `down_threshold` | `100` | Availability only: the loss percent at which an interval counts as down. |
+| `columns` | none | Measurements only: the width of the plot the read is for, 1 to 8192. See [pooled measurements](#pooled-measurements). |
 
-A `measurements` request is refused with `400` when the window could hold more than 200,000
-intervals. The check counts one interval per second whatever the target's interval, so a window
-over about 55 hours is refused even for a 60 s series. Ask for shorter windows and join them.
+Without `columns`, a `measurements` request is refused with `400` when the window could hold more
+than 200,000 intervals. The check counts one interval per second whatever the target's interval, so
+a window over about 55 hours is refused even for a 60 s series. Ask for shorter windows and join
+them, or pass `columns`.
 
 ## Shapes
 
@@ -130,6 +132,29 @@ curl -m30 -sf "http://localhost:8080/api/v1/measurements?target_id=7&from=179300
 ```
 
 Read it with any Arrow library, for example `pyarrow.ipc.open_stream(open("series.arrow", "rb"))`.
+
+### Pooled measurements
+
+With `columns=N`, a window that holds at most N intervals comes back exactly as above. A window
+that holds more, or whose samples are more than one raw read returns, comes back pooled: the window is cut into N equal columns, every interval goes to
+the column its `ts` falls in, and each column that holds any interval is one row. A column with
+none is absent, not an empty row. Tell the two shapes apart by the fields: only the pooled one has
+`rounds`.
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `ts`, `ts_end` | timestamp (s, UTC) | The column, `[ts, ts_end)`. |
+| `rounds` | uint32 | Intervals stored in the column. Against the target's interval, this is coverage. |
+| `sent`, `received` | uint64 | Packets sent and answered, summed over the column. Loss is `1 - received/sent`. |
+| `flags` | uint8 | Every quality bit any interval in the column carried. |
+| `flagged` | uint32 | How many intervals carried one. |
+| `quantiles` | list of uint32 | The pooled round-trip times in microseconds, sorted ascending: all of them when there are at most 256, otherwise 256 order statistics at evenly spaced ranks, each standing for an equal share of the replies. Every value is a measured sample. |
+
+Nothing is averaged and nothing is stored: the column is pooled from the stored intervals when
+it is read. Per-interval details (`icmp_error`, `send_error`, the irtt series) are not in a
+pooled read. A read is refused with `400` when the window holds more than 10 million intervals
+(thirty days of a one-second series), or one column would pool more than 20 million samples; ask
+for a shorter window, or more columns.
 
 ### Targets
 
