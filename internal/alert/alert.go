@@ -155,10 +155,10 @@ func (r *Rule) Validate() error {
 		return fmt.Errorf("alert: loss threshold must be a percentage between 0 and 100")
 	}
 	if r.For < 1 {
-		return fmt.Errorf("alert: `for` must be at least 1 interval")
+		return fmt.Errorf("alert: `for_intervals` must be at least 1 interval")
 	}
 	if r.ClearFor < 1 {
-		return fmt.Errorf("alert: `clear_for` must be at least 1 interval")
+		return fmt.Errorf("alert: `clear_intervals` must be at least 1 interval")
 	}
 	return nil
 }
