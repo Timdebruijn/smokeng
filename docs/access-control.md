@@ -1,5 +1,8 @@
 # Access control
 
+For admins deciding who may see or edit which part of the tree. Sign-in itself is in
+[Authentication](authentication.md).
+
 smokeng has three roles and one way of scoping them.
 
 | Role | Where it comes from | What it permits |
@@ -33,10 +36,12 @@ role  = "editor"
 Or in the UI under **Access**, as an admin.
 
 Grants are keyed on **groups**, never on individuals. One person is a group of
-one in your provider. The identity provider supplies group membership — read
-from the same claim as `--oidc-admin-claim` — and nothing else. Authorisation
-lives here, next to the tree it applies to, rather than in a provider-specific
-claim you would have to go and read during an incident.
+one in your provider. Group membership is read from the same claim as
+`--oidc-admin-claim`, with the same rules (an array, or a comma-separated string; a
+space is part of a name; see [Authentication](authentication.md)). The `group` in a grant
+must equal what that claim contains, which is a GUID on Entra. Membership is fixed at
+login. Authorisation lives here, next to the tree it applies to, rather than in a
+provider-specific claim you would have to go and read during an incident.
 
 ## Isolation is total
 
@@ -52,10 +57,9 @@ Concretely:
 - A parent they cannot see is not named in the response. That holds for every
   place a path or a name appears: a setting's source, a firing alert, an
   availability report. Each is rendered as the caller sees it. A test calls every
-  scoped read route as a scoped user, taking the routes from the router's own
-  table so that a new one fails the test until it is covered, and fails if any
-  answer names anything above their grant, beside it, or measuring something
-  else. It looks for names, not for another customer's numeric ids.
+  scoped read route as a scoped user and fails if any answer names anything above
+  their grant, beside it, or measuring something else. It looks for names, not for
+  another customer's numeric ids.
 - Every list is filtered: targets, alert rules, firing alerts, agents.
 - An id works the same way. For every route that takes a target, rule or silence
   id, one belonging to someone else is answered exactly as one that does not
@@ -123,9 +127,6 @@ that. Someone granted `viewer` on one subtree still sees every other subtree,
 because they see it as a default-role viewer, not as a grantee. The Access page
 says so in place while that is the case. In the Ansible role this is
 `smokeng_default_role`.
-
-Restrict *who can authenticate at all* at your identity provider. smokeng
-decides what a signed-in user may reach; it does not decide who may sign in.
 
 ## Grants in TOML
 

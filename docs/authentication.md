@@ -1,9 +1,12 @@
 # Authentication
 
-smokeng authenticates against any OIDC provider — Authentik, Keycloak, Entra ID, Google,
-Okta — using the authorization-code flow with PKCE. There is no local user database, by
-design: account lifecycle, MFA and group membership are your identity provider's job, and
-duplicating them here would only make them wrong in a second place.
+For operators wiring smokeng to an identity provider (IdP): what it must send, and what a
+session does and does not guarantee.
+
+smokeng authenticates against any OIDC provider using the authorization-code flow with
+PKCE. There is no local user database, by design: account lifecycle, MFA and group
+membership are your IdP's job, and duplicating them here would only make them wrong in a
+second place.
 
 ## Without OIDC
 
@@ -38,9 +41,53 @@ smokeng serve \
 | `--oidc-admin-value` | — | Membership in this group grants admin. Required with `--oidc-issuer`, unless you pass `--oidc-everyone-is-admin`. |
 | `--oidc-everyone-is-admin` | off | Every user the provider authenticates is an admin, who can edit and delete the tree, enrol agents and write grants. A choice you make, not a default; not with `--oidc-admin-value`. |
 
-Register `https://your-host/auth/callback` as the redirect URI with your provider, and
-make sure the claim named by `--oidc-admin-claim` is actually included in the ID token —
-in Authentik and Keycloak that is a scope or mapper you have to add explicitly.
+## What smokeng needs from the IdP
+
+- **Issuer URL** (`--oidc-issuer`). smokeng runs OIDC discovery against it at startup and
+  will not start if discovery fails.
+- **Redirect URL**: `{external-url}/auth/callback`, or whatever you pass as
+  `--oidc-redirect-url`. Register exactly that.
+- **Scopes requested**: `openid`, `profile`, `email`, and a scope named after the groups
+  claim (`groups` by default; it follows `--oidc-admin-claim`).
+- **A groups claim in the ID token**, named by `--oidc-admin-claim`. smokeng reads the ID
+  token only, not the userinfo endpoint. The claim may be an array of strings or one
+  comma-separated string. A space is part of a group name, so `Domain Admins` is one group.
+- **PKCE** (S256) and a client secret: register a confidential client.
+
+If the claim is missing, nobody is an admin and grants never match. Users are demoted, not
+promoted: everyone without the admin group is a viewer.
+
+| IdP | Make the groups claim appear | What the claim contains |
+| --- | --- | --- |
+| Authentik | Make sure the provider has a scope mapping that emits `groups`, and that it is selected on the provider. | Group names. |
+| Keycloak | Client scope with a *Group Membership* mapper, claim name `groups`, added to the client. Turn off *Full group path*. | Names; with full path on, `/parent/name`. |
+| Microsoft Entra ID | App registration, *Token configuration*, *Add groups claim*. | Group **object IDs** (GUIDs) by default, so `--oidc-admin-value` is a GUID. |
+| Google | Not possible. | Google issues no groups claim. |
+
+Check your IdP's documentation for the exact menu names; they move between versions.
+
+**Google** cannot supply groups with plain OIDC, so neither admin nor grants can work. Your
+options are `--oidc-everyone-is-admin` (every user Google lets in is an admin; limit who
+can sign in at Google, see its documentation), or a proxy or broker in front that adds a groups claim.
+
+**Entra** only helps if the token is not too large. When a user has many groups Entra
+leaves the claim out of the token; check your IdP's documentation on group overage and
+consider assigning only the groups smokeng needs to the application.
+
+### Worked example: Authentik
+
+1. Create an *OAuth2/OpenID Provider*: client type *Confidential*, redirect URI
+   `https://smokeng.example.org/auth/callback` (strict match), scopes `openid`, `profile`,
+   `email` and the one that emits `groups`.
+2. Create an *Application* with slug `smokeng` and attach the provider. The issuer is then
+   `https://auth.example.org/application/o/smokeng/`.
+3. Create a group `smokeng-admins` and add yourself. Use *Policy bindings* on the
+   application to limit who may sign in at all.
+4. Copy the client id and secret into smokeng (secret as a file, see below) and use the
+   command at the top of this section.
+
+Verify before relying on it: sign in and try an admin-only action. If you are refused, the
+claim is not in the ID token; check the provider's scope mappings.
 
 ### Keep the secret off the command line
 
@@ -68,12 +115,10 @@ provider. Moving it to a file afterwards does not un-publish it.
 ## Roles
 
 `admin` comes from the ID token: if the claim named by `--oidc-admin-claim` contains
-`--oidc-admin-value`, the user is a global admin. The claim is read as an array or as a
-comma-separated string; a space is part of a group name, so `Domain Admins` is one group.
-smokeng will not start with `--oidc-issuer` and no `--oidc-admin-value` unless you pass
-`--oidc-everyone-is-admin`: without a group, **every authenticated user is an admin**, which
-is fine for a small team that controls who the provider lets through and wrong for anyone
-else. (Earlier versions did that and logged it at startup.)
+`--oidc-admin-value`, the user is a global admin. smokeng will not start with
+`--oidc-issuer` and no `--oidc-admin-value` unless you pass `--oidc-everyone-is-admin`:
+without a group, **every authenticated user is an admin**, which is fine for a small team
+that controls who the provider lets through and wrong for anyone else.
 
 Everyone else gets what their **grants** give them, plus whatever `--default-role` allows
 a user with no grants. That is where per-subtree access lives — one customer seeing only
@@ -86,14 +131,22 @@ user may reach; it does not decide who may sign in.
 ## Sessions
 
 After a successful callback, smokeng sets a `smokeng_session` cookie: HMAC-signed,
-`HttpOnly`, `SameSite=Lax`, `Secure` unless you are on plain HTTP (see [Behind a proxy](operations.md#behind-a-proxy)), valid for 12 hours. It
-holds the subject, email, display name, role and expiry — no provider tokens, and no
-server-side session store to keep or to lose.
+`HttpOnly`, `SameSite=Lax`, and `Secure` unless you are on plain HTTP (see
+[Behind a proxy](operations.md#behind-a-proxy)). It holds the subject, email, display name,
+role, groups and expiry. It holds no provider tokens, and there is no server-side session
+store.
 
-`POST /auth/logout` clears it.
+That has consequences for your threat model:
+
+- **Logout does not revoke.** `POST /auth/logout` clears the cookie in that browser. A copy
+  of the cookie stays valid until it expires, 12 hours after login.
+- **Group membership is fixed at login.** Removing someone from a group at the IdP, or
+  disabling their account, takes effect when their session expires, not before.
+- **Rotating `session_key` logs everyone out**, and is the only way to cut sessions short.
+  The recipe is under [Backups](operations.md#backups).
 
 ## Prometheus scraping
 
-`/metrics` sits behind the same session as everything else, which a scraper cannot
-provide. Pass `--metrics-public` to expose it without one, and restrict access at the
-reverse proxy or by binding the metrics-scraped instance to a management network.
+`/metrics` sits behind an **admin** session, which a scraper cannot provide. Pass
+`--metrics-public` to serve it without one, and restrict access at the reverse proxy or by
+putting the scraped instance on a management network.
