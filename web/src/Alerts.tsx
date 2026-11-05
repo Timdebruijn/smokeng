@@ -234,7 +234,9 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                     {r.describes}
                     {r.baseline === 'golden' && <GoldenNote rule={r} baselines={baselines} />}
                   </td>
-                  <td className="dim">clears after {r.clear_intervals}</td>
+                  <td className="dim">
+                    clears after {r.clear_intervals} · {r.severity}
+                  </td>
                   {isAdmin && (
                     <td>
                       <button
@@ -664,6 +666,7 @@ function RuleForm({
   const [clearIntervals, setClearIntervals] = useState('3')
   const [mode, setMode] = useState<'auto' | 'tunable'>('auto')
   const [baseline, setBaseline] = useState<'rolling' | 'golden'>('rolling')
+  const [severity, setSeverity] = useState<AlertRule['severity']>('warning')
   const shape = isShapeMetric(metric)
   const unit = metric === 'bimodality' ? '' : metric === 'loss' ? '%' : 'ms'
 
@@ -685,6 +688,7 @@ function RuleForm({
           threshold: auto ? (metric === 'bimodality' ? 0.6 : 4) : Number(threshold),
           for_intervals: Number(forIntervals),
           clear_intervals: Number(clearIntervals),
+          severity,
         })
       }}
     >
@@ -778,6 +782,17 @@ function RuleForm({
             onChange={(e) => setClearIntervals(e.target.value)}
           />
         </span>
+      </label>
+      <label className="field">
+        <span>Severity</span>
+        <select
+          value={severity}
+          onChange={(e) => setSeverity(e.target.value as AlertRule['severity'])}
+        >
+          <option value="critical">critical</option>
+          <option value="warning">warning</option>
+          <option value="info">info</option>
+        </select>
       </label>
       <div className="pill-row">
         <button className="pill accent" type="submit" disabled={!name}>

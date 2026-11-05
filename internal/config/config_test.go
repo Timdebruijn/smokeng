@@ -963,3 +963,58 @@ func TestOverlayValuesKeepsWhatIsNotProvided(t *testing.T) {
 		t.Errorf("agents = %v, want \"local ams-01\"", dst.Agents)
 	}
 }
+
+// Severity defaults to warning, round-trips when it is anything else, and a typo
+// is refused rather than slipping past every route downstream.
+func TestRuleSeverityRoundTripsThroughTOML(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	const file = `
+[defaults]
+interval_s = 60
+pings_per_interval = 20
+
+[targets."gw"]
+host = "10.0.0.1"
+address_family = "v4"
+
+[targets."gw".alerts."uplink down"]
+metric = "loss"
+op = ">"
+threshold = 50
+severity = "critical"
+
+[targets."gw".alerts."slow"]
+metric = "median"
+op = ">"
+threshold = 40
+`
+	if _, err := Import(ctx, s, []byte(file), false, false); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := s.ListAlertRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]alert.Severity{}
+	for _, r := range rules {
+		got[r.Name] = r.Severity
+	}
+	if got["uplink down"] != alert.SeverityCritical || got["slow"] != alert.SeverityWarning {
+		t.Fatalf("severities = %v, want critical and the default warning", got)
+	}
+
+	exported, err := Export(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := string(exported); !strings.Contains(out, `severity = 'critical'`) ||
+		strings.Count(out, "severity") != 1 {
+		t.Errorf("export should name critical and leave the default out:\n%s", out)
+	}
+
+	typo := strings.Replace(file, `"critical"`, `"critcal"`, 1)
+	if _, err := Import(ctx, open(t), []byte(typo), false, false); err == nil {
+		t.Error("a misspelt severity was accepted")
+	}
+}

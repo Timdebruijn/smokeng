@@ -102,6 +102,7 @@ func TestFiresThroughToWebhook(t *testing.T) {
 	rule := alert.Rule{
 		TargetID: groupID, Name: "packet loss", Metric: alert.MetricLoss,
 		Op: alert.OpGreater, Threshold: 20, For: 2, ClearFor: 2, Enabled: true,
+		Severity: alert.SeverityCritical,
 	}
 	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
 		t.Fatal(err)
@@ -123,7 +124,8 @@ func TestFiresThroughToWebhook(t *testing.T) {
 		t.Fatalf("got %d notifications, want 1 after the window closed", len(sent))
 	}
 	labels, _ := sent[0]["labels"].(map[string]any)
-	if labels["alertname"] != "packet loss" || labels["target"] != "/Production/gw" {
+	if labels["alertname"] != "packet loss" || labels["target"] != "/Production/gw" ||
+		labels["severity"] != "critical" {
 		t.Errorf("labels = %v", labels)
 	}
 	if _, hasEnd := sent[0]["endsAt"]; hasEnd {
