@@ -137,7 +137,7 @@ expires within 24 hours, so remove the `--token` line after the agent has report
 
 ## Enrolment at scale
 
-The UI uses three routes, all in `internal/api`:
+The UI uses three routes:
 
 - `POST /api/v1/agent-tokens` with `{"name": "...", "ttl_s": 3600}` mints a token; the
   response includes `token` once. `ttl_s` is optional and capped at 86400.
@@ -199,7 +199,7 @@ rename that left them behind would turn each of those targets into one measured 
 ## Clock
 
 Agents sign every request with a timestamp, and the master refuses one more than 5 minutes
-from its own clock (`MaxSkew` in `internal/ingest/sign.go`). Run NTP on every agent host and
+from its own clock. Run NTP on every agent host and
 keep the offset well inside that window.
 
 ## Versions
@@ -211,8 +211,8 @@ versions. Downgrades are not supported.
 
 ## Limits
 
-- **Agents do no path discovery.** `traceOnce` in `internal/probe/engine.go` records only
-  under `LocalAgentID`, and the agent uploads measurements only, never paths.
+- **Agents do no path discovery.** Path-change marks come from the master's local prober
+  only; an agent uploads measurements, never paths.
 
 ## How the protocol works
 
