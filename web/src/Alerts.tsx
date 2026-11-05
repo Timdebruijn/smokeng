@@ -668,7 +668,7 @@ function RuleForm({
   const [baseline, setBaseline] = useState<'rolling' | 'golden'>('rolling')
   const [severity, setSeverity] = useState<AlertRule['severity']>('warning')
   const shape = isShapeMetric(metric)
-  const unit = metric === 'bimodality' ? '' : 'ms'
+  const unit = metric === 'bimodality' ? '' : metric === 'loss' ? '%' : 'ms'
 
   return (
     <form

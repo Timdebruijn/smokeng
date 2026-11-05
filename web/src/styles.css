@@ -1714,6 +1714,18 @@ a.button {
     max-width: 100%;
   }
 
+  /* Form rows: label above its value. Beside a 9rem label column, an input's
+     own width pushed it out past the card. */
+  .field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .field input,
+  .field select {
+    max-width: 100%;
+  }
+
   /* Table rows wrap onto a second line instead of running off the card: the
      cells read in order, and none of these tables has a header to lose. */
   .alerts,
