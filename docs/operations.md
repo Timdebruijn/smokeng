@@ -254,7 +254,7 @@ groups:
 `SmokengNotMeasuring` is the nearest thing to "is it measuring" that `/healthz` cannot
 tell you. It also fires when no targets are enabled.
 
-Five of these metrics are worth an alert of their own:
+What each of those rules is telling you:
 
 - `smokeng_measurements_dropped_total` increasing means smokeng is throwing away
   measurements it took. Nothing else should be able to cause a gap in the data.
