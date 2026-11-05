@@ -16,6 +16,23 @@ smokeng config import-smokeping --db smokeng.db /etc/smokeping/config.d/Targets
 Add `--also-ipv6` to create a v6 target alongside every v4 one, which is usually what you
 want and what SmokePing made awkward.
 
+## SmokePing → smokeng
+
+| | SmokePing | smokeng |
+| --- | --- | --- |
+| Step and pings | Defaults: `step` 300 s, `pings` 20 | Defaults at the root: `interval_s` 60, `pings_per_interval` 20, burst mode with 10 ms between pings |
+| Load per target | 20 probes per 300 s | 20 probes per 60 s, five times as many. Set `interval_s = 300` on the root to match SmokePing. |
+| Graph density | One data point per step. Older data is consolidated into coarser RRA rows. | One column per interval, kept as measured. A 60 s step gives five columns where SmokePing gave one. |
+| Median | Median of that step's pings, drawn with percentile bands around it | Median of every sample pooled into the pixel column, never a median of per-interval medians. Zoomed out, a column pools several intervals. |
+| Loss | The colour of the median line | A separate `loss` rail, plus replies received out of sent in the hover readout |
+| Path | Not part of the graph | Dashed marks where the hop list changed, local prober only |
+
+The importer carries `step` and `pings` over where your file sets them, so those targets keep
+SmokePing's timing until you change it. Where it does not, the targets get the smokeng
+defaults above. Check which you got after the import. The ping count is the width of each
+distribution: with 20 pings, one lost packet is 5 % loss. See
+[Reading the graphs](reading-graphs.md#what-n-means).
+
 ## What comes across
 
 The hierarchy, as a hierarchy — `+`, `++`, `+++` become nested groups, not a flat list.
