@@ -23,7 +23,36 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request that touches only documentation skips the jobs below. They
+  # are required checks, and a skipped job passes one; a workflow filtered out
+  # with paths-ignore never reports them and leaves the pull request unmergeable.
+  # Pushes to main and the weekly schedule always run everything.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # Fails open: if the diff cannot be read, everything runs.
+          code=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] &&
+             files=$(git diff --name-only "$BASE"...HEAD) && [ -n "$files" ] &&
+             [ "$(printf '%s\n' "$files" | grep -cvE '^docs/|\.md$')" = 0 ]; then
+            code=false
+          fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   go:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -40,6 +69,8 @@ jobs:
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   npm:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
