@@ -188,6 +188,10 @@ type Store interface {
 	IngestMeasurements(ctx context.Context, ms []Measurement) (duplicates int, err error)
 	// QueryRange returns one series over [from, to), ordered by ts.
 	QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error)
+	// QueryColumns returns one series over [from, to) for a plot n columns
+	// wide: raw when the window holds at most n intervals, pooled per column
+	// otherwise (see Column).
+	QueryColumns(ctx context.Context, targetID, agentID, from, to int64, n int) (raw []Measurement, cols []Column, err error)
 	// AvailabilitySeries returns just sent/received per interval over [from, to),
 	// for an availability report — no samples decoded.
 	AvailabilitySeries(ctx context.Context, targetID, agentID, from, to int64) ([]report.Point, error)

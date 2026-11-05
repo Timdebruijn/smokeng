@@ -8,7 +8,10 @@ document; deviations require explicit sign-off first.
 smokeng keeps the full RTT distribution per measurement interval, forever, at full
 resolution, and renders it as actual density. Every design decision below is subordinate
 to that: if a choice makes the distribution cheaper but lossy, it is the wrong choice.
-No consolidation, no rollup, no pre-aggregation — at write time or at render time.
+No consolidation, no rollup, no pre-aggregation in storage: what is written is what is
+kept, at every age. Drawing pools, and only drawing: a pixel column shows every sample of
+every interval it covers, and the median is taken over those samples — never a median of
+medians, never a stored summary (§7.2, §8.4).
 
 ## 2. Architecture overview
 
@@ -585,7 +588,8 @@ icmp_error  UInt16, nullable    -- type<<8|code; null when nothing was refused (
 ```
 
 Content type `application/vnd.apache.arrow.stream`, record batches of ~8k rows streamed
-as they are read. A month of 1-min data is ~43k rows / ~900k sample values ≈ 4–5 MB on
+as they are read. (A plot asks with `columns=` and may get a pooled read instead; see
+below.) A month of 1-min data is ~43k rows / ~900k sample values ≈ 4–5 MB on
 the wire, landing in typed arrays browser-side after one linear read of the buffers. Decode cost
 server-side is a linear varint walk — negligible against I/O.
 
@@ -603,6 +607,26 @@ and signedness the server writes it, with times in seconds, so a column cannot r
 server's own writer produced (`web/testdata`, regenerated and checked by a Go test), and
 corrupt them byte by byte. What it cannot notice is a changed value: there is no
 checksum.
+
+**Pooled reads.** A plot sends its width as `columns=N`. A window that holds at most N
+intervals comes back as above, untouched. One that holds more is pooled on the way out:
+the window is cut into N equal columns, every interval goes to the column its start falls
+in, and a column carries the sums of sent and received, the number of intervals in it,
+its flags, and the pooled samples — all of them up to 256, otherwise 256 order statistics
+at evenly spaced ranks. That is what the renderer did with the raw rows anyway (§8.2),
+moved before the network: the quantiles are taken over the pooled samples, so the median
+is never a median of medians, and every value sent is a sample that was measured.
+256 is about a plot's height in pixels, the resolution the density is drawn at. Nothing
+of this is stored, so the premise (§1) holds: what is on disk is every interval, and a
+narrower window shows them again.
+
+The decision is made in one pass: rows are kept until there are more than N and then
+folded into columns, since a count over this table walks the same pages as the read.
+Only one column's samples are in memory at a time. What bounds the cost is the rows
+walked, so a pooled read stops at 10 million: measured on two cores of an arm64 VM, at
+1000 columns, 30 days of a 60 s series took 0.07 s, a year of it 1.0 s, and 30 days of a
+1 s series (2.6 million intervals) 4.7 s — about 550,000 intervals a second
+(`BenchmarkQueryColumns`).
 
 ### 7.3 Config as TOML, DB as source of truth
 
@@ -800,11 +824,13 @@ touches the median line's color channel. Hover shows exact sent/received via cro
 - **Shared crosshair** across stacked plots: one time cursor in a tiny pub/sub store;
   each plot draws its own overlay line + value readout. O(1) per mousemove (binary
   search into the column index), zero density re-renders.
-- **Brush-zoom** on the overlay; on commit: refetch `[from, to)` at full resolution and
-  re-render. There is no in-worker cache of previously fetched ranges — every zoom and
-  pan issues a fresh `fetch(..., { cache: 'no-store' })`, including zooming back out to
-  a range already seen. No LOD tiers, no server aggregation — full resolution at every
-  zoom level, by premise. Simple over clever until refetching measurably hurts.
+- **Brush-zoom** on the overlay; on commit: refetch `[from, to)` and re-render. There is
+  no in-worker cache of previously fetched ranges — every zoom and pan issues a fresh
+  `fetch(..., { cache: 'no-store' })`, including zooming back out to a range already
+  seen. No LOD tiers and nothing precomputed: every zoom level is read from the stored
+  intervals. When the window holds more intervals than the plot has pixel columns, the
+  server does the per-column pooling the renderer would otherwise do (§7.2, pooled
+  reads), so a month costs what the plot is wide, not what the month holds.
 - **Log y-axis** toggle per plot group (falls out of step 2 above).
 - Free time ranges; no fixed day/week/month presets as the *mechanism* (quick-select
   buttons may exist as UI sugar over the free range).
