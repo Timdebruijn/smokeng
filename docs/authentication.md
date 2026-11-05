@@ -68,7 +68,8 @@ Check your IdP's documentation for the exact menu names; they move between versi
 
 **Google** cannot supply groups with plain OIDC, so neither admin nor grants can work. Your
 options are `--oidc-everyone-is-admin` (every user Google lets in is an admin; limit who
-can sign in at Google, see its documentation), or a proxy or broker in front that adds a groups claim.
+can sign in at Google, see its documentation), or a proxy or broker in front that adds a
+groups claim.
 
 **Entra** only helps if the token is not too large. When a user has many groups Entra
 leaves the claim out of the token; check your IdP's documentation on group overage and
