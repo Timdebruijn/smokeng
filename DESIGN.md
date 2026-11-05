@@ -1058,3 +1058,39 @@ pull (§9), no multi-tenancy.
 | 8 | Alert rule inheritance | child replaces vs child adds | **decided 2026-08-29**: replace, consistently with every other setting and with SmokePing (§4.3) |
 | 9 | Agent target assignment | hand-configured per agent vs narrow pull of assigned targets from master | **agreed 2026-08-29**: pull (data-only, signed, pull-only — see §9) |
 | 10 | Alternative hierarchies | SmokePing `parents`/multi-hierarchy vs single-parent tree | single-parent only — inheritance and provenance hang on the tree; alternative *views* (tags/saved selections) can come later as presentation, never as a second parent axis |
+
+## Appendix A. Operations benchmarks and provenance
+
+Moved here from `docs/operations.md`, which keeps only the decision rules.
+
+### Hardening score provenance
+
+The directives in the example unit are those of the Ansible role's units. They were tried on a
+Fedora CoreOS host (systemd 259, kernel 7.1) with `ping_group_range` narrowed to the service
+group, as the role does: the master measuring `icmp`, `tcp`, `http` and `dns` targets with path
+discovery running, and the prober measuring an `icmp` target through the master. Every interval
+arrived, none was lost, nothing was refused, and a target with `dscp = 46` measured as before.
+`systemd-analyze security` rated the role's units 2.9; the directives they carried before scored
+5.8, and none scored 9.2. The score differs between systemd versions, and the example unit in
+the docs was not scored separately. `ProcSubset=pid` was tried and rejected: it hides
+`/proc/net`, and smokeng logs `drop counter unavailable`.
+
+### Separate prober: accuracy by probe type
+
+Two-core Debian VM, loopback targets so the network contributes almost nothing, the machine
+under heavy load from the instance's own API in the loaded column, and the load still running
+when collection stopped:
+
+| spread within an interval | idle | prober in the master process, under load |
+| --- | --- | --- |
+| `icmp` (kernel-stamped) | 8 µs | 8 µs |
+| `dns` (kernel-stamped) | 46 µs | 41 µs |
+| `tcp` (userspace-timed) | 139 µs | 1764 µs |
+
+The kernel-stamped types do not move, because their timestamps are taken as the packet crosses
+the wire. `tcp` widens thirteenfold and its p99 goes from 277 µs to 4484 µs; none of that is
+the network, it is GC and scheduler contention inside the prober. The figures are one machine
+and a deliberately hard load: they show the direction of the effect, not its size elsewhere.
+An earlier version of this experiment left one arm on an idle machine and measured the
+opposite sign, because CPU frequency scaling swamped everything. If you repeat it, keep the
+machine equally busy in both arms and keep the load running until collection ends.
