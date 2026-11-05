@@ -176,8 +176,9 @@ Prints enrolled agents with their id, name, state and last-seen time. Flag: `--d
 Take the agent id as the one positional argument. Flag: `--db` (default `smokeng.db`).
 
 - `disable`: the master rejects its submissions. `enable` reverses it.
-- `remove`: **dangerous**, cannot be undone. The agent is deleted; the measurements it already
-  submitted are kept. Enrolling it again needs a new `agent add`.
+- `remove`: deletes the agent. Refused if the agent has ever reported a measurement
+  (`ErrAgentHasHistory`); use `disable` to retire one with history. The local agent cannot
+  be removed. Re-enrolling needs a new `agent add`.
 
 ### agent key
 
