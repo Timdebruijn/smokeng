@@ -47,6 +47,7 @@ func ruleJSON(r *alert.Rule) map[string]any {
 		"enabled":         r.Enabled,
 		"mode":            string(r.Mode),
 		"baseline":        string(r.Baseline),
+		"severity":        string(r.Severity),
 		"describes":       r.Describe(),
 	}
 }
@@ -65,6 +66,7 @@ type rulePayload struct {
 	Enabled   *bool           `json:"enabled"`
 	Mode      *alert.Mode     `json:"mode"`
 	Baseline  *alert.Baseline `json:"baseline"`
+	Severity  *alert.Severity `json:"severity"`
 }
 
 func (p *rulePayload) applyTo(r *alert.Rule) {
@@ -78,6 +80,7 @@ func (p *rulePayload) applyTo(r *alert.Rule) {
 	set(&r.Enabled, p.Enabled)
 	set(&r.Mode, p.Mode)
 	set(&r.Baseline, p.Baseline)
+	set(&r.Severity, p.Severity)
 }
 
 // set overwrites *dst with *src when the payload carried the field.
@@ -134,7 +137,7 @@ func (s *server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
-	rule := alert.Rule{For: 3, ClearFor: 3, Enabled: true}
+	rule := alert.Rule{For: 3, ClearFor: 3, Enabled: true, Severity: alert.SeverityWarning}
 	p.applyTo(&rule)
 	if rule.TargetID == 0 {
 		badRequest(w, errors.New("target_id is required: a rule is defined on a tree node"))

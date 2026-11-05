@@ -91,6 +91,9 @@ type AlertRule struct {
 	// UI would be disabled by the next import for being absent from the file.
 	Mode     string `toml:"mode,omitempty"`
 	Baseline string `toml:"baseline,omitempty"`
+	// Severity is critical, warning or info. Empty means warning, and export
+	// leaves warning out, so files written before it existed stay unchanged.
+	Severity string `toml:"severity,omitempty"`
 }
 
 // Entry is one target table, keyed by its path. A table without host is a
@@ -553,6 +556,10 @@ func toAlertRule(name string, r AlertRule, targetID int64) (alert.Rule, error) {
 		Enabled:   !r.Disabled,
 		Mode:      alert.Mode(r.Mode),
 		Baseline:  alert.Baseline(r.Baseline),
+		Severity:  alert.Severity(r.Severity),
+	}
+	if out.Severity == "" {
+		out.Severity = alert.SeverityWarning
 	}
 	if out.For == 0 {
 		out.For = 3
@@ -590,10 +597,14 @@ func Export(ctx context.Context, st Store) ([]byte, error) {
 		if byNode[r.TargetID] == nil {
 			byNode[r.TargetID] = map[string]AlertRule{}
 		}
+		severity := string(r.Severity)
+		if r.Severity == alert.SeverityWarning {
+			severity = "" // the default; see AlertRule.Severity
+		}
 		byNode[r.TargetID][r.Name] = AlertRule{
 			Metric: string(r.Metric), Op: string(r.Op), Threshold: r.Threshold,
 			For: r.For, ClearFor: r.ClearFor, Disabled: !r.Enabled,
-			Mode: string(r.Mode), Baseline: string(r.Baseline),
+			Mode: string(r.Mode), Baseline: string(r.Baseline), Severity: severity,
 		}
 	}
 

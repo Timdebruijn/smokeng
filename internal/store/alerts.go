@@ -38,7 +38,7 @@ func (s *SQLite) SessionKey(ctx context.Context) ([]byte, error) {
 // store's.
 func (s *SQLite) ListAlertRules(ctx context.Context) ([]alert.Rule, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, target_id, name, metric, op, threshold, for_intervals, clear_intervals, enabled, mode, baseline
+		SELECT id, target_id, name, metric, op, threshold, for_intervals, clear_intervals, enabled, mode, baseline, severity
 		FROM alert_rules ORDER BY target_id, name`)
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func (s *SQLite) ListAlertRules(ctx context.Context) ([]alert.Rule, error) {
 		var r alert.Rule
 		var mode, baseline string
 		if err := rows.Scan(&r.ID, &r.TargetID, &r.Name, &r.Metric, &r.Op, &r.Threshold,
-			&r.For, &r.ClearFor, &r.Enabled, &mode, &baseline); err != nil {
+			&r.For, &r.ClearFor, &r.Enabled, &mode, &baseline, &r.Severity); err != nil {
 			return nil, err
 		}
 		r.Mode, r.Baseline = alert.Mode(mode), alert.Baseline(baseline)
@@ -69,18 +69,23 @@ func (s *SQLite) UpsertAlertRule(ctx context.Context, r *alert.Rule) error {
 		}
 		r.ID = id
 	}
+	// Empty means warning, like the column default; an unknown value is
+	// refused by the CHECK.
+	if r.Severity == "" {
+		r.Severity = alert.SeverityWarning
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_rules (id, target_id, name, metric, op, threshold,
-			for_intervals, clear_intervals, enabled, mode, baseline)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			for_intervals, clear_intervals, enabled, mode, baseline, severity)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			target_id = excluded.target_id, name = excluded.name,
 			metric = excluded.metric, op = excluded.op, threshold = excluded.threshold,
 			for_intervals = excluded.for_intervals,
 			clear_intervals = excluded.clear_intervals, enabled = excluded.enabled,
-			mode = excluded.mode, baseline = excluded.baseline`,
+			mode = excluded.mode, baseline = excluded.baseline, severity = excluded.severity`,
 		r.ID, r.TargetID, r.Name, string(r.Metric), string(r.Op), r.Threshold,
-		r.For, r.ClearFor, r.Enabled, string(r.Mode), string(r.Baseline))
+		r.For, r.ClearFor, r.Enabled, string(r.Mode), string(r.Baseline), string(r.Severity))
 	return err
 }
 

@@ -15,7 +15,7 @@ const (
 func lossRule() *Rule {
 	return &Rule{
 		ID: 1, TargetID: 2, Name: "loss", Metric: MetricLoss, Op: OpGreater,
-		Threshold: 20, For: 3, ClearFor: 2, Enabled: true,
+		Threshold: 20, For: 3, ClearFor: 2, Enabled: true, Severity: SeverityWarning,
 	}
 }
 
@@ -181,6 +181,8 @@ func TestValidate(t *testing.T) {
 		"loss over 100":  func(r *Rule) { r.Threshold = 150 },
 		"for zero":       func(r *Rule) { r.For = 0 },
 		"clear zero":     func(r *Rule) { r.ClearFor = 0 },
+		"no severity":    func(r *Rule) { r.Severity = "" },
+		"typo severity":  func(r *Rule) { r.Severity = "critcal" },
 	}
 	for name, mutate := range bad {
 		r := lossRule()

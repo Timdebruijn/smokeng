@@ -29,6 +29,7 @@ clear_intervals = 3
 metric = "median"
 op = ">"
 threshold = 150
+severity = "info"
 ```
 
 Or in the web UI under **Alerts**, as an admin.
@@ -75,6 +76,7 @@ noise.
 | `disabled` | bool | `false` | Keep the rule but stop evaluating it (`enabled` in the API) |
 | `mode` | string | none | `auto` or `tunable`. Required for `shape` and `bimodality`, unused otherwise |
 | `baseline` | string | none | `rolling` or `golden`. Required for `shape`, unused otherwise |
+| `severity` | string | `warning` | `critical`, `warning` or `info`: the webhook's `severity` label. Anything else is refused |
 
 `mode` and `baseline` are explained [below](#alerting-on-the-shape-of-the-distribution). A TOML
 rule that leaves out `for_intervals` or `clear_intervals` gets the default `3`, not `1`.
@@ -219,18 +221,21 @@ smokeng's job to become a second one.
 
 ### Alertmanager example
 
-`severity` is always `warning` and cannot be set per rule, so route on `alertname` or `target`.
-This sends alerts under `/Home` to a Slack channel and everything else to the default receiver.
+Route on `severity`, `alertname` or `target`. This pages on `critical` rules, sends the rest
+under `/Home` to a Slack channel, and everything else to the default receiver.
 
 ```yaml
 route:
   receiver: default
   group_by: [alertname, target]
   routes:
+    - matchers: [severity="critical"]
+      receiver: pager
     - matchers: [target=~"/Home/.*"]
       receiver: slack-network
 receivers:
   - name: default
+  - name: pager
   - name: slack-network
     slack_configs:
       - api_url_file: /etc/alertmanager/slack-url

@@ -43,6 +43,8 @@ export interface AlertRule {
   mode?: 'auto' | 'tunable' | ''
   /** Shape metric only: 'rolling' recent history, or 'golden' captured reference. */
   baseline?: 'rolling' | 'golden' | ''
+  /** The webhook's severity label. */
+  severity: 'critical' | 'warning' | 'info'
   describes: string
 }
 

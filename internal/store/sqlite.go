@@ -402,6 +402,10 @@ UPDATE targets SET graph_series = 'all' WHERE parent_id IS NULL AND graph_series
 	`ALTER TABLE measurements ADD COLUMN send_error INTEGER`,
 	// v22: target and agent ids stop being reused. See ids.go.
 	seedIDsMigration(),
+	// v23: a severity per rule, for the webhook's severity label. Every
+	// existing rule keeps what it sent before, warning.
+	`ALTER TABLE alert_rules ADD COLUMN severity TEXT NOT NULL DEFAULT 'warning'
+  CHECK (severity IN ('critical','warning','info'))`,
 }
 
 func (s *SQLite) migrate() error {

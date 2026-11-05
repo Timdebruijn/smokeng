@@ -93,6 +93,17 @@ const (
 	OpLess    Op = "<"
 )
 
+// Severity is the label a webhook carries, so a receiver such as Alertmanager
+// can route a dead uplink differently from jitter on a resolver. A fixed set:
+// a typo like "critcal" would otherwise slip past every route unnoticed.
+type Severity string
+
+const (
+	SeverityCritical Severity = "critical"
+	SeverityWarning  Severity = "warning"
+	SeverityInfo     Severity = "info"
+)
+
 // Rule is one alert condition, defined on a tree node and inherited by its
 // descendants. Inheritance replaces rather than accumulates, consistently
 // with every other inheritable setting: a node that defines rules defines the
@@ -114,6 +125,7 @@ type Rule struct {
 	// scalar ones. Mode is auto or tunable; Baseline is rolling or golden.
 	Mode     Mode
 	Baseline Baseline
+	Severity Severity
 }
 
 // Validate reports whether the rule is usable. Rules come from operators, so
@@ -159,6 +171,11 @@ func (r *Rule) Validate() error {
 	}
 	if r.ClearFor < 1 {
 		return fmt.Errorf("alert: `clear_intervals` must be at least 1 interval")
+	}
+	switch r.Severity {
+	case SeverityCritical, SeverityWarning, SeverityInfo:
+	default:
+		return fmt.Errorf("alert: severity must be critical, warning or info, got %q", r.Severity)
 	}
 	return nil
 }
