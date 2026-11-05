@@ -85,7 +85,7 @@ func agentAdd(args []string) error {
 	fs := flag.NewFlagSet("agent add", flag.ExitOnError)
 	dbPath := fs.String("db", "smokeng.db", "path to the SQLite database")
 	name := fs.String("name", "", "agent name, as used in a target's agents setting")
-	pubkey := fs.String("pubkey", "", "the agent's public key, as printed by 'smokeng agent run'")
+	pubkey := fs.String("pubkey", "", "the agent's public key, as printed by 'smokeng agent key'")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -203,7 +203,7 @@ func agentSetState(args []string, action string) error {
 		if err := st.RemoveAgent(ctx, id); err != nil {
 			return err
 		}
-		fmt.Printf("removed agent %d; the measurements it submitted are kept\n", id)
+		fmt.Printf("removed agent %d\n", id)
 	case "disable":
 		if err := st.SetAgentEnabled(ctx, id, false); err != nil {
 			return err

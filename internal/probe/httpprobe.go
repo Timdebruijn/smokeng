@@ -82,7 +82,7 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 	req, err := http.NewRequestWithContext(rctx, http.MethodGet, url, nil)
 	if err != nil {
 		// A malformed URL never reached the network, so this is a send
-		// failure, not loss: nothing was asked of the target.
+		// failure: nothing was asked of the target, so it is flagged not sent.
 		col.markSendFailed(idx, store.SendReasonSocket)
 		if idx == 0 {
 			log.Printf("probe: target %d: build request %q: %v", spec.TargetID, url, err)
@@ -102,7 +102,7 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 			col.markSendFailed(idx, sendReasonFor(err))
 			if idx == 0 {
 				log.Printf("probe: target %d (%s): request to %s failed locally: %v; "+
-					"recorded as a send failure, not loss", spec.TargetID, spec.Host, url, err)
+					"counted as sent and lost, flagged not sent", spec.TargetID, spec.Host, url, err)
 			}
 			return
 		}
