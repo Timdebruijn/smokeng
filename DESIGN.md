@@ -396,8 +396,8 @@ SmokePing does, so an imported configuration keeps its meaning. Accumulation wou
 raise a question with no good answer — how does a child *remove* an inherited rule?
 
 A rule tests one metric (`loss`, `median`, `p95`, `spread`) against a threshold, and
-carries its own hysteresis: `for` consecutive matching intervals to fire, `clear_for`
-consecutive non-matching to clear. `p95` and `spread` exist only because the full
+carries its own hysteresis: `for_intervals` consecutive matching intervals to fire,
+`clear_intervals` consecutive non-matching to clear. `p95` and `spread` exist only because the full
 distribution is kept; a tool storing one RTT per interval cannot express them.
 
 Two properties matter more than the DSL. Continuity is literal: a gap in the series

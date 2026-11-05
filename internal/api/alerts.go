@@ -52,7 +52,7 @@ func ruleJSON(r *alert.Rule) map[string]any {
 }
 
 // rulePayload is the wire form of a rule. Defaults are deliberate: a rule
-// created without hysteresis would flap, so `for` and `clear_for` default to
+// created without hysteresis would flap, so `for_intervals` and `clear_intervals` default to
 // three intervals rather than one.
 type rulePayload struct {
 	TargetID  *int64          `json:"target_id"`
