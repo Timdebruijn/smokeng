@@ -163,7 +163,7 @@ func (t *Target) Validate() error {
 	}
 	// The ICMP payload carries a 4-byte magic and an 8-byte token.
 	if s.PacketSize != nil && (*s.PacketSize < 12 || *s.PacketSize > 65_000) {
-		return fmt.Errorf("tree: packet_size must be between 12 and 65000 bytes")
+		return fmt.Errorf("tree: packet_size must be between 12 and 65000 bytes (new writes are limited to 9000)")
 	}
 	if s.DSCP != nil && (*s.DSCP < 0 || *s.DSCP > 63) {
 		return fmt.Errorf("tree: dscp must be between 0 and 63")

@@ -129,8 +129,8 @@ func (s *SQLite) SetAgentEnabled(ctx context.Context, id int64, enabled bool) er
 	return nil
 }
 
-// RemoveAgent deletes an agent. Its measurements are kept, as target deletion
-// keeps them: history outlives the thing that produced it.
+// RemoveAgent deletes an agent that has reported no measurements; one with any
+// is refused with ErrAgentHasHistory: history outlives the thing that produced it.
 func (s *SQLite) RemoveAgent(ctx context.Context, id int64) error {
 	if id == LocalAgentID {
 		return fmt.Errorf("store: the local agent cannot be removed")

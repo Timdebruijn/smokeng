@@ -38,7 +38,7 @@ func probeTCP(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 			col.markSendFailed(idx, sendReasonFor(err))
 			if idx == 0 {
 				log.Printf("probe: target %d (%s): tcp/%d dial failed locally: %v; "+
-					"recorded as a send failure, not loss", spec.TargetID, spec.Host, spec.ProbePort, err)
+					"counted as sent and lost, flagged not sent", spec.TargetID, spec.Host, spec.ProbePort, err)
 			}
 			return
 		}
