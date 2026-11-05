@@ -33,9 +33,26 @@ The opacity is normalised per column, so a column pooling 200 samples is compara
 pooling 20. Density is mapped to alpha as `1 − exp(−k·fraction)`, which keeps a single
 outlier visible without letting the bulk saturate to a solid block.
 
-Crucially, the smoke never gets coarser with age. Zoom into last March at one-minute
-resolution and you see the same distribution the prober recorded then. There are no
-consolidation windows, no averaged-away RRAs, no "the detail expired".
+The smoke never gets coarser with age. A minute recorded last March is still a minute, with
+the same distribution the prober recorded then. There are no consolidation windows and no
+averaged-away RRAs. Retention, if you set it, deletes old intervals whole; see
+[Operations](operations.md).
+
+The UI only reaches back 24 hours, though; see [Reaching older data](#reaching-older-data).
+
+### What N means
+
+Each interval holds `pings_per_interval` samples, 20 by default. Read the picture with that
+number in mind:
+
+- With 20 samples, one lost packet is 5 % loss. Two is 10 %. A single stray ping is not a
+  trend.
+- The p5 and p95 figures are order statistics of the pooled samples (the value at position
+  `floor(p × N)` in the sorted list, no interpolation). With 20 samples, p95 is the 20th
+  value of 20, so it is the maximum. It becomes a stable number only over many intervals,
+  which is why the detail view pools the whole window.
+- A short window pools few samples. 15 minutes at the default 60 s step is 300 samples; a
+  1 % loss claim needs more than that.
 
 ## The median line
 
@@ -53,13 +70,25 @@ healthy target has a silent rail and any mark on it is worth looking at.
 Loss and latency are shown together on purpose: "slow" and "lossy" are different faults
 with different causes, and the pair distinguishes them at a glance.
 
+### What the rail counts
+
+Loss is `1 − received / sent` per interval. Probes that never went out because of a local
+failure are still drawn as loss, with a `not sent` badge naming the reason (see the badges
+below), so an unreachable target is not an empty graph. Loss under 0.1 % is shown as
+`<0.1%`, never as `0.0%`. What counts as lost for each probe type is in [Probes](probes.md).
+
 ## Path change marks
 
 If `trace_interval_s` is non-zero, smokeng periodically runs a TTL-limited traceroute and
-stores the result **only when the path changes**. Each change is drawn as a dashed amber
-line on the time axis, so "the route changed at 14:02" sits directly beside "the smoke
-widened at 14:03" without switching views. Hovering names the route in force at that
-instant.
+stores the result **only when the hop list differs from the last one stored**. Each change is
+drawn as a dashed amber line on the time axis, so "the route changed at 14:02" sits directly
+beside "the smoke widened at 14:03" without switching views. Hovering names the route in
+force at that instant.
+
+A mark says the hop list differed. It does not say the new path is worse, and a hop that
+stopped answering traceroute can look like a change. Only the master's own prober records
+paths. A target seen from a remote agent has no marks, because remote agents do not run
+traceroute.
 
 Hops are found with TTL-limited probes, reading each router's address from the ICMP
 time-exceeded reply on the socket error queue. That needs Linux; on other platforms no
@@ -69,7 +98,9 @@ route is recorded, rather than a wrong one.
 
 - **Hover** — a crosshair follows the cursor across every plot at once, with a readout of
   the interval under it: time, median, replies received out of sent, and any ICMP error.
-- **Drag** — select a time span to zoom every plot to it.
+- **Drag** — on the graphs view, select a time span to zoom every plot to it (at least five
+  seconds). `reset zoom` returns to the trailing window. The detail view does not take a
+  drag; use its range buttons.
 - **Range buttons** — 15m, 1h, 6h, 24h; `log` toggles between logarithmic and linear
   latency, and `live` follows the present.
 
@@ -77,6 +108,22 @@ Logarithmic is the default because latency is multiplicative: the difference bet
 and 4 ms matters as much as the one between 100 ms and 400 ms, and a linear axis hides the
 first. In linear mode the top 0.5 % is clipped so a single outlier cannot flatten
 everything else.
+
+### Reaching older data
+
+The range buttons stop at 24 hours, and a drag can only narrow the window you already have.
+Neither goes further back. To look at an older window:
+
+- **Availability** covers 7 and 30 days in the detail view, and `GET /api/v1/availability`
+  takes any `from` and `to` (Unix seconds). This includes the outage list.
+- **Raw intervals** come from `GET /api/v1/measurements?target_id=…&agent_id=…&from=…&to=…`
+  as an Arrow IPC stream (`application/vnd.apache.arrow.stream`), not CSV. One request is
+  refused when the window could hold more than 200 000 intervals, worked out at one interval
+  per second, so ask for a day or so at a time. The sample lists are in microseconds.
+- **Path changes** for a window come from `GET /api/v1/paths` with the same query.
+
+Whatever protects the UI protects the API, and there are no API tokens. See
+[Authentication](authentication.md).
 
 ## The detail view
 
@@ -110,8 +157,25 @@ Beneath them is the list of **outages**: each contiguous run of down intervals, 
 start, end and duration — the evidence, not just the headline. **Download CSV** exports the
 per-vantage-point summary for a report.
 
-Availability is also available over the API at `GET /api/v1/availability?target_id=…`, with
-`from`, `to` and `down_threshold` query parameters.
+The CSV has one row per vantage point: target, agent, availability, coverage, and up, down
+and unknown seconds, plus the number of outages. It does not list the outages; those are on
+the page and in the API response.
+
+The same report is at `GET /api/v1/availability?target_id=…`, with `from`, `to` and
+`down_threshold` query parameters. To use it as evidence, see
+[Proving a problem](proving-a-problem.md).
+
+## Jitter plots for irtt
+
+A target with `probe_type = "irtt"` gets extra plots under its round-trip smoke in the detail
+view, on the same time cursor: jitter towards the target (`ipdv_send`), jitter on the way
+back (`ipdv_receive`) and the time the far end held each packet (`server_processing`). Which
+ones draw is set by `graph_series`; see [Configuration](configuration.md).
+
+The jitter plots are the difference between consecutive packets, so the sign is kept: a
+packet that caught up with its predecessor is below zero. The two ends' clocks need not agree.
+A series the far end returned no timestamps for reads as "not measured", not as zero. ICMP,
+DNS, HTTP and TCP targets have no such plots.
 
 ## Compare
 
@@ -131,14 +195,15 @@ smokeng records *how well it was able to measure* alongside *what it measured*, 
 it beside the target name rather than leaving you to infer it. A badge with a count like
 `(3/166)` affected only some intervals in view.
 
-| Badge | Meaning |
-| --- | --- |
-| `userspace TX` / `userspace RX` | Timestamps were taken in userspace, not by the kernel. Scheduler jitter is included in the measurement, so the smoke is wider than the network really is. Expected on macOS; on Linux it means kernel timestamping was unavailable. |
-| `raw socket` | Unprivileged datagram ICMP was unavailable, so smokeng fell back to a raw socket. Accuracy is unaffected; it means the sysctl is not set. See [Getting started](getting-started.md). |
-| `dropped replies` | The kernel receive queue overflowed and discarded replies. **Some of the loss shown is smokeng's, not the network's.** |
-| `clock step` | The wall clock jumped during these intervals. The affected round-trip times cannot be trusted. |
-| `send refused` | The local stack would not transmit — no route, or a local firewall rule. These count as attempted and lost, so an unreachable target draws as loss instead of as an empty graph. |
-| ICMP error | The target or a router answered with an ICMP error rather than an echo reply. The specific error (host unreachable, admin prohibited, TTL exceeded) appears in the hover readout. |
+| Badge | Meaning | What to do |
+| --- | --- | --- |
+| `userspace TX` / `userspace RX` | Timestamps were taken in userspace, not by the kernel. Scheduler jitter is included in the measurement, so the smoke is wider than the network really is. On Linux, `tcp`, `http(s)` and `irtt` targets always carry both badges, because those probes are timed in userspace. On `icmp` and `dns` targets on Linux it means kernel timestamping was unavailable. Expected for everything on macOS. | Expect it on tcp, http(s) and irtt. On icmp or dns, check the host for scheduler load before blaming the path. |
+| `raw socket` | Unprivileged datagram ICMP was unavailable, so smokeng fell back to a raw socket. Accuracy is unaffected; it means the sysctl is not set. See [Getting started](getting-started.md). | Set the sysctl; see Getting started. |
+| `dropped replies` | The kernel receive queue overflowed and discarded replies. **Some of the loss shown is smokeng's, not the network's.** | Do not quote the loss as network loss. Raise the receive buffer or cut the ping rate, then measure again. |
+| `clock step` | The wall clock jumped during these intervals. The affected round-trip times cannot be trusted. | Ignore those intervals' latency. Check NTP on the prober. |
+| `cut short` | The interval ended early, after a restart or a settings change. Its loss figure is not comparable with a whole interval. | Leave it out of any loss figure you quote. |
+| `not sent`, with a reason | The probes never went out: no route, a refused write, an irtt session that never opened. They still draw as loss, so an unreachable target is not an empty graph. The reason says whether the cause was local or the far end. | Read the reason first. A local cause is yours to fix; a refusal from the far end is evidence. |
+| ICMP error | The target or a router answered with an ICMP error rather than an echo reply. The specific error (host unreachable, admin prohibited, TTL exceeded) appears in the hover readout. | Quote the exact error. It names who refused the traffic. |
 
 The point of these badges is that a widened band always has an attributable cause. If
 smokeng degraded its own measurement, it says so, on the graph, next to the data it
