@@ -23,7 +23,8 @@ where.
 
 What one agent cannot tell you: whether the problem is on its side of the path or the
 target's. It also cannot tell you where on the path, since agents run no path discovery
-(see [Limits](#limits)). Several agents narrow it down; they do not replace a traceroute run
+(path-change marks come from the master's local prober only; an agent uploads
+measurements, never paths). Several agents narrow it down; they do not replace a traceroute run
 on the host.
 
 ## Enrolling an agent
@@ -205,14 +206,9 @@ keep the offset well inside that window.
 ## Versions
 
 The agent sends its version in an `X-Agent-Version` header, and the Agents page shows it. The
-master records it and does not check it. No compatibility window is promised between master
-and agent versions beyond the signed-request format (`smokeng-ingest-v1`); run matching
-versions. Downgrades are not supported.
-
-## Limits
-
-- **Agents do no path discovery.** Path-change marks come from the master's local prober
-  only; an agent uploads measurements, never paths.
+master records it and does not check it. Master and agents may be upgraded in either order:
+the master reads batch columns by name, and the agent discards a column the master does not
+know. See [Upgrades](operations.md#upgrades). Downgrades are not supported.
 
 ## How the protocol works
 
@@ -326,7 +322,7 @@ green measurement for a target that is being intercepted; but it already decides
 address that target names, so it could point the target anywhere regardless. The trust it
 gains is over endpoints whose definition it already controls.
 
-See [Configuration](probes.md#internal-certificates).
+See [Probes](probes.md#internal-certificates).
 
 ### irtt HMAC keys the agent needs
 
@@ -341,4 +337,4 @@ smokeng agent run --master https://… --agent-id 3 \
 
 The file has the same shape as the master's — `"host:port" = "secret"` per endpoint — and
 holds only the endpoints this agent measures. Keep it in a vault and render it per host;
-see [Configuration](probes.md#authenticating-to-an-irtt-server).
+see [Probes](probes.md#authenticating-to-an-irtt-server).
