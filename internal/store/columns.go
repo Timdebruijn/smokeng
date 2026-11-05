@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/bits"
 	"slices"
 
@@ -36,6 +37,11 @@ type Column struct {
 	// order statistics (the sample at each mid-rank), each standing for an
 	// equal share of the column's replies. Empty when nothing came back.
 	Quantiles []uint32
+	// Series holds the extra per-packet distributions pooled the same way,
+	// keyed by series name, signed. A name is present when any interval in the
+	// column measured that series — with no values if none had any to give —
+	// and absent when none did, as in Measurement.Series.
+	Series map[string][]int32
 }
 
 // QueryColumns reads one series over [from, to) for a plot n pixel columns
@@ -102,7 +108,11 @@ func (s *SQLite) QueryColumns(ctx context.Context, targetID, agentID, from, to i
 		return nil, nil, err
 	}
 	if p != nil {
-		return nil, p.finish(), nil
+		cols := p.finish()
+		if err := s.poolSeries(ctx, targetID, agentID, from, to, p, cols, read); err != nil {
+			return nil, nil, err
+		}
+		return nil, cols, nil
 	}
 	if err := s.attachSeries(ctx, targetID, agentID, from, to, raw); err != nil {
 		return nil, nil, err
@@ -120,6 +130,8 @@ type pooler struct {
 	idx  uint64
 	pool []uint32
 	out  []Column
+	// outIdx is the column index of each entry of out.
+	outIdx []uint64
 }
 
 func newPooler(from, to int64, n int) *pooler {
@@ -175,6 +187,7 @@ func (p *pooler) close() {
 	}
 	p.cur.Quantiles = quantiles(p.pool, ColumnQuantiles)
 	p.out = append(p.out, *p.cur)
+	p.outIdx = append(p.outIdx, p.idx)
 	p.cur = nil
 	p.pool = p.pool[:0]
 }
@@ -184,15 +197,92 @@ func (p *pooler) finish() []Column {
 	return p.out
 }
 
+// poolSeries pools the extra per-packet series into the columns already built,
+// in a second pass over their own table: they are a separate table, and only
+// some probes write them. The rows walked count against the same bound as the
+// measurements, starting from those already read. A series row whose column
+// holds no measurement belongs to none and is skipped.
+func (s *SQLite) poolSeries(ctx context.Context, targetID, agentID, from, to int64, p *pooler, cols []Column, read int) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ts, series, samples FROM measurement_series
+		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?
+		ORDER BY ts`, targetID, agentID, from, to)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	j := -1 // the entry of cols being filled, or -1 when the row's column has none
+	k := 0  // where the search for the next column resumes: both run forward in time
+	cur := uint64(0)
+	started := false
+	pools := map[string][]int32{}
+	flush := func() {
+		if j < 0 {
+			return
+		}
+		for name, pool := range pools {
+			if cols[j].Series == nil {
+				cols[j].Series = make(map[string][]int32, len(pools))
+			}
+			cols[j].Series[name] = quantiles(pool, ColumnQuantiles)
+		}
+		clear(pools)
+	}
+	for rows.Next() {
+		if read++; read > maxPooledRows {
+			return tooLarge("intervals", maxPooledRows)
+		}
+		var ts int64
+		var name string
+		var blob []byte
+		if err := rows.Scan(&ts, &name, &blob); err != nil {
+			return err
+		}
+		if i := p.column(ts); !started || i != cur {
+			flush()
+			started, cur, j = true, i, -1
+			for k < len(cols) && p.outIdx[k] < i {
+				k++
+			}
+			if k < len(cols) && p.outIdx[k] == i {
+				j = k
+			}
+		}
+		if j < 0 {
+			continue // no measurement in this column
+		}
+		vals, err := enc.DecodeSigned(blob)
+		if err != nil {
+			// As attachSeries: an optional series that will not decode is
+			// absent, not a failed read.
+			log.Printf("store: measurement (%d,%d,%d) series %q will not decode (%v); "+
+				"pooling the column without it", targetID, agentID, ts, name, err)
+			continue
+		}
+		if len(pools[name])+len(vals) > maxSamplesPerRead {
+			return tooLarge("samples in one column", maxSamplesPerRead)
+		}
+		pools[name] = append(pools[name], vals...)
+		if pools[name] == nil {
+			pools[name] = []int32{} // measured, with nothing to give
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	flush()
+	return nil
+}
+
 // quantiles sorts pool and returns it whole when it has at most q values, or q
 // order statistics at the mid-ranks (k+½)/q otherwise. Each is a sample that
 // was measured, not an interpolation between two.
-func quantiles(pool []uint32, q int) []uint32 {
+func quantiles[T uint32 | int32](pool []T, q int) []T {
 	slices.Sort(pool)
 	if len(pool) <= q {
 		return slices.Clone(pool)
 	}
-	out := make([]uint32, q)
+	out := make([]T, q)
 	for k := range out {
 		out[k] = pool[(2*k+1)*len(pool)/(2*q)]
 	}

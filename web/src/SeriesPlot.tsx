@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { SERIES_LABELS, fetchSeries, type SeriesName } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
 import { fmtUs } from './format'
-import { AXIS_W, fmtClock, fmtSigned, inferSpan, rowAt } from './layout'
+import { AXIS_W, fmtClock, fmtSigned, fmtWhen, inferSpan, rowAt } from './layout'
 import { useRenderWorker, useWidth } from './shared'
 
 interface Props {
@@ -43,6 +43,8 @@ export default function SeriesPlot({
     /** 1 where the interval measured this series at all; see ExtraSeries. */
     measured: Uint8Array
     span: number
+    /** A pooled read: where each column ends. */
+    ends?: Float64Array
   } | null>(null)
   const cursorRef = useRef<number | null>(null)
   const [state, setState] = useState<'loading' | 'ok' | 'unmeasured' | 'empty' | 'error'>('loading')
@@ -59,7 +61,13 @@ export default function SeriesPlot({
     let cancelled = false
     const dpr = window.devicePixelRatio || 1
     const dark = matchMedia('(prefers-color-scheme: dark)').matches
-    fetchSeries(targetId, agentId, from, to)
+    // Sized before the fetch, as Plot is: a long window comes back pooled into
+    // exactly the columns the worker draws. Zero means not laid out yet, and
+    // `width` changes when it is.
+    const cssW = wrapRef.current?.clientWidth || width
+    const columns = Math.round(cssW * dpr) - Math.round(AXIS_W * dpr)
+    if (cssW === 0 || columns <= 0) return
+    fetchSeries(targetId, agentId, from, to, columns)
       .then((s) => {
         if (cancelled || !workerRef.current) return
         const ex = s.extra[name]
@@ -93,12 +101,8 @@ export default function SeriesPlot({
           median,
           measured: ex.measured.slice(),
           span: inferSpan(s.ts, n),
+          ends: s.pooled?.ends.slice(),
         }
-        // Measured now rather than when the effect started: at effect time the
-        // element may not have been laid out, and a zero width would render an
-        // empty plot that never recovers.
-        const cssW = wrapRef.current?.clientWidth || width
-        if (cssW === 0) return
         setState('ok')
         workerRef.current.postMessage(
           {
@@ -109,6 +113,7 @@ export default function SeriesPlot({
               received: s.received,
               offsets: ex.offsets,
               values: ex.values,
+              pooled: s.pooled !== undefined,
             },
             view: {
               cssW,
@@ -178,7 +183,7 @@ export default function SeriesPlot({
         return
       }
       const idx = rowAt(rows.ts, t)
-      if (idx < 0 || t > rows.ts[idx] + rows.span) {
+      if (idx < 0 || t >= (rows.ends ? rows.ends[idx] : rows.ts[idx] + rows.span)) {
         setReadout(null)
         return
       }
@@ -195,7 +200,8 @@ export default function SeriesPlot({
       } else {
         reading = 'not measured'
       }
-      setReadout(`${fmtClock(rows.ts[idx])} · ${reading}`)
+      const when = rows.ends ? `${fmtWhen(rows.ts[idx])} – ${fmtWhen(rows.ends[idx])}` : fmtClock(rows.ts[idx])
+      setReadout(`${when} · ${reading}`)
     }
     return subscribeCursor((t) => {
       cursorRef.current = t

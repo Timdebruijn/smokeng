@@ -407,7 +407,13 @@ const POOLED_INTS: readonly (readonly [string, 'int' | 'list', 1 | 2 | 4 | 8, bo
   ['flags', 'int', 1, false],
   ['flagged', 'int', 4, false],
   ['quantiles', 'list', 4, false],
+  ['ipdv_send', 'list', 4, true],
+  ['ipdv_receive', 'list', 4, true],
+  ['server_processing', 'list', 4, true],
 ]
+
+/** The columns of a pooled read that every row has; the extra series may be null. */
+const POOLED_REQUIRED = ['rounds', 'sent', 'received', 'flags', 'flagged', 'quantiles']
 
 /**
  * The column index of each expected integer column, checked for width and
@@ -523,14 +529,14 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
  * A pooled read: one row per pixel column (store.Column). It comes back in the
  * shape of a series, so the renderer and the readouts take it as they take
  * intervals — ts is the column's start, sent and received its sums, and the
- * samples its quantiles — with what only a column has kept in `pooled`. There
- * are no per-interval errors or extra series in it.
+ * samples its quantiles — with what only a column has kept in `pooled`. The
+ * extra series are pooled the same way; there are no per-interval errors.
  */
 function assemblePooled(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
   const iTs = need(cols, 'ts', 'timestamp')
   const iEnd = need(cols, 'ts_end', 'timestamp')
   const at = pinned(cols, POOLED_INTS)
-  noNulls(cols, chunks, [iTs, iEnd, ...POOLED_INTS.map(([name]) => at[name])])
+  noNulls(cols, chunks, [iTs, iEnd, ...POOLED_REQUIRED.map((name) => at[name])])
 
   const ts = new Float64Array(rows)
   const ends = new Float64Array(rows)
@@ -553,12 +559,19 @@ function assemblePooled(cols: ColSpec[], chunks: Chunk[][], rows: number): Serie
     }
   }
   const q = lists(cols, chunks, rows, at.quantiles)
+  // As in a plain read: a series no column carried is left out.
+  const extra: Record<string, ExtraSeries> = {}
+  for (const [name, kind] of POOLED_INTS) {
+    if (kind !== 'list' || name === 'quantiles') continue
+    const e = lists(cols, chunks, rows, at[name])
+    if (e.measured.some((m) => m === 1)) extra[name] = { offsets: e.offsets, values: e.values as Int32Array, measured: e.measured }
+  }
   return {
     ts, sent, received, flags,
     offsets: q.offsets, values: q.values as Uint32Array,
     icmpErrors: new Array(rows).fill(null),
     sendErrors: new Array(rows).fill(null),
-    extra: {},
+    extra,
     pooled: { ends, rounds, flagged },
   }
 }

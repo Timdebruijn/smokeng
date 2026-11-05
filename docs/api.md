@@ -149,12 +149,13 @@ none is absent, not an empty row. Tell the two shapes apart by the fields: only 
 | `flags` | uint8 | Every quality bit any interval in the column carried. |
 | `flagged` | uint32 | How many intervals carried one. |
 | `quantiles` | list of uint32 | The pooled round-trip times in microseconds, sorted ascending: all of them when there are at most 256, otherwise 256 order statistics at evenly spaced ranks, each standing for an equal share of the replies. Every value is a measured sample. |
+| `ipdv_send`, `ipdv_receive`, `server_processing` | list of int32, nullable | The irtt series, pooled the same way. Null where no interval in the column measured the series; empty where intervals measured it with nothing to give. |
 
 Nothing is averaged and nothing is stored: the column is pooled from the stored intervals when
-it is read. Per-interval details (`icmp_error`, `send_error`, the irtt series) are not in a
-pooled read. A read is refused with `400` when the window holds more than 10 million intervals
-(thirty days of a one-second series), or one column would pool more than 20 million samples; ask
-for a shorter window, or more columns.
+it is read. Per-interval details (`icmp_error`, `send_error`) are not in a pooled read. A read is
+refused with `400` when it would walk more than 10 million rows — intervals plus their irtt series
+rows; thirty days of a one-second series — or one column would pool more than 20 million samples;
+ask for a shorter window, or more columns.
 
 ### Targets
 
