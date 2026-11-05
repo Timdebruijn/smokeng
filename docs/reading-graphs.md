@@ -89,9 +89,8 @@ beside "the smoke widened at 14:03" without switching views. Hovering names the 
 force at that instant.
 
 A mark says the hop list differed. It does not say the new path is worse, and a hop that
-stopped answering traceroute can look like a change. Only the master's own prober records
-paths. A target seen from a remote agent has no marks, because remote agents do not run
-traceroute.
+stopped answering traceroute can look like a change. Each vantage point traces from where it
+stands, so a target seen from a remote agent shows that agent's path, not the master's.
 
 Hops are found with TTL-limited probes, reading each router's address from the ICMP
 time-exceeded reply on the socket error queue. That needs Linux; on other platforms no

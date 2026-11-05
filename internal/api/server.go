@@ -54,6 +54,7 @@ type Store interface {
 	ListAgents(ctx context.Context) ([]store.AgentRecord, error)
 	TouchAgent(ctx context.Context, id, at int64, version string) error
 	PathChanges(ctx context.Context, targetID, agentID, from, to int64) ([]store.PathChange, error)
+	IngestPaths(ctx context.Context, agentID int64, cs []store.PathChange) (int, error)
 	MintEnrolmentToken(ctx context.Context, name string, ttl time.Duration, now time.Time) (store.EnrolmentToken, error)
 	RedeemEnrolmentToken(ctx context.Context, tok string, pub ed25519.PublicKey, now time.Time) (store.AgentRecord, error)
 	ListEnrolmentTokens(ctx context.Context) ([]store.EnrolmentToken, error)
@@ -232,6 +233,7 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	// they are deliberately outside the session middleware.
 	rt.handle(classAgentSigned, "POST /api/v1/ingest", s.handleIngest)
 	rt.handle(classAgentSigned, "GET /api/v1/agent/targets", s.handleAgentTargets)
+	rt.handle(classAgentSigned, "POST /api/v1/agent/paths", s.handleAgentPaths)
 	s.routes = rt
 	mux.Handle("/", http.FileServerFS(webFS))
 	return &handler{Handler: s.protect(mux), srv: s}

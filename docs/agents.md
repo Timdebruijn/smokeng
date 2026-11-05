@@ -22,10 +22,9 @@ where.
   plots are comparable.
 
 What one agent cannot tell you: whether the problem is on its side of the path or the
-target's. It also cannot tell you where on the path, since agents run no path discovery
-(path-change marks come from the master's local prober only; an agent uploads
-measurements, never paths). Several agents narrow it down; they do not replace a traceroute run
-on the host.
+target's. Path-change marks help: an agent discovers the path from where it stands, as the
+master's prober does, and its marks show on its own series. Several agents narrow it down;
+they do not replace a traceroute run on the host when you need per-hop latency.
 
 ## Enrolling an agent
 
@@ -210,14 +209,24 @@ keep the offset well inside that window.
 The agent sends its version in an `X-Agent-Version` header, and the Agents page shows it. The
 master records it and does not check it. Master and agents may be upgraded in either order:
 the master reads batch columns by name, and the agent discards a column the master does not
-know. See [Upgrades](operations.md#compatibility-between-master-and-agents). Downgrades are not supported.
+know. Path changes need a master of v0.26.0 or later: an older one does not ask for them, and
+an agent then discovers none. See [Upgrades](operations.md#compatibility-between-master-and-agents).
+Downgrades are not supported.
 
 ## How the protocol works
 
-Two endpoints, both Ed25519-signed:
+Three endpoints, all Ed25519-signed:
 
 - `GET /api/v1/agent/targets` — the agent's assignments
 - `POST /api/v1/ingest` — a batch of measurements as an Arrow IPC stream
+- `POST /api/v1/agent/paths` — path changes, as JSON:
+  `{"paths": [{"target_id": 7, "ts": 1793900000, "hops": ["10.0.0.1", "*", "192.0.2.9"]}]}`
+
+Path changes follow the measurement batch's rules below: first write wins, rows for targets
+not assigned to the agent or timestamped in the future are dropped, and so is a hop list that
+is empty, longer than 64, or holds anything but addresses and `*`. The agent sends a change
+only after it recorded one, and keeps it buffered while the master is unreachable or has no
+such route.
 
 Every request carries four headers:
 

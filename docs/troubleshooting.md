@@ -187,14 +187,20 @@ Detail: [Agents](agents.md).
 
 ## A remote agent shows no path-change marks
 
-Expected. Only the master's local prober records paths. An agent discovers paths at the
-target's `trace_interval_s` as the master would, but keeps them in its own buffer and does not
-send them. On the master, path discovery also needs `trace_interval_s` above zero
-and a platform that supports it (the log says
-`probe: path discovery unavailable on this platform; no routes will be recorded`).
+Check, in order:
 
-To see paths to a target, measure it from the master too: add `local` to the target's `agents`
-value. Detail: [Reading graphs](reading-graphs.md#path-change-marks).
+1. **Versions.** The master has to be v0.26.0 or later to ask for paths and accept them; the
+   agent too. An agent whose master has no route logs
+   `agent: the master has no route for path changes` and keeps them buffered.
+2. **`trace_interval_s`** above zero for the target, as on the master.
+3. **The agent's platform and sysctl.** Path discovery is Linux only and needs the same
+   `ping_group_range` as ICMP; elsewhere the agent logs
+   `probe: path discovery unavailable on this platform; no routes will be recorded`.
+4. **Time.** The first traceroute runs a few seconds after the target is assigned, and an agent
+   sends its buffer every 15 seconds. The first path recorded is a mark too; after that, a mark
+   means the hop list changed. The hover readout names the route in force.
+
+Detail: [Reading graphs](reading-graphs.md#path-change-marks).
 
 ## Login fails, or 403 behind a reverse proxy
 

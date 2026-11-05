@@ -406,6 +406,18 @@ UPDATE targets SET graph_series = 'all' WHERE parent_id IS NULL AND graph_series
 	// existing rule keeps what it sent before, warning.
 	`ALTER TABLE alert_rules ADD COLUMN severity TEXT NOT NULL DEFAULT 'warning'
   CHECK (severity IN ('critical','warning','info'))`,
+	// v24: an agent sends the path changes it discovers (§9a), so its buffer
+	// has to know which it has sent. On an agent, what is already here was
+	// traced before v0.26.0, at its own default rather than as the master
+	// asked; that history is not shipped after the fact. The latest path per
+	// target is, though: the agent compares each new traceroute with it, so
+	// marked as sent it would hold back the current route until the route
+	// changed, and the master would show none for that vantage point. (On a
+	// master the rows are its own and nothing reads the column.)
+	`ALTER TABLE paths ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
+UPDATE paths SET submitted = 1
+  WHERE ts < (SELECT MAX(p.ts) FROM paths p WHERE p.target_id = paths.target_id AND p.agent_id = paths.agent_id);
+CREATE INDEX paths_pending ON paths (ts) WHERE submitted = 0;`,
 }
 
 func (s *SQLite) migrate() error {

@@ -173,8 +173,9 @@ change when the smoke changed?
   Load balancing (ECMP) that sends consecutive echoes through different routers can do the same
   without any routing change. Many routers rate-limit time-exceeded replies. Be suspicious of
   a lone mark; look for it to repeat or to persist.
-- **Linux only**, and only the master's own prober records paths; remote agents do not run
-  traceroute. Elsewhere no path is recorded, rather than a wrong one.
+- **Linux only**, on the master's prober and on remote agents alike; each vantage point records
+  its own path. Elsewhere no path is recorded, rather than a wrong one. An agent needs a master
+  of v0.26.0 or later to send them.
 - `dscp` and `packet_size` do not apply.
 
 ## Which settings apply

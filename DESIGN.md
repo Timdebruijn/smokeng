@@ -914,8 +914,8 @@ and the agent's mirror, and the agent's resolved `probe.TargetSpec` must equal t
 master's field for field, with every field of the spec non-zero on some target, so a
 setting added later cannot pass by being empty on both sides. Settings that do not shape
 a measurement (`retention_s`, `graph_series`) are master-side and stay there. What the
-prober produces has to travel back too: measurements do, in the Arrow batch; the path
-changes an agent discovers are still kept in its buffer and not sent (§9a).
+prober produces travels back the same way: measurements in the Arrow batch, path changes
+on their own route (§9a).
 
 ## 9a. Path correlation (v0.5)
 
@@ -929,6 +929,15 @@ all. Everything else a traceroute could offer is a different product.
 **Scope, stated as refusals.** No standalone traceroute view, no per-hop latency graphs,
 no path-quality scoring, no MTR. A route is recorded, its changes are marked on the
 timeline, and the smoke is left to speak for itself.
+
+**From every vantage point (v0.26.0).** A remote agent discovers paths as the master's
+prober does (the parity rule, §9) and sends the changes on a route of their own,
+`POST /api/v1/agent/paths`, as signed JSON; the master stores them under the agent's id,
+so each series carries its own marks. A separate message rather than a column in the
+measurement batch: changes are rare and small, and a second message type would widen
+what the batch's frame screen accepts. The rules are the batch's — assigned targets only,
+nothing from the future, a bad row dropped, first write wins. The agent keeps the last
+path it sent per target, because its change detection compares each traceroute with it.
 
 **How.** TTL-limited echo requests on a dedicated short-lived socket, with the hop
 address read from the ICMP time-exceeded reply. This is the machinery already built for

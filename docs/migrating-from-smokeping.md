@@ -25,7 +25,7 @@ want and what SmokePing made awkward.
 | Graph density | One data point per step. Older data is consolidated into coarser RRA rows. | One column per interval, kept as measured. A 60 s step gives five columns where SmokePing gave one. |
 | Median | Median of that step's pings, drawn with percentile bands around it | Median of every sample pooled into the pixel column, never a median of per-interval medians. Zoomed out, a column pools several intervals. |
 | Loss | The colour of the median line | A separate `loss` rail, plus replies received out of sent in the hover readout |
-| Path | Not part of the graph | Dashed marks where the hop list changed, local prober only |
+| Path | Not part of the graph | Dashed marks where the hop list changed, from each vantage point |
 
 The importer carries `step` and `pings` over where your file sets them, so those targets keep
 SmokePing's timing until you change it. Where it does not, the targets get the smokeng

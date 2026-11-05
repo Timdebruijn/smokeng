@@ -85,6 +85,7 @@ The class says who may call a route:
 | `POST /api/v1/agent/enrol` | signed | Agent enrolment. |
 | `POST /api/v1/ingest` | signed | Agent uploads measurements. |
 | `GET /api/v1/agent/targets` | signed | Agent fetches its assignments. |
+| `POST /api/v1/agent/paths` | signed | Agent submits path changes (JSON); see [Agents](agents.md#how-the-protocol-works). |
 
 The last three rows are the agent protocol, described in [agents.md](agents.md). With OIDC on,
 `/auth/login`, `/auth/callback` and `/auth/logout` exist as well.
