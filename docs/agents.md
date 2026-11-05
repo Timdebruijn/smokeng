@@ -208,7 +208,7 @@ keep the offset well inside that window.
 The agent sends its version in an `X-Agent-Version` header, and the Agents page shows it. The
 master records it and does not check it. Master and agents may be upgraded in either order:
 the master reads batch columns by name, and the agent discards a column the master does not
-know. See [Upgrades](operations.md#upgrades). Downgrades are not supported.
+know. See [Upgrades](operations.md#compatibility-between-master-and-agents). Downgrades are not supported.
 
 ## How the protocol works
 
