@@ -41,9 +41,11 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
+          # Fails open: if the diff cannot be read, everything runs.
           code=true
           if [ "$GITHUB_EVENT_NAME" = pull_request ] &&
-             ! git diff --name-only "$BASE"...HEAD | grep -qvE '^docs/|\.md$'; then
+             files=$(git diff --name-only "$BASE"...HEAD) && [ -n "$files" ] &&
+             [ "$(printf '%s\n' "$files" | grep -cvE '^docs/|\.md$')" = 0 ]; then
             code=false
           fi
           echo "code=$code" | tee -a "$GITHUB_OUTPUT"
