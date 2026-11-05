@@ -1,60 +1,158 @@
 # Remote agents
 
-A single vantage point tells you that a target is slow. Two tell you *where* it is slow.
-An agent is the same binary in a different mode: it pulls its assignments from the master,
-probes them itself, and pushes the measurements back.
+For anyone adding a second vantage point: where to put agents, how to enrol and run them, and
+what they cannot do.
 
-Each agent's measurements are stored as a separate series, so a target probed from three
-places gives you three plots, not one blended average.
+An agent is the same binary in a different mode: it pulls its assignments from the master,
+probes them itself, and pushes the measurements back. Each agent's measurements are stored
+as a separate series, so a target probed from three places gives you three plots, not one
+blended average.
+
+## Where to put agents
+
+Use at least two vantage points. One vantage point tells you a target is slow; two tell you
+where.
+
+- **An agent at home or in the office, and one in a datacenter.** If both see the problem,
+  it is probably the target or its network. If only the first does, it is your own link.
+  That is the difference between "my link" and "their network".
+- Put an agent on the far side of anything you suspect: a different ISP, a different cloud
+  region, the other end of a VPN.
+- Assign the same targets to each (see [Assigning targets](#assigning-targets)) so the
+  plots are comparable.
+
+What one agent cannot tell you: whether the problem is on its side of the path or the
+target's. It also cannot tell you where on the path, since agents run no path discovery
+(path-change marks come from the master's local prober only; an agent uploads
+measurements, never paths). Several agents narrow it down; they do not replace a traceroute run
+on the host.
 
 ## Enrolling an agent
 
-The short way, from the UI. Under **Agents**, choose a name and mint an
-enrolment token. It is shown once — it is stored only as a hash, so it cannot be
-shown again — together with the command to run on the agent host:
+Enrolment needs an admin session in the UI (or the equivalent API calls, see
+[Enrolment at scale](#enrolment-at-scale)).
 
-```bash
-smokeng agent run --master https://smokeng.example.org --token smk_...
-```
+1. In the UI, open **Agents** and choose a name.
+2. Mint a token. It is shown once and stored only as a hash. It is valid for one hour by
+   default and 24 hours at most, and it works once.
+3. Run the command shown on the agent host:
 
-The address in that command is the master's own `--external-url` when one is
-set, and the address you opened the page on otherwise. Set it whenever a proxy
-sits in front: an admin reaching the master directly, past the proxy everyone
-else uses, would otherwise be handed a command naming an address no agent can
-resolve. The UI says which address it used when the two differ.
+   ```bash
+   smokeng agent run --master https://smokeng.example.org --token smk_...
+   ```
 
-The agent generates its keypair if it has none, enrols itself, and records the
-id it was given next to its key. A unit file may keep carrying `--token`: the
-recorded id wins, so a restart does not try to spend a token that is already
-spent.
+   The agent generates its keypair if it has none, enrols itself, and records the id it was
+   given in `<key path>.id`. A unit file may keep carrying `--token`: the recorded id wins,
+   so a restart does not try to spend a spent token.
+4. Add the agent's name to a target's `agents` setting.
 
-Tokens are single use and short lived — one hour by default, 24 hours at most. A
-reusable enrolment token is precisely the credential that ends up in a wiki.
-Provisioning twenty agents means minting twenty tokens, which a loop does fine.
-The token carries the name, so an agent cannot decide what to call itself:
-naming is an administrative act, and an agent that named itself could claim a
-name your targets are already assigned to.
+The address in the command is the master's `--external-url` when set, and the address you
+opened the page on otherwise. Set `--external-url` whenever a proxy sits in front, or an
+admin who reached the master directly is handed an address no agent can resolve.
 
-The token is the only credential on that request, which is why the agent refuses
-a plain-HTTP master unless it is on loopback or you pass `--insecure-allow-http`.
-That refusal is not a preference about transports.
+The token carries the name, so an agent cannot name itself: an agent that named itself could
+claim a name your targets are already assigned to.
+
+The token is the only credential on the enrolment request, so the agent refuses a plain-HTTP
+master unless it is on loopback or you pass `--insecure-allow-http`.
 
 ### Without a token
 
-If you would rather not have a token in flight at all, the key can be carried by
-hand. On the agent host, run it once with no token to print the public key:
+To keep a token out of flight entirely, carry the key by hand. On the agent host, print the
+public key without starting anything:
 
 ```bash
-smokeng agent run --master https://smokeng.example.org --agent-id 0
+smokeng agent key --key /var/lib/smokeng-agent/probe.key
 ```
 
-Then, on the master:
+On the master:
 
 ```bash
-smokeng agent add --db smokeng.db --name ams-01 --pubkey <base64 from above>
+smokeng agent add --db /var/lib/smokeng/smokeng.db --name ams-01 --pubkey <base64 from above>
 ```
 
-and rerun the agent with the id that prints.
+It prints the new id. Start the agent with `--agent-id <id>` instead of `--token`.
+
+## Running an agent as a service
+
+The defaults of `--key` (`probe.key`) and `--db` (`smokeng-agent.db`) are relative to the
+working directory. Under `ProtectSystem=strict` that directory is read-only and the agent
+fails to start. Pass absolute paths under a state directory.
+
+The ICMP prober needs the same `ping_group_range` setup as the master: see
+[Getting started](getting-started.md). The service user's group must be in range.
+
+```ini
+# /etc/systemd/system/smokeng-agent.service
+[Unit]
+Description=smokeng agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=smokeng
+Group=smokeng
+ExecStart=/usr/local/bin/smokeng agent run \
+  --master https://smokeng.example.org \
+  --token smk_... \
+  --key /var/lib/smokeng-agent/probe.key \
+  --db /var/lib/smokeng-agent/agent.db
+Restart=always
+RestartSec=5
+StateDirectory=smokeng-agent
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RemoveIPC=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+```
+
+This is the master unit from [Operations](operations.md) with a different command and state
+directory; the hardening notes there apply, including the `CAP_NET_RAW` fallback. The
+`smokeng` user must exist and the sysctl must be set before the first start. Add
+`--irtt-hmac-keys` and `--tls-ca-file` as needed.
+
+The token in `ExecStart` is spent on the first start; later starts use the recorded id. It
+expires within 24 hours, so remove the `--token` line after the agent has reported.
+
+## Enrolment at scale
+
+The UI uses three routes:
+
+- `POST /api/v1/agent-tokens` with `{"name": "...", "ttl_s": 3600}` mints a token; the
+  response includes `token` once. `ttl_s` is optional and capped at 86400.
+- `GET /api/v1/agent-tokens` lists tokens (never the secret).
+- `DELETE /api/v1/agent-tokens/{id}` revokes one.
+
+These routes require an admin browser session. There are no API tokens, so a script cannot
+authenticate on its own; see [API](api.md). To enrol a few agents, the realistic loop is the
+UI: mint a token per agent, paste the command, repeat. If you do script it, reuse an admin
+session cookie from a browser, and treat that cookie as the admin credential it is.
+
+The Ansible role installs only the master and, optionally, the local prober. It does not
+install or enrol remote agents. For a handful of hosts, the `smokeng agent key` plus
+`smokeng agent add` route is the one that fits a provisioning tool: both are idempotent.
 
 ## Assigning targets
 
@@ -75,12 +173,9 @@ without a restart.
 
 ## Managing agents
 
-Each agent reports what version it is running when it submits, and the Agents
-page shows it. A fleet upgrades one host at a time, and that column is how you
-see which agents still predate a fix to the measurement path — not a cosmetic
-question when the fix was to the timestamps themselves. The version travels in
-an unsigned header on a signed request: it says what an already-authenticated
-agent claims to be, and is not something to make a trust decision on.
+The Agents page shows the version each agent last reported. Use it to see which hosts still
+predate a fix to the measurement path. The version travels in an unsigned header: it is what
+an authenticated agent claims, not something to base a trust decision on.
 
 ```bash
 smokeng agent list --db smokeng.db
@@ -101,6 +196,19 @@ the history stays. This is the same reason targets are disabled rather than dele
 
 Renaming an agent rewrites every `agents` list that referred to it, in one transaction. A
 rename that left them behind would turn each of those targets into one measured by nobody.
+
+## Clock
+
+Agents sign every request with a timestamp, and the master refuses one more than 5 minutes
+from its own clock. Run NTP on every agent host and
+keep the offset well inside that window.
+
+## Versions
+
+The agent sends its version in an `X-Agent-Version` header, and the Agents page shows it. The
+master records it and does not check it. Master and agents may be upgraded in either order:
+the master reads batch columns by name, and the agent discards a column the master does not
+know. See [Upgrades](operations.md#compatibility-between-master-and-agents). Downgrades are not supported.
 
 ## How the protocol works
 
@@ -171,7 +279,7 @@ unless you pass `--insecure-allow-http`.
 
 A master on a **literal loopback address** is the one exception and needs no flag: those
 packets never reach a network interface, so there is nothing for TLS to protect them from.
-That is the [prober-as-its-own-process](operations.md#running-the-prober-as-its-own-process)
+That is the [prober-as-its-own-process](operations.md#running-the-prober-separately)
 arrangement. A hostname that merely resolves to loopback does not qualify — the exemption
 rests on the packets provably not leaving the machine.
 
@@ -214,7 +322,7 @@ green measurement for a target that is being intercepted; but it already decides
 address that target names, so it could point the target anywhere regardless. The trust it
 gains is over endpoints whose definition it already controls.
 
-See [Configuration](configuration.md#internal-certificates).
+See [Probes](probes.md#internal-certificates).
 
 ### irtt HMAC keys the agent needs
 
@@ -229,4 +337,4 @@ smokeng agent run --master https://… --agent-id 3 \
 
 The file has the same shape as the master's — `"host:port" = "secret"` per endpoint — and
 holds only the endpoints this agent measures. Keep it in a vault and render it per host;
-see [Configuration](configuration.md#authenticating-to-an-irtt-server).
+see [Probes](probes.md#authenticating-to-an-irtt-server).
