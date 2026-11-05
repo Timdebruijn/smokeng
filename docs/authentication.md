@@ -133,7 +133,7 @@ user may reach; it does not decide who may sign in.
 
 After a successful callback, smokeng sets a `smokeng_session` cookie: HMAC-signed,
 `HttpOnly`, `SameSite=Lax`, and `Secure` unless you are on plain HTTP (see
-[Behind a proxy](operations.md#behind-a-proxy)). It holds the subject, email, display name,
+[Behind a proxy](operations.md#reverse-proxy-and-tls)). It holds the subject, email, display name,
 role, groups and expiry. It holds no provider tokens, and there is no server-side session
 store.
 
@@ -144,7 +144,7 @@ That has consequences for your threat model:
 - **Group membership is fixed at login.** Removing someone from a group at the IdP, or
   disabling their account, takes effect when their session expires, not before.
 - **Rotating `session_key` logs everyone out**, and is the only way to cut sessions short.
-  The recipe is under [Backups](operations.md#backups).
+  The recipe is under [Backups](operations.md#backup-and-restore).
 
 ## Prometheus scraping
 
