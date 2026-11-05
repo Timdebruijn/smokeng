@@ -164,6 +164,15 @@ func (e *Engine) reload(ctx context.Context) {
 	}
 }
 
+// Specs is what the local prober would measure from st, and how: the targets
+// assigned to "local", with every setting resolved. It is loadSpecs without an
+// engine, so a test can hold an agent's view of a target against the master's
+// (the parity rule, DESIGN.md §9). A target that cannot be measured as
+// configured is left out, and logged, as the engine does.
+func Specs(ctx context.Context, st store.Store) (map[int64]TargetSpec, error) {
+	return (&Engine{st: st, warned: map[int64]string{}}).loadSpecs(ctx)
+}
+
 func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 	targets, err := e.st.ListTargets(ctx)
 	if err != nil {

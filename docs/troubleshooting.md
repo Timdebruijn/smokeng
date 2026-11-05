@@ -187,9 +187,9 @@ Detail: [Agents](agents.md).
 
 ## A remote agent shows no path-change marks
 
-Expected. Only the master's local prober discovers and records paths. The assignments an agent
-receives carry no `trace_interval_s`, so an agent never runs a traceroute, and paths are stored
-under the local agent id. On the master, path discovery also needs `trace_interval_s` above zero
+Expected. Only the master's local prober records paths. An agent discovers paths at the
+target's `trace_interval_s` as the master would, but keeps them in its own buffer and does not
+send them. On the master, path discovery also needs `trace_interval_s` above zero
 and a platform that supports it (the log says
 `probe: path discovery unavailable on this platform; no routes will be recorded`).
 

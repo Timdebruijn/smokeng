@@ -901,6 +901,22 @@ receive pure data — their assigned targets with resolved effective settings, n
 else, never code, pull-only, master remains the single source of truth. Decision
 (2026-08-29): exactly this is allowed; the ban stands for everything beyond it.
 
+**Parity (decided 2026-11-05).** An agent can do everything the master's own prober can,
+and measures a target exactly as that prober would. A remote vantage point that measures
+less, or differently under the same name, is a second-class one, and a reader cannot tell
+from the graph which kind they are looking at. So every setting that shapes a measurement
+travels in the assignment, resolved, and the agent sets each one explicitly rather than
+leaving any to its own defaults. That last part is not a formality: `trace_interval_s` was
+missing from the assignments, and every agent traced at its own root's default of 300 s
+whatever the tree said. A test pins the rule (`internal/agent/parity_test.go`): targets
+with every measuring setting away from its default go through the real assignment route
+and the agent's mirror, and the agent's resolved `probe.TargetSpec` must equal the
+master's field for field, with every field of the spec non-zero on some target, so a
+setting added later cannot pass by being empty on both sides. Settings that do not shape
+a measurement (`retention_s`, `graph_series`) are master-side and stay there. What the
+prober produces has to travel back too: measurements do, in the Arrow batch; the path
+changes an agent discovers are still kept in its buffer and not sent (§9a).
+
 ## 9a. Path correlation (v0.5)
 
 Designed 2026-08-29; the roadmap named it, nothing specified it.

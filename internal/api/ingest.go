@@ -195,6 +195,10 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 			"dns_rr_type":     res.DNSRRType.Effective,
 			"http_path":       res.HTTPPath.Effective,
 			"tls_skip_verify": res.TLSSkipVerify.Effective,
+			// How often to discover the path, as the master's own prober would.
+			// Without it an agent traced at its own root's default whatever the
+			// tree said (the parity rule, DESIGN.md §9).
+			"trace_interval_s": res.TraceIntervalS.Effective,
 		})
 	}
 	// The CAs travel with the assignments rather than on an endpoint of their
