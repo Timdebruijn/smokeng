@@ -104,8 +104,9 @@ prober), `from` and `to`. `availability` takes the same, plus `down_threshold`.
 | `from`, `to` | `to` = now, `from` = `to` minus 3600 | Unix seconds. |
 | `down_threshold` | `100` | Availability only: the loss percent at which an interval counts as down. |
 
-One `measurements` request returns at most about 200,000 intervals. A longer range gets `400`;
-ask for shorter windows and join them.
+A `measurements` request is refused with `400` when the window could hold more than 200,000
+intervals. The check counts one interval per second whatever the target's interval, so a window
+over about 55 hours is refused even for a 60 s series. Ask for shorter windows and join them.
 
 ## Shapes
 

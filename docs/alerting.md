@@ -69,7 +69,7 @@ noise.
 | --- | --- | --- | --- |
 | `metric` | string | required | One of the metrics above |
 | `op` | string | required | `>` or `<`. `shape` and `bimodality` accept only `>` |
-| `threshold` | float | required | The value to compare against, in the metric's unit |
+| `threshold` | float | required | The value to compare against. For `shape` and `bimodality` in `auto` mode it is the z cutoff, see below |
 | `for_intervals` | int | `3` | Consecutive breaching intervals before firing |
 | `clear_intervals` | int | `3` | Consecutive non-breaching intervals before clearing |
 | `disabled` | bool | `false` | Keep the rule but stop evaluating it (`enabled` in the API) |
@@ -104,7 +104,8 @@ Each shape rule picks how strict it is:
   variability (a robust z-score: median and MAD, so one past spike does not inflate the
   scale and mask the next). A jittery Wi-Fi link and a stable fibre have very different
   normal wobbles, and the same absolute distance means different things on each — auto
-  handles that without a per-target threshold. It fires above z 4.
+  handles that without a per-target threshold. `threshold` is the z cutoff. The UI form
+  suggests 4 for `shape` and 0.6 for `bimodality`; the backend has no built-in default.
 - **tunable** compares the raw measure to a threshold you set: milliseconds of movement
   for `shape`, or the coefficient itself for `bimodality`.
 
@@ -135,18 +136,19 @@ the reference distribution and the current one drawn together — so you can see
 rather than take the number on faith. It is the same commitment the graphs make.
 
 Shape rules are ordinary rules in every other respect: they inherit down the tree, take
-`for_intervals`/`clear_intervals` hysteresis, can be acknowledged and silenced, and deliver over the same
-webhook. They stay quiet while warming up after a restart, and when a flat history gives
-them no scale to judge by — a monitoring tool that cries wolf gets ignored, so these err
+`for_intervals`/`clear_intervals` hysteresis, can be acknowledged and silenced, and deliver
+over the same webhook. They stay quiet while warming up after a restart, and when a flat
+history gives them no scale to judge by — a monitoring tool that cries wolf gets ignored, so these err
 towards saying nothing.
 
 ## Hysteresis, and why gaps reset it
 
 The consecutive-interval counter resets when smokeng cannot trust the input: a gap in the
 data of more than two intervals, or an interval flagged as untrustworthy (a clock step, a
-receive-queue overflow). A measurement smokeng knows is wrong must not fire an alert, and
-measurements flagged as smokeng's own fault are excluded from the metrics they would
-distort.
+receive-queue overflow). Only two flags change what a rule reads: a socket overflow
+is left out of loss, and a clock step is left out of the round-trip metrics. A probe that
+failed to send (for example local file-descriptor exhaustion) still counts as sent and lost,
+so it can fire a loss alert.
 
 Alert state is persisted, so an alert that has been firing for an hour does not resolve
 and re-fire every time the service restarts.
@@ -174,7 +176,8 @@ smokeng serve --alert-webhook https://alertmanager.example.org/api/v2/alerts
 ```
 
 The fields are listed in [api.md](api.md#webhook-payload). The payload is a JSON array of
-alert objects, so anything that speaks Alertmanager — Alertmanager itself, Grafana OnCall, ntfy shims, a small script — takes it unmodified.
+alert objects, so anything that speaks Alertmanager — Alertmanager itself, Grafana OnCall,
+ntfy shims, a small script — takes it unmodified.
 Resolved alerts are sent as well, so receivers that track state stay in sync, and firing
 alerts are repeated — once a minute by default, `--alert-repeat` sets the interval —
 because Alertmanager expires an alert it stops hearing about.
