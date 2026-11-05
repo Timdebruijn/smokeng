@@ -283,7 +283,7 @@ unless you pass `--insecure-allow-http`.
 
 A master on a **literal loopback address** is the one exception and needs no flag: those
 packets never reach a network interface, so there is nothing for TLS to protect them from.
-That is the [prober-as-its-own-process](operations.md#running-the-prober-as-its-own-process)
+That is the [prober-as-its-own-process](operations.md#running-the-prober-separately)
 arrangement. A hostname that merely resolves to loopback does not qualify — the exemption
 rests on the packets provably not leaving the machine.
 
@@ -326,7 +326,7 @@ green measurement for a target that is being intercepted; but it already decides
 address that target names, so it could point the target anywhere regardless. The trust it
 gains is over endpoints whose definition it already controls.
 
-See [Configuration](configuration.md#internal-certificates).
+See [Configuration](probes.md#internal-certificates).
 
 ### irtt HMAC keys the agent needs
 
@@ -341,4 +341,4 @@ smokeng agent run --master https://… --agent-id 3 \
 
 The file has the same shape as the master's — `"host:port" = "secret"` per endpoint — and
 holds only the endpoints this agent measures. Keep it in a vault and render it per host;
-see [Configuration](configuration.md#authenticating-to-an-irtt-server).
+see [Configuration](probes.md#authenticating-to-an-irtt-server).
