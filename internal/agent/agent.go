@@ -164,6 +164,9 @@ type assignment struct {
 	DNSRRType     string `json:"dns_rr_type"`
 	HTTPPath      string `json:"http_path"`
 	TLSSkipVerify bool   `json:"tls_skip_verify"`
+	// TraceIntervalS is absent from a master older than v0.25.0, and reads as
+	// 0 then: no path discovery, since there would be nowhere to send a path.
+	TraceIntervalS int `json:"trace_interval_s"`
 }
 
 // pull fetches the agent's assignments and mirrors them into the local store,
@@ -246,6 +249,10 @@ func (a *Agent) mirror(ctx context.Context, targets []assignment) error {
 				// would make the agent's own root default decide whether a
 				// certificate is checked.
 				TLSSkipVerify: &t.TLSSkipVerify,
+				// Set unconditionally, as TLSSkipVerify is: 0 is a real value
+				// (off), and leaving it unset let the agent's own root default
+				// of 300 s decide, so every agent traced whatever the master said.
+				TraceIntervalS: &t.TraceIntervalS,
 			},
 		}
 		if err := a.st.UpsertTarget(ctx, &node); err != nil {
