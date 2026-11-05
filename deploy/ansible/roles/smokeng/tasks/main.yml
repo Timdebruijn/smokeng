@@ -6,6 +6,19 @@
       This role targets Debian-family hosts with systemd. smokeng itself is a
       static binary and runs anywhere; only this role is opinionated.
 
+- name: Check the mode and, for an agent, where its master is
+  ansible.builtin.assert:
+    that:
+      - smokeng_mode in ['master', 'agent']
+      - smokeng_mode == 'master' or smokeng_master_host in hostvars
+      - smokeng_mode == 'master'
+        or smokeng_prober_master_url is match('^(https://|http://(127\\.0\\.0\\.1|\\[::1\\])(:|/|$))')
+    fail_msg: >-
+      smokeng_mode is "master" or "agent". An agent needs smokeng_master_host,
+      the master's inventory name, and an https smokeng_master_url (which
+      defaults to the master's smokeng_external_url): the agent refuses plain
+      HTTP to anything but a literal loopback address.
+
 - name: Make the choice of who administers explicit
   ansible.builtin.assert:
     that:
@@ -18,6 +31,7 @@
       smokeng_oidc_admin_value, or set smokeng_oidc_everyone_is_admin if every
       user your identity provider authenticates should administer smokeng.
       Not both.
+  when: smokeng_mode == 'master'
 
 - name: Refuse to expose an unauthenticated instance by accident
   ansible.builtin.assert:
@@ -29,6 +43,7 @@
       smokeng_listen is not on loopback and neither OIDC nor
       smokeng_allow_unauthenticated is set. Anyone who can reach that address
       would be able to edit your targets.
+  when: smokeng_mode == 'master'
 
 # Ansible hands its temp module file to the unprivileged user with an ACL, and
 # the Debian cloud image ships without setfacl.
@@ -153,6 +168,7 @@
     group: "{{ smokeng_group }}"
     mode: "0600"
   when:
+    - smokeng_mode == 'master'
     - smokeng_oidc_issuer | length > 0
     - smokeng_oidc_client_secret | length > 0
   no_log: true
@@ -168,6 +184,7 @@
     group: "{{ smokeng_group }}"
     mode: "0600"
   when:
+    - smokeng_mode == 'master'
     - smokeng_alert_webhook | length > 0
     - _smokeng_new_flags | bool
   no_log: true
@@ -187,6 +204,7 @@
     owner: root
     group: root
     mode: "0644"
+  when: smokeng_mode == 'master'
   notify:
     - Reload systemd
     - Restart smokeng
@@ -199,6 +217,7 @@
     name: smokeng
     enabled: true
     state: started
+  when: smokeng_mode == 'master'
 
 - name: Ship the target tree
   ansible.builtin.copy:
@@ -207,7 +226,7 @@
     owner: "{{ smokeng_user }}"
     group: "{{ smokeng_group }}"
     mode: "0640"
-  when: smokeng_targets_file | length > 0
+  when: smokeng_mode == 'master' and smokeng_targets_file | length > 0
 
 # The import is declarative and idempotent, so it runs every time and reports
 # what it actually did. A handler keyed on the copy would silently skip the
@@ -220,7 +239,7 @@
          + [smokeng_state_dir ~ '/targets.toml'] }}
   become: true
   become_user: "{{ smokeng_user }}"
-  when: smokeng_targets_file | length > 0
+  when: smokeng_mode == 'master' and smokeng_targets_file | length > 0
   register: smokeng_import
   changed_when: >-
     smokeng_import.stdout_lines
@@ -228,7 +247,9 @@
     | list | length > 0
 
 # ---------------------------------------------------------------------------
-# Optional: the prober as its own process next to the master.
+# The prober as its own process: optional on a master, where it reports over
+# loopback, and the whole point of an agent, where it reports to the master
+# named in smokeng_master_host.
 #
 # Each step is idempotent on its own — `agent key` reuses an existing key and
 # `agent add` accepts an already-enrolled agent with the same key — so the
@@ -240,7 +261,7 @@
     argv: ["{{ smokeng_bin }}", "agent", "key", "--key", "{{ smokeng_prober_key }}"]
   become: true
   become_user: "{{ smokeng_user }}"
-  when: smokeng_prober_enabled | bool
+  when: _smokeng_prober | bool
   register: smokeng_prober_key_out
   # The key is created once and read thereafter; the unit below is what
   # actually changes the machine.
@@ -260,7 +281,9 @@
       - "{{ smokeng_prober_key_out.stdout | trim }}"
   become: true
   become_user: "{{ smokeng_user }}"
-  when: smokeng_prober_enabled | bool
+  # An agent is enrolled in the master's database, so this one step runs there.
+  delegate_to: "{{ smokeng_master_host if smokeng_mode == 'agent' else inventory_hostname }}"
+  when: _smokeng_prober | bool
   register: smokeng_prober_enrol
   changed_when: "'enrolled agent' in smokeng_prober_enrol.stderr"
 
@@ -273,7 +296,8 @@
     mode: "0644"
   vars:
     smokeng_prober_agent_id: "{{ smokeng_prober_enrol.stdout | trim }}"
-  when: smokeng_prober_enabled | bool
+  # A check run skips the two commands above, so there is no agent id to write.
+  when: _smokeng_prober | bool and smokeng_prober_enrol is not skipped
   notify:
     - Reload systemd
     - Restart smokeng prober
@@ -292,7 +316,7 @@
   # Skipped in --check: the unit was never written there, so systemd cannot be
   # asked about it. Failing on that would report a fault in the play rather
   # than the absence of a file the check run declined to create.
-  when: smokeng_prober_enabled | bool and not ansible_check_mode
+  when: _smokeng_prober | bool and not ansible_check_mode
 
 # Turning the flag off stops the prober rather than leaving an orphan unit
 # running. Targets assigned to it stop being measured, which is the operator's
@@ -302,5 +326,5 @@
     name: smokeng-prober
     enabled: false
     state: stopped
-  when: not (smokeng_prober_enabled | bool)
+  when: not (_smokeng_prober | bool)
   failed_when: false

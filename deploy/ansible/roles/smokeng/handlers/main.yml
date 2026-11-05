@@ -7,13 +7,27 @@
   ansible.builtin.systemd_service:
     name: smokeng
     state: restarted
+  # An agent host has no smokeng.service; the binary and sysctl tasks notify
+  # this handler on every host.
+  when: smokeng_mode == 'master'
 
-- name: Restart smokeng prober
+# Two handlers on one topic, run in this order. The binary and sysctl tasks
+# notify on the first install too, and the first flush comes before the prober
+# unit is written, so whether it exists has to be looked up when the handler
+# runs, not assumed: restarting a unit systemd has never seen fails. The unit
+# task notifies again once it has written the file. A check run of a first
+# install finds no file either, and skips the restart for the same reason.
+- name: Look for the prober unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/smokeng-prober.service
+  register: _smokeng_prober_unit
+  listen: Restart smokeng prober
+
+# Only while the prober is wanted: a unit left behind by an earlier run with the
+# prober on is stopped, and restarting it would start it again.
+- name: Restart the prober
   ansible.builtin.systemd_service:
     name: smokeng-prober
     state: restarted
-  # Only when the prober is actually installed: another task (the HMAC keyfile)
-  # may notify this handler on a host that runs the master alone, and asking
-  # systemd to restart a unit that was never written would fail. A check run
-  # never wrote the unit either, so it is excluded for the same reason.
-  when: smokeng_prober_enabled | bool and not ansible_check_mode
+  when: _smokeng_prober | bool and _smokeng_prober_unit.stat.exists
+  listen: Restart smokeng prober

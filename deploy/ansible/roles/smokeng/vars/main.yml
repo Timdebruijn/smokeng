@@ -13,3 +13,7 @@ smokeng_arch: "{{ _smokeng_arch_map[ansible_facts['architecture']] | default('am
 # flags that binary has, since an unknown flag is a crash loop. An older binary
 # has no admin choice to make: leaving the group out already meant everyone.
 _smokeng_new_flags: "{{ smokeng_version is version('v0.22.0', '>=') }}"
+
+# Whether this host runs the smokeng-prober unit: always on an agent, and on a
+# master only when the prober is split off.
+_smokeng_prober: "{{ smokeng_mode == 'agent' or smokeng_prober_enabled | bool }}"
