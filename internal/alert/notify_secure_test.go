@@ -2,6 +2,7 @@ package alert
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,7 +129,25 @@ func TestAQueuedNotifierNeverHoldsItsCaller(t *testing.T) {
 	if got := strings.Join(inner.names(), ""); got != "aefg" {
 		t.Errorf("delivered %q, want %q: the one in flight, then the newest three in order", got, "aefg")
 	}
+	if st := q.Stats(); st.OK != 4 || st.Dropped != 3 || st.Failed != 0 || st.LastOK == 0 {
+		t.Errorf("stats %+v, want 4 ok, 3 dropped, 0 failed and a last-success time", st)
+	}
 }
+
+// A receiver that refuses must show in the counts, not only in the log: alerting
+// that fails is the one failure alerting cannot report about itself.
+func TestAQueueCountsFailedDeliveries(t *testing.T) {
+	q := NewQueue(failing{}, 2)
+	q.Notify(t.Context(), firing("x"))
+	q.Close(time.Second)
+	if st := q.Stats(); st.Failed != 1 || st.OK != 0 || st.LastOK != 0 {
+		t.Errorf("stats %+v, want 1 failed, 0 ok and no last-success time", st)
+	}
+}
+
+type failing struct{}
+
+func (failing) Notify(context.Context, []Alert) error { return errors.New("receiver down") }
 
 // A resolved alert is not announced again, so stopping must deliver what is
 // queued rather than drop it.

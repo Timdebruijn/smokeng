@@ -211,6 +211,8 @@ it off the public internet (restrict it in the proxy, or scrape the loopback lis
 | `smokeng_agent_enabled` | gauge | `agent`, `id` | 1 if enabled |
 | `smokeng_agent_last_seen_seconds` | gauge | `agent`, `id` | Unix time of the agent's last submission; absent if never |
 | `smokeng_alerts_firing` | gauge | | Alert rules currently firing |
+| `smokeng_webhook_deliveries_total` | counter | `result` | Webhook POSTs: `ok`, `error`, or `dropped` because the queue was full; absent without a webhook |
+| `smokeng_webhook_last_success_seconds` | gauge | | Unix time of the last successful webhook POST; absent until one succeeds |
 
 A scrape job and rules for the signals worth an alert:
 
@@ -241,6 +243,8 @@ groups:
         for: 10m
       - alert: SmokengProbePanic
         expr: increase(smokeng_probe_panics_total[1h]) > 0
+      - alert: SmokengWebhookFailing
+        expr: increase(smokeng_webhook_deliveries_total{result!="ok"}[15m]) > 0
 ```
 
 `SmokengNotMeasuring` is the nearest thing to "is it measuring" that `/healthz` cannot
@@ -262,6 +266,10 @@ What each of those rules is telling you:
 - `smokeng_probe_panics_total` above zero is a bug in smokeng, not in your network. The
   measurement was contained rather than allowed to end the process, so the damage is a gap
   in one series — but the log holds the stack, and it is worth reporting.
+- `smokeng_webhook_deliveries_total{result!="ok"}` increasing means alerts are not reaching
+  the receiver. smokeng cannot page you about this itself, so this rule has to live in a
+  Prometheus that delivers through a different path. `smokeng_webhook_last_success_seconds`
+  going stale is not a fault on its own: when nothing is firing, nothing is posted.
 
 ## Logs
 
@@ -482,7 +490,6 @@ unimplemented and unplanned for that reason.
 - **A single SQLite writer.** One file, one process. Do not point two masters at it.
 - **Recovery is restore from backup.** Measurements since the last backup are lost; agents
   re-send only what they still buffer.
-- **Failed webhook deliveries are only logged and have no metric**; see [alerting](alerting.md).
 - **No readiness check.** `/healthz` is liveness only.
 - **No API tokens.** Prometheus scrapes need `--metrics-public`.
 

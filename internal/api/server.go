@@ -83,6 +83,7 @@ type server struct {
 	// decodeSlots admits a few ingest decodes at a time; see handleIngest.
 	decodeSlots chan struct{}
 	verifier    *ingest.Verifier
+	delivery    *alert.Queue
 	probe       *probe.Engine
 	version     string
 	// agentCAs are the PEM blocks this master was given on the command line,
@@ -126,6 +127,9 @@ type Options struct {
 	// https targets, as PEM. Handing them down means a rotation happens on
 	// the master rather than on every agent host.
 	AgentCAs [][]byte
+	// Delivery is the webhook queue, nil when no webhook is set; /metrics
+	// reports its outcomes.
+	Delivery *alert.Queue
 }
 
 // New builds the HTTP handler: API routes plus the embedded frontend.
@@ -137,6 +141,7 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	s := &server{
 		st: st, alerts: opts.Alerts, auth: authenticator,
 		probe: opts.Probe, version: opts.Version, agentCAs: opts.AgentCAs,
+		delivery: opts.Delivery,
 	}
 	s.externalURL = opts.ExternalURL
 	s.trusted = opts.TrustedProxies

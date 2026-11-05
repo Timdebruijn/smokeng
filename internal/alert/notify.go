@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -169,6 +170,24 @@ type Queue struct {
 	dctx   context.Context
 	cancel context.CancelFunc
 	once   sync.Once
+
+	// Outcomes, for /metrics: a receiver that is down otherwise shows only in
+	// the log, and alerting that fails is the one failure alerting cannot report.
+	ok, failed, dropped atomic.Uint64
+	lastOK              atomic.Int64 // unix seconds; 0 until a delivery succeeds
+}
+
+// DeliveryStats counts what the queue did with the batches it was given. Each
+// batch is one POST, so the counts are deliveries, not alerts.
+type DeliveryStats struct {
+	OK, Failed, Dropped uint64
+	// LastOK is the unix time of the last successful delivery, 0 if none yet.
+	LastOK int64
+}
+
+// Stats reports the delivery counts since start.
+func (q *Queue) Stats() DeliveryStats {
+	return DeliveryStats{OK: q.ok.Load(), Failed: q.failed.Load(), Dropped: q.dropped.Load(), LastOK: q.lastOK.Load()}
 }
 
 // queueDeliveryTimeout bounds one delivery, as the webhook's own client does.
@@ -207,8 +226,12 @@ func (q *Queue) send(alerts []Alert) {
 	ctx, cancel := context.WithTimeout(q.dctx, queueDeliveryTimeout)
 	defer cancel()
 	if err := q.inner.Notify(ctx, alerts); err != nil {
+		q.failed.Add(1)
 		log.Printf("alert: deliver %d alert(s): %v", len(alerts), err)
+		return
 	}
+	q.ok.Add(1)
+	q.lastOK.Store(time.Now().Unix())
 }
 
 // Notify queues a batch and returns at once.
@@ -221,6 +244,7 @@ func (q *Queue) Notify(_ context.Context, alerts []Alert) error {
 		}
 		select {
 		case old := <-q.ch:
+			q.dropped.Add(1)
 			log.Printf("alert: the delivery queue is full; dropped a batch of %d alert(s), the oldest", len(old))
 		default:
 		}
