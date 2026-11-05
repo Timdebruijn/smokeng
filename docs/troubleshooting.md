@@ -69,9 +69,9 @@ Check in this order:
 4. **Is the target disabled?** Disabled targets are skipped.
 5. **Does the name resolve?** `probe: target … ("…"): resolve: …` means no measurement for that
    interval, which the graph shows as a gap. `smokeng_dns_failures_total` counts them.
-6. **Is the time window right?** The UI goes back 24 hours. Older data is available through
-   the API (Arrow): [Reading graphs](reading-graphs.md), [API](api.md). There is no CSV
-   export of measurements.
+6. **Is the time window right?** The range buttons go back 30 days, and `custom` takes any
+   window; see [Reading graphs](reading-graphs.md#long-windows). The raw intervals are in the
+   API (Arrow): [API](api.md). There is no CSV export of measurements.
 7. **Are writes failing?** `probe: write … measurements: …; they are dropped and not alerted on`
    (also `smokeng_measurement_write_errors_total`), or `probe: results backlog full, dropping
    measurement for target …` (also `smokeng_measurements_dropped_total`). Check disk space and

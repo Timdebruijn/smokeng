@@ -47,7 +47,46 @@ export const RANGES: { label: string; seconds: number }[] = [
   { label: '1h', seconds: 3600 },
   { label: '6h', seconds: 21600 },
   { label: '24h', seconds: 86400 },
+  { label: '7d', seconds: 7 * 86400 },
+  { label: '30d', seconds: 30 * 86400 },
 ]
+
+/**
+ * How often a trailing window of `rangeS` seconds refreshes: every REFRESH_MS,
+ * or about once per pixel column of a 1000-pixel plot if that is longer. A month
+ * moves by one column in 43 minutes, and redrawing it every ten seconds would
+ * only re-read the same month.
+ */
+export function refreshMs(rangeS: number): number {
+  // One column of a thousand is rangeS/1000 seconds, which is rangeS milliseconds.
+  return Math.max(REFRESH_MS, rangeS)
+}
+
+/**
+ * The window twice as wide around the same centre. One that would reach past
+ * `now` becomes a trailing window of that width instead (rangeS), so zooming
+ * out of the present keeps it live rather than freezing it.
+ */
+export function zoomOut(from: number, to: number, now: number): { from: number; to: number } | { rangeS: number } {
+  const span = to - from
+  const centre = from + span / 2
+  if (centre + span >= now) return { rangeS: 2 * span }
+  return { from: Math.floor(centre - span), to: Math.ceil(centre + span) }
+}
+
+/** Unix seconds as the value of a datetime-local input, in local time. */
+export function toLocalInput(unixSeconds: number): string {
+  const d = new Date(unixSeconds * 1000)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/** A datetime-local value (local time) as unix seconds, or null if it is not one. */
+export function fromLocalInput(value: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(value)) return null
+  const ms = new Date(value).getTime()
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null
+}
 
 /**
  * Depth-first, indented order, so a tree reads as a tree even where it is

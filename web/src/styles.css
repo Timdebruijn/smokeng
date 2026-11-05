@@ -954,6 +954,27 @@ a.button {
   color: var(--dim);
 }
 
+.range-custom {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.range-custom label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.range-custom input {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .empty {
   margin-top: 12px;
   padding: 40px 20px;

@@ -12,7 +12,7 @@ import Compare, { type CompareSeries } from './Compare'
 import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
-import { RANGES, REFRESH_MS, resolveSeries, type PlotSeries } from './util'
+import { RANGES, fromLocalInput, refreshMs, resolveSeries, toLocalInput, zoomOut, type PlotSeries } from './util'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
@@ -264,9 +264,9 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
 
   useEffect(() => {
     if (!live || zoom) return
-    const id = setInterval(() => setRefreshKey((k) => k + 1), REFRESH_MS)
+    const id = setInterval(() => setRefreshKey((k) => k + 1), refreshMs(rangeS))
     return () => clearInterval(id)
-  }, [live, zoom])
+  }, [live, zoom, rangeS])
 
   // Freeze the window per refresh tick so every stacked plot shares one time
   // axis — the precondition for the shared crosshair meaning anything.
@@ -282,6 +282,18 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
     setZoom(null)
     setRangeS(seconds)
   }
+
+  const onZoomOut = () => {
+    const next = zoomOut(from, to, Math.floor(Date.now() / 1000))
+    if ('rangeS' in next) pickRange(next.rangeS)
+    else setZoom(next)
+  }
+
+  // A window typed in: the free range the presets are sugar over.
+  const [custom, setCustom] = useState<{ from: string; to: string } | null>(null)
+  const customFrom = custom ? fromLocalInput(custom.from) : null
+  const customTo = custom ? fromLocalInput(custom.to) : null
+  const customOk = customFrom !== null && customTo !== null && customFrom < customTo
 
   const leaves = targets.filter((t) => t.host !== null && t.enabled && !t.hidden)
 
@@ -301,7 +313,10 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
       else next.add(id)
       return next
     })
-  const spanLabel = `${fmtSpan(to - from)} · ${new Date(from * 1000).toLocaleTimeString()} → ${new Date(to * 1000).toLocaleTimeString()}`
+  // The date belongs in the label once the window is not all of today.
+  const when = (t: number) =>
+    to - from > 43200 ? new Date(t * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : new Date(t * 1000).toLocaleTimeString()
+  const spanLabel = `${fmtSpan(to - from)} · ${when(from)} → ${when(to)}`
 
   const byName = new Map(agents.map((a) => [a.name, a.id]))
   const series = shown.flatMap((t) => resolveSeries(t, byName))
@@ -363,6 +378,16 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
             {live && !zoom ? '● live' : '○ paused'}
           </button>
           <button
+            className={custom ? 'pill active' : 'pill'}
+            onClick={() => setCustom(custom ? null : { from: toLocalInput(from), to: toLocalInput(to) })}
+            title="Choose the window's start and end"
+          >
+            custom
+          </button>
+          <button className="pill" onClick={onZoomOut} title="Show twice as much time around the same centre">
+            zoom out
+          </button>
+          <button
             className={compareOn ? 'pill active' : 'pill'}
             onClick={() => setCompareOn((v) => !v)}
             title="Overlay the pooled medians of the shown targets on one axis"
@@ -377,6 +402,28 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
             </button>
           ) : (
             <span className="hint small">drag on a plot to zoom</span>
+          )}
+          {custom && (
+            <form
+              className="range-custom"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (!customOk) return
+                setZoom({ from: customFrom!, to: customTo! })
+                setCustom(null)
+              }}
+            >
+              <label>
+                from <input type="datetime-local" value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} />
+              </label>
+              <label>
+                to <input type="datetime-local" value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} />
+              </label>
+              <button className="pill accent" type="submit" disabled={!customOk}>
+                show
+              </button>
+              {!customOk && <span className="hint small">the start has to be before the end</span>}
+            </form>
           )}
         </div>
         {error && <p className="error">{error}</p>}

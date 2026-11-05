@@ -367,13 +367,15 @@ test('the schema rules', () => {
 
 test('the types the server never writes are refused, where they would change a value', () => {
   const cases: [string, RegExp][] = [
-    ['samples-u64', /integer of 64 bits/],
+    // 64-bit integers are read where the server writes them (a pooled read's
+    // sums), so these are refused by the width pinned for the column.
+    ['samples-u64', /samples column is not an unsigned 32-bit/],
     ['samples-signed', /samples column is not an unsigned 32-bit/],
     ['samples-u16', /samples column is not an unsigned 32-bit/],
     ['samples-flat', /no samples column of the right type/],
     ['series-flat', /no ipdv_send column of the right type/],
     ['series-unsigned', /ipdv_send column is not a signed 32-bit/],
-    ['sent-u64', /integer of 64 bits/],
+    ['sent-u64', /sent column is not an unsigned 16-bit/],
     ['sent-float', /column of type 3/],
     ['flags-u16', /flags column is not an unsigned 8-bit/],
     ['flags-i8', /flags column is not an unsigned 8-bit/],
@@ -595,4 +597,29 @@ test('random corruption of several bytes gives a coherent series or a refusal', 
       outcome(bad, `${name} case ${k}: ${edits.join(' ')}`)
     }
   }
+})
+
+// ---- a pooled read -----------------------------------------------------------
+
+test('a pooled read decodes to its columns, in the shape of a series', () => {
+  const want = JSON.parse(readFileSync(new URL('pooled.json', dir), 'utf8'))
+  const s = decodeSeries(load('pooled.arrow'))
+  assert.ok(s.pooled, 'marked as pooled')
+  assert.deepEqual(Array.from(s.ts), want.ts)
+  assert.deepEqual(Array.from(s.pooled!.ends), want.ts_end)
+  assert.deepEqual(Array.from(s.pooled!.rounds), want.rounds)
+  assert.deepEqual(Array.from(s.sent), want.sent) // 70 000 included: 64 bits on the wire
+  assert.deepEqual(Array.from(s.received), want.received)
+  assert.deepEqual(Array.from(s.flags), want.flags)
+  assert.deepEqual(Array.from(s.pooled!.flagged), want.flagged)
+  assert.deepEqual(rows(s), want.quantiles)
+  // Nothing per interval is invented for a column.
+  assert.ok(s.icmpErrors.every((v) => v === null) && s.sendErrors.every((v) => v === null))
+  assert.deepEqual(s.extra, {})
+  // And a plain read is not mistaken for one.
+  assert.equal(decodeSeries(load('small.arrow')).pooled, undefined)
+})
+
+test('a 64-bit sum past what a number holds exactly is refused, not rounded', () => {
+  refused(load('pooled-huge-sum.arrow'), /64-bit value that cannot be read exactly/, 'sent of 2^53 + 1')
 })

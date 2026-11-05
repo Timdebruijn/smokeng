@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { csvCell, minMax } from './util.ts'
+import { axisLabel } from './layout.ts'
+import { csvCell, fromLocalInput, minMax, refreshMs, toLocalInput, zoomOut } from './util.ts'
 
 // A golden reference can hold hundreds of thousands of samples. Math.min(...xs)
 // passes each element as an argument, and the engine refuses past about 125,000:
@@ -53,4 +54,35 @@ test('csvCell leaves numbers as numbers', () => {
   // No number to give is an empty cell, not the text "NaN" in a numeric column.
   assert.equal(csvCell(NaN), '')
   assert.equal(csvCell(Infinity), '')
+})
+
+test('a long window refreshes about once per pixel column, a short one every ten seconds', () => {
+  assert.equal(refreshMs(3600), 10_000)
+  assert.equal(refreshMs(86400), 86_400)
+  assert.equal(refreshMs(30 * 86400), 2_592_000)
+})
+
+test('zooming out doubles the window around its centre, and stays live at the present', () => {
+  const now = 1_000_000
+  assert.deepEqual(zoomOut(500_000, 600_000, now), { from: 450_000, to: 650_000 })
+  // A window whose doubled end would pass now becomes a trailing window.
+  assert.deepEqual(zoomOut(now - 3600, now, now), { rangeS: 7200 })
+  // One whose doubled end stops short of now stays a fixed window.
+  assert.deepEqual(zoomOut(now - 10_000, now - 4_000, now), { from: now - 13_000, to: now - 1_000 })
+})
+
+test('a datetime-local value round-trips to the minute, and nonsense is refused', () => {
+  const t = 1_793_911_200 // a whole minute
+  assert.equal(fromLocalInput(toLocalInput(t)), t)
+  assert.equal(fromLocalInput(''), null)
+  assert.equal(fromLocalInput('yesterday'), null)
+  assert.equal(fromLocalInput('2026-13-45T99:99'), null)
+})
+
+test('the time axis says the date once a window is longer than a day', () => {
+  const t = new Date(2026, 10, 5, 14, 30).getTime() / 1000
+  assert.equal(axisLabel(t, 3600), '14:30')
+  assert.equal(axisLabel(t, 86400), '14:30')
+  assert.equal(axisLabel(t, 2 * 86400), '5 Nov 14:30')
+  assert.equal(axisLabel(t, 30 * 86400), '5 Nov')
 })

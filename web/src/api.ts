@@ -465,6 +465,21 @@ export interface Series {
    * one, which is how "this target does not measure it" reads.
    */
   extra: Record<string, ExtraSeries>
+  /**
+   * Present when the server pooled the window per pixel column (a read with
+   * `columns`): each row is then a column [ts, ends), sent and received are
+   * sums over it, and the samples are the pooled quantiles (docs/api.md).
+   */
+  pooled?: PooledColumns
+}
+
+/** What only a pooled column has. */
+export interface PooledColumns {
+  ends: Float64Array
+  /** Intervals stored in the column; against the target's interval, coverage. */
+  rounds: Float64Array
+  /** Intervals in the column that carried any quality flag. */
+  flagged: Float64Array
 }
 
 /**
@@ -662,17 +677,24 @@ const inFlight = new Map<string, { at: number; p: Promise<Series> }>()
  */
 const SHARE_MS = 2000
 
+/**
+ * One series over [from, to). With `columns`, the width of the plot in device
+ * pixels, a window holding more intervals than that comes back pooled per column
+ * (Series.pooled); without it, the window comes back interval by interval, and a
+ * long one is refused.
+ */
 export function fetchSeries(
   targetId: number,
   agentId: number,
   from: number,
   to: number,
+  columns?: number,
 ): Promise<Series> {
-  const key = `${targetId}/${agentId}/${from}/${to}`
+  const key = `${targetId}/${agentId}/${from}/${to}/${columns ?? ''}`
   const now = Date.now()
   const hit = inFlight.get(key)
   if (hit && now - hit.at < SHARE_MS) return hit.p.then((s) => structuredClone(s))
-  const p = fetchSeriesUncached(targetId, agentId, from, to).catch((e: unknown) => {
+  const p = fetchSeriesUncached(targetId, agentId, from, to, columns).catch((e: unknown) => {
     // A failure is never shared: the next caller must be able to try again.
     // Guarded like the timeout below, and for the same reason — a slow request
     // that has already been evicted must not delete the entry that replaced
@@ -694,12 +716,19 @@ async function fetchSeriesUncached(
   agentId: number,
   from: number,
   to: number,
+  columns?: number,
 ): Promise<Series> {
+  const cols = columns === undefined ? '' : `&columns=${columns}`
   const r = await fetch(
-    `/api/v1/measurements?target_id=${targetId}&agent_id=${agentId}&from=${from}&to=${to}`,
+    `/api/v1/measurements?target_id=${targetId}&agent_id=${agentId}&from=${from}&to=${to}${cols}`,
     { cache: 'no-store' },
   )
-  if (!r.ok) throw new Error(`measurements: HTTP ${r.status}`)
+  if (!r.ok) {
+    // A 400 says what to change (a window too large for one read); that is
+    // worth showing, where a status code alone is not.
+    const msg = r.status === 400 ? ((await r.json().catch(() => null)) as { error?: string } | null)?.error : undefined
+    throw new Error(msg ? `measurements: ${msg}` : `measurements: HTTP ${r.status}`)
+  }
   return decodeSeries(new Uint8Array(await r.arrayBuffer()))
 }
 
