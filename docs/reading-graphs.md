@@ -70,23 +70,12 @@ healthy target has a silent rail and any mark on it is worth looking at.
 Loss and latency are shown together on purpose: "slow" and "lossy" are different faults
 with different causes, and the pair distinguishes them at a glance.
 
-### How loss is counted
+### What the rail counts
 
-Loss is `1 − received / sent` per interval. What counts as a lost probe depends on the probe:
-
-| Event | Counted as | Notes |
-| --- | --- | --- |
-| No reply inside `timeout_ms` | Lost | A reply that arrives later is lost too, even if it was seen. |
-| HTTP(S) status 400 or above | Lost | The server answered, but did not serve the page. smokeng logs the status once per interval. Redirects are not followed. |
-| TCP connection refused | Lost | Same as a timeout. The log names it. |
-| Local send failure | Sent and not received, so it draws as loss | Flagged `not sent` with the reason, so you can tell it from network loss. Examples: no route, a refused write, an irtt session that never opened. |
-| irtt session that paced fewer probes than asked | Not counted | The interval reads 19 of 19, not 19 of 20. |
-| Interval cut short (restart, settings change) | Probes still in flight are not counted | Flagged `cut short`; its loss is not comparable with a whole interval. |
-| Duplicate reply | Ignored | The first one counts. |
-| Reply after the interval closed | Dropped | It is not added to the latency samples. |
-| Receive queue overflow | Lost, and flagged `dropped replies` | Part of this loss is smokeng's. |
-
-Loss under 0.1 % is shown as `<0.1%`, never as `0.0%`.
+Loss is `1 − received / sent` per interval. Probes that never went out because of a local
+failure are still drawn as loss, with a `not sent` badge naming the reason (see the badges
+below), so an unreachable target is not an empty graph. Loss under 0.1 % is shown as
+`<0.1%`, never as `0.0%`. What counts as lost for each probe type is in [Probes](probes.md).
 
 ## Path change marks
 
