@@ -103,6 +103,29 @@ func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	out = append(out, metrics.Simple("smokeng_alerts_firing",
 		"Alert rules currently firing.", metrics.Gauge, float64(len(s.alerts.Firing()))))
 
+	// Absent without a webhook: there is nothing to deliver to, and zeros would
+	// read as a receiver that has never been reached.
+	if s.delivery != nil {
+		d := s.delivery.Stats()
+		out = append(out, metrics.Metric{
+			Name: "smokeng_webhook_deliveries_total",
+			Help: "Alert webhook POSTs by outcome. dropped means the delivery queue was " +
+				"full and the oldest batch was discarded unsent.",
+			Kind: metrics.Counter,
+			Samples: []metrics.Sample{
+				{Labels: map[string]string{"result": "ok"}, Value: float64(d.OK)},
+				{Labels: map[string]string{"result": "error"}, Value: float64(d.Failed)},
+				{Labels: map[string]string{"result": "dropped"}, Value: float64(d.Dropped)},
+			},
+		})
+		// Absent until the first success, like smokeng_agent_last_seen_seconds.
+		if d.LastOK != 0 {
+			out = append(out, metrics.Simple("smokeng_webhook_last_success_seconds",
+				"Unix time of the last successful alert webhook delivery; absent if none "+
+					"has succeeded since start.", metrics.Gauge, float64(d.LastOK)))
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	if err := metrics.Write(w, out); err != nil {

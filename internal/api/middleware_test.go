@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/auth"
@@ -229,5 +230,40 @@ func TestMetricsCarryNoMeasurementData(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("scrape leaks measurement data (%q):\n%s", forbidden, body)
 		}
+	}
+}
+
+// Without a webhook there is nothing to deliver to, so the delivery metrics are
+// absent rather than zero; with one, a failed POST is counted.
+func TestMetricsReportWebhookDeliveries(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	scrape := func(q *alert.Queue) string {
+		h := New(st, Options{Alerts: alert.NewManager(st, nil), Delivery: q}, fstest.MapFS{})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+		return rec.Body.String()
+	}
+	if body := scrape(nil); strings.Contains(body, "smokeng_webhook_") {
+		t.Errorf("delivery metrics without a webhook:\n%s", body)
+	}
+
+	q := alert.NewQueue(&alert.Webhook{URL: "http://127.0.0.1:1/"}, 2) // nothing listens on port 1
+	q.Notify(t.Context(), []alert.Alert{{Rule: &alert.Rule{Name: "r"}, Firing: true}})
+	q.Close(15 * time.Second)
+	body := scrape(q)
+	for _, want := range []string{
+		`smokeng_webhook_deliveries_total{result="error"} 1`,
+		`smokeng_webhook_deliveries_total{result="ok"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "smokeng_webhook_last_success_seconds") {
+		t.Errorf("a last-success time with no success:\n%s", body)
 	}
 }

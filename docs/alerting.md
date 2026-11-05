@@ -197,8 +197,11 @@ delivered, for up to five seconds; a resolved alert is not announced again, so i
 dropped lightly. `delivering` in `GET /api/v1/alerts` says a webhook is configured, not that
 every batch got through.
 
-**Delivery failures are only logged.** There is no metric for them, so a dead receiver does not
-show up on a dashboard. Watch the smokeng log for lines starting `alert: deliver`.
+**Delivery failures are counted and logged.** `smokeng_webhook_deliveries_total{result}` on
+`/metrics` counts each POST as `ok`, `error` or `dropped` (the queue was full). A failed POST is
+not retried. A firing alert is posted again on the next `--alert-repeat`, but a missed resolve is
+not. The log line starts `alert: deliver`. See [operations](operations.md) for a rule that fires
+on failures.
 
 **Rules are evaluated whether or not `--alert-webhook` is set.** Firing state and the
 transition history are live either way; a missing webhook only means a transition is

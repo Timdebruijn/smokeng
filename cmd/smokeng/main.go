@@ -422,6 +422,7 @@ func serve(args []string) error {
 			DefaultRole: auth.Role(*defaultRole), ExternalURL: *externalURL,
 			TrustedProxies: trusted,
 			RestrictHosts:  hostsRestricted(authenticator != nil, *listen),
+			Delivery:       queue,
 		}, dist))
 
 	errc := make(chan error, 1)

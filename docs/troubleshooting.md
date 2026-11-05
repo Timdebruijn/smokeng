@@ -240,8 +240,8 @@ The log tells you which of three states you are in:
 | `alerting evaluated but not delivered: no --alert-webhook or --alert-webhook-file is set` | Rules are evaluated. Firing state and the transition log are in the UI. Nothing is posted anywhere. Set a webhook. |
 | `alerting enabled, posting to … (repeating every …)` | Delivery is on. The URL is redacted. |
 
-If delivery is on and nothing arrives, the failures are **only in the log**. There is no metric
-for them, so a dead receiver does not stand out:
+If delivery is on and nothing arrives, check `smokeng_webhook_deliveries_total` on `/metrics`:
+`error` or `dropped` rising means POSTs are failing. The reason is in the log:
 
 ```bash
 journalctl -u smokeng --since "1 hour ago" | grep 'alert:'
