@@ -665,7 +665,7 @@ function RuleForm({
   const [mode, setMode] = useState<'auto' | 'tunable'>('auto')
   const [baseline, setBaseline] = useState<'rolling' | 'golden'>('rolling')
   const shape = isShapeMetric(metric)
-  const unit = metric === 'bimodality' ? '' : 'ms'
+  const unit = metric === 'bimodality' ? '' : metric === 'loss' ? '%' : 'ms'
 
   return (
     <form
