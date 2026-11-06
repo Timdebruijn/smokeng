@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { exportConfig, importConfig } from './api'
-import { useCopy } from './shared'
+import { Modal, useCopy } from './shared'
 
 /**
  * The target tree as text, in both directions.
@@ -32,12 +32,6 @@ export default function TomlDialog({
       .catch((e) => setError((e as Error).message))
   }, [mode])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   const doImport = async () => {
     setBusy(true)
     setError(null)
@@ -54,9 +48,9 @@ export default function TomlDialog({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>{mode === 'export' ? 'Export as TOML' : 'Import TOML'}</h2>
+    <Modal labelledBy="toml-title" onClose={onClose}>
+      <div className="modal">
+        <h2 id="toml-title">{mode === 'export' ? 'Export as TOML' : 'Import TOML'}</h2>
         <p className="hint small">
           {mode === 'export'
             ? 'The whole tree, including alert rules and grants. This is what config export writes, so it round-trips.'
@@ -86,6 +80,6 @@ export default function TomlDialog({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   )
 }

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { fetchTargets, type Target } from './api'
+import { Modal } from './shared'
 
 export interface PaletteAction {
   id: string
@@ -29,6 +30,7 @@ export default function Palette({
   const [cursor, setCursor] = useState(0)
   const [targets, setTargets] = useState<Target[]>([])
   const input = useRef<HTMLInputElement>(null)
+  const listId = useId()
 
   useEffect(() => {
     input.current?.focus()
@@ -60,10 +62,15 @@ export default function Palette({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="palette" onClick={(e) => e.stopPropagation()}>
+    <Modal label="Search" onClose={onClose}>
+      <div className="palette">
         <input
           ref={input}
+          role="combobox"
+          aria-expanded={items.length > 0}
+          aria-controls={items.length > 0 ? listId : undefined}
+          aria-activedescendant={items.length > 0 ? `${listId}-${cursor}` : undefined}
+          aria-autocomplete="list"
           value={query}
           placeholder="Jump to a target or a screen…"
           onChange={(e) => setQuery(e.target.value)}
@@ -77,27 +84,31 @@ export default function Palette({
             } else if (e.key === 'Enter') {
               e.preventDefault()
               choose(items[cursor])
-            } else if (e.key === 'Escape') {
-              onClose()
             }
           }}
         />
         {items.length === 0 ? (
           <p className="hint small palette-empty">Nothing matches.</p>
         ) : (
-          items.map((a, i) => (
-            <button
-              key={a.id}
-              className={i === cursor ? 'palette-item active' : 'palette-item'}
-              onMouseEnter={() => setCursor(i)}
-              onClick={() => choose(a)}
-            >
-              <span>{a.label}</span>
-              <span className="hint small mono">{a.hint}</span>
-            </button>
-          ))
+          <div role="listbox" id={listId} aria-label="Results">
+            {items.map((a, i) => (
+              <button
+                key={a.id}
+                id={`${listId}-${i}`}
+                role="option"
+                aria-selected={i === cursor}
+                tabIndex={-1}
+                className={i === cursor ? 'palette-item active' : 'palette-item'}
+                onMouseEnter={() => setCursor(i)}
+                onClick={() => choose(a)}
+              >
+                <span>{a.label}</span>
+                <span className="hint small mono">{a.hint}</span>
+              </button>
+            ))}
+          </div>
         )}
       </div>
-    </div>
+    </Modal>
   )
 }

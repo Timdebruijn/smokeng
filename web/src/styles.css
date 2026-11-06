@@ -1388,15 +1388,30 @@ a.button {
 
 /* ── Modal ─────────────────────────────────────────────────────────────── */
 
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: light-dark(rgba(20, 32, 44, 0.35), rgba(0, 0, 0, 0.55));
-  z-index: 80;
+/* The <dialog> is the full-viewport host (so a click on it is a backdrop
+   click); the UA's own box styles are reset so the panel inside is the look. */
+dialog.modal-host {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  box-sizing: border-box;
+  padding: 20px;
+  overflow: hidden;
+}
+
+dialog.modal-host[open] {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 20px;
+}
+
+dialog.modal-host::backdrop {
+  background: light-dark(rgba(20, 32, 44, 0.35), rgba(0, 0, 0, 0.55));
 }
 
 .modal {
