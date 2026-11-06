@@ -46,3 +46,6 @@ deploy/ansible/targets*.toml
 *.key
 !*.example.key
 
+
+# Local output of the accessibility-audit skill: reports, scans, screenshots.
+.a11y-audit/
