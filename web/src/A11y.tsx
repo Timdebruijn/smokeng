@@ -111,12 +111,13 @@ export default function A11yMenu({
         title="Accessibility options"
         aria-label="Accessibility options"
         aria-expanded={open}
+        aria-controls="a11y-popover"
         onClick={() => onOpenChange(!open)}
       >
         Aa
       </button>
       {open && (
-        <div className="popover a11y-popover">
+        <div id="a11y-popover" className="popover a11y-popover">
           <p className="popover-title">Accessibility</p>
           {ROWS.map((r) => (
             <label key={r.key} className="a11y-row">
