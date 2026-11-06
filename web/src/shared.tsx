@@ -225,8 +225,9 @@ export function Modal({
 /**
  * The time window a graphs screen shows: a trailing window of `rangeS` that
  * moves forward while live, or an explicit window from brush-zoom or a typed
- * range, which pauses it. Picking a range or zooming out back into the present
- * makes it live again.
+ * range, which pauses it. Picking a range, or zooming out back into the
+ * present, drops the explicit window, so it moves again unless live was
+ * switched off by hand.
  *
  * The window is frozen per refresh tick, so every plot on the screen shares one
  * time axis — the precondition for the shared crosshair meaning anything.
