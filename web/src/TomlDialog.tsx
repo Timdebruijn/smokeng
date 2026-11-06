@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { exportConfig, importConfig } from './api'
-import { Modal, useCopy } from './shared'
+import { Modal, useCopy, ErrorText } from './shared'
 
 /**
  * The target tree as text, in both directions.
@@ -57,14 +57,15 @@ export default function TomlDialog({
             : 'Applied declaratively to the whole tree: anything absent is disabled, never deleted. Use config import --prune on the command line if you mean to delete.'}
         </p>
         <textarea
+          aria-label={mode === 'import' ? 'targets.toml to import' : 'Exported targets.toml'}
           value={text}
           readOnly={mode === 'export'}
           spellCheck={false}
           onChange={(e) => setText(e.target.value)}
           placeholder={mode === 'import' ? 'Paste a targets.toml here…' : ''}
         />
-        {error && <p className="error">{error}</p>}
-        {result && <pre className="import-result">{result}</pre>}
+        {error && <ErrorText>{error}</ErrorText>}
+        <div role="status">{result && <pre className="import-result">{result}</pre>}</div>
         <div className="pill-row">
           {mode === 'import' ? (
             <button className="pill accent" disabled={busy || text.trim() === ''} onClick={() => void doImport()}>

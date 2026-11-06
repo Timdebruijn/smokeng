@@ -45,6 +45,15 @@ export function useAction(load: () => Promise<void>) {
   return { error, busy, reload, run }
 }
 
+/** An error line that screen readers announce when it appears. */
+export function ErrorText({ children, id }: { children: ReactNode; id?: string }) {
+  return (
+    <p className="error" role="alert" id={id}>
+      {children}
+    </p>
+  )
+}
+
 /** Copy `text`, and say so for two seconds. */
 export function useCopy(text: string): [boolean, () => Promise<void>] {
   const [copied, setCopied] = useState(false)

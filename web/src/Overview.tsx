@@ -11,7 +11,7 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { Stat } from './shared'
+import { Stat, ErrorText } from './shared'
 import { minMax, REFRESH_MS, resolveSeries, summarise } from './util'
 
 const WINDOW_S = 3600
@@ -125,7 +125,7 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
         </span>
       </div>
 
-      {error && <p className="error">{error}</p>}
+      {error && <ErrorText>{error}</ErrorText>}
 
       <div className="stat-grid">
         <Stat label="Series" value={rows ? String(rows.length) : '—'} sub={`${measured} reporting`} />

@@ -7,7 +7,7 @@ import {
   type Grant,
   type Target,
 } from './api'
-import { ConfirmButton, useAction } from './shared'
+import { ConfirmButton, useAction, ErrorText } from './shared'
 import { orderedTargets } from './util'
 
 const ROLES: { value: Grant['role']; label: string }[] = [
@@ -57,7 +57,7 @@ export default function Grants({
 
   return (
     <>
-      {error && <p className="error">{error}</p>}
+      {error && <ErrorText>{error}</ErrorText>}
 
       <section className="card section-card">
         <div className="section-card-head">

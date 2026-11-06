@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchShapeReference, type ShapeReference } from './api'
 import { minMax } from './util'
+import { ErrorText } from './shared'
 
 /**
  * The evidence behind a fired shape alert: the reference distribution it is
@@ -38,7 +39,7 @@ export default function ShapeOverlay({
     return histograms(data.reference ?? [], data.current ?? [])
   }, [data])
 
-  if (error) return <p className="error">{error}</p>
+  if (error) return <ErrorText>{error}</ErrorText>
   if (!data) return <p className="hint small">Loading the distributions…</p>
   if (!data.available || !bins) {
     return (

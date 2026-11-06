@@ -72,6 +72,7 @@ export default function Palette({
           aria-activedescendant={items.length > 0 ? `${listId}-${cursor}` : undefined}
           aria-autocomplete="list"
           value={query}
+          aria-label="Jump to a target or a screen"
           placeholder="Jump to a target or a screen…"
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {

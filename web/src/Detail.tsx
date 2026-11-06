@@ -15,7 +15,7 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { Stat } from './shared'
+import { Stat, ErrorText } from './shared'
 import { RANGES, csvCell, summarise } from './util'
 
 // `types` limits a row to the probe types it means something for, the same way
@@ -455,7 +455,7 @@ function AvailabilityPanel({ target }: { target: Target }) {
         </span>
       </div>
 
-      {error && <p className="error">{error}</p>}
+      {error && <ErrorText>{error}</ErrorText>}
       {loading && !data ? (
         <p className="hint">Loading…</p>
       ) : !data || data.agents.length === 0 ? (
