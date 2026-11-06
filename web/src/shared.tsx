@@ -122,9 +122,19 @@ export function ConfirmButton({
   onConfirm: () => Promise<boolean>
 }) {
   const [confirming, setConfirming] = useState(false)
+  const confirmRef = useRef<HTMLButtonElement>(null)
+  const removeRef = useRef<HTMLButtonElement>(null)
+  const moved = useRef(false)
+  // The button that had focus is gone after each swap; put focus on its
+  // replacement, but not on first render.
+  useEffect(() => {
+    if (moved.current) (confirming ? confirmRef : removeRef).current?.focus()
+    moved.current = true
+  }, [confirming])
   return confirming ? (
     <>
       <button
+        ref={confirmRef}
         className="pill danger"
         disabled={busy}
         onClick={() => void onConfirm().then((ok) => ok && setConfirming(false))}
@@ -136,7 +146,7 @@ export function ConfirmButton({
       </button>
     </>
   ) : (
-    <button className="pill danger" disabled={busy} onClick={() => setConfirming(true)}>
+    <button ref={removeRef} className="pill danger" disabled={busy} onClick={() => setConfirming(true)}>
       Remove
     </button>
   )
@@ -164,5 +174,49 @@ export function Stat({
         {sub && <span className="stat-sub">{sub}</span>}
       </p>
     </div>
+  )
+}
+
+/**
+ * A native modal <dialog>: the browser traps focus, makes the page inert and
+ * handles Esc. The dialog itself is the full-viewport transparent host, so a
+ * click that lands on it rather than on the panel inside is a backdrop click.
+ * Focus goes back to whatever had it before the dialog opened.
+ */
+export function Modal({
+  label,
+  labelledBy,
+  onClose,
+  children,
+}: {
+  label?: string
+  labelledBy?: string
+  onClose: () => void
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    const d = ref.current!
+    const prev = document.activeElement as HTMLElement | null
+    d.showModal()
+    return () => {
+      d.close()
+      prev?.focus()
+    }
+  }, [])
+  return (
+    <dialog
+      ref={ref}
+      className="modal-host"
+      aria-label={label}
+      aria-labelledby={labelledBy}
+      onCancel={(e) => {
+        e.preventDefault()
+        onClose()
+      }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      {children}
+    </dialog>
   )
 }

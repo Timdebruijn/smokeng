@@ -168,6 +168,26 @@ function AppHeader({
   onMenu: (m: HeaderMenu) => void
 }) {
   const who = me?.name ?? me?.email ?? me?.subject ?? ''
+
+  // An open popover closes on Esc (focus back on its trigger) and on a press
+  // anywhere outside the header menus.
+  useEffect(() => {
+    if (!menu) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      onMenu(null)
+      document.querySelector<HTMLElement>('[aria-controls$="-popover"][aria-expanded="true"]')?.focus()
+    }
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target as Element).closest('.a11y, .bell, .usermenu')) onMenu(null)
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onDown)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onDown)
+    }
+  }, [menu, onMenu])
   return (
     <header className="appbar">
       <div className="appbar-inner">
@@ -207,13 +227,18 @@ function AppHeader({
         />
         {me?.auth_enabled && me.authenticated && (
           <div className="usermenu">
-            <button className="chip-button" onClick={() => onMenu(menu === 'user' ? null : 'user')}>
+            <button
+              className="chip-button"
+              aria-expanded={menu === 'user'}
+              aria-controls="user-popover"
+              onClick={() => onMenu(menu === 'user' ? null : 'user')}
+            >
               <span className="avatar">{(who || '?').slice(0, 1).toUpperCase()}</span>
               <span className="who">{who}</span>
               <span className="role-tag">{me.role}</span>
             </button>
             {menu === 'user' && (
-              <div className="popover">
+              <div id="user-popover" className="popover">
                 <p className="popover-title">{me.email ?? me.subject}</p>
                 <p className="hint small">Signed in via OIDC · {me.role}</p>
                 {me.version && <p className="hint small">smokeng {me.version}</p>}

@@ -64,6 +64,7 @@ export default function Bell({
         title={unacked ? `${unacked} firing` : 'Firing alerts'}
         aria-label={unacked ? `${unacked} alerts firing` : 'Firing alerts'}
         aria-expanded={open}
+        aria-controls="bell-popover"
         onClick={() => onOpenChange(!open)}
       >
         <svg
@@ -83,7 +84,7 @@ export default function Bell({
         {unacked > 0 && <span className="bell-badge">{unacked}</span>}
       </button>
       {open && (
-        <div className="popover bell-popover">
+        <div id="bell-popover" className="popover bell-popover">
           <p className="popover-title">Firing now</p>
           {!delivering && (
             <p className="hint small">
