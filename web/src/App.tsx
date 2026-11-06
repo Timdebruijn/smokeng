@@ -571,6 +571,7 @@ function TargetSidebar({
         className="filter"
         value={search}
         onChange={(e) => onSearch(e.target.value)}
+        aria-label="Filter targets"
         placeholder="Filter targets"
       />
       {rows.map((r) => (
