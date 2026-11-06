@@ -171,7 +171,11 @@ function AppHeader({
     <header className="appbar">
       <div className="appbar-inner">
         <button className="brand" onClick={() => onView('overview')}>
-          <span className="brand-name">smokeng</span>
+          {/* The same ribbon as the tab icon: the smoke and its median. */}
+          <img className="brand-mark" src="/favicon.svg" alt="" width={28} height={28} />
+          <span className="brand-name">
+            smoke<span className="brand-ng">ng</span>
+          </span>
           {me?.version && <span className="version-tag">{me.version}</span>}
         </button>
         <nav className="tabs">

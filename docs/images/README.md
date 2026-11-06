@@ -5,6 +5,7 @@ reference.
 
 | File | View | Referenced from |
 | --- | --- | --- |
+| `banner.svg` | The wordmark (`smoke` + `ng` in the accent) beside the smoke ribbon, with the tagline. The lettering is IBM Plex Sans drawn as outlines; light and dark through `prefers-color-scheme`. | `README.md` |
 | `tour.gif` | A short tour: overview, graphs, a crosshair sweep, a brush-zoom, a detail page, alerts. 960 px wide, 17 frames. | `README.md` |
 | `graphs.png` | **Graphs** — an uplink with evening congestion and loss, a wifi access point that splits into two bands, an irtt target with its userspace badges. | `README.md`, `reading-graphs.md` |
 | `overview.png` | **Overview** — the stat strip, the per-series list with sparklines, firing alerts and measurement quality. | `README.md`, `getting-started.md` |
@@ -13,7 +14,8 @@ reference.
 | `alerts.png` | **Alerts** — a firing bimodality rule and a latency rule, the rule list, silences, history. | `README.md`, `alerting.md` |
 | `targets.png` | **Targets** — the tree admin with values set on the node next to inherited ones. | `README.md` |
 
-Stills are 1280 logical pixels wide at 2× device scale, light theme; the GIF is captured at 1×.
+Stills are 1280 logical pixels wide at 2× device scale, light theme; the GIF is captured at 1×. The header shows the
+build's `git describe` version, since the shots are taken from a branch rather than a release.
 
 ## How they were made
 
