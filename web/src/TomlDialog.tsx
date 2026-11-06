@@ -63,6 +63,7 @@ export default function TomlDialog({
             : 'Applied declaratively to the whole tree: anything absent is disabled, never deleted. Use config import --prune on the command line if you mean to delete.'}
         </p>
         <textarea
+          aria-label={mode === 'import' ? 'targets.toml to import' : 'Exported targets.toml'}
           value={text}
           readOnly={mode === 'export'}
           spellCheck={false}

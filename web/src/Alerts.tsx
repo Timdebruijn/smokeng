@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import { useAction } from './shared'
 import {
   createAlertRule,
@@ -657,6 +657,7 @@ function RuleForm({
   onSubmit: (body: Partial<AlertRule>) => void
   onCancel: () => void
 }) {
+  const id = useId()
   const [name, setName] = useState('')
   const [targetId, setTargetId] = useState<number>(targets[0]?.id ?? 1)
   const [metric, setMetric] = useState<AlertRule['metric']>('loss')
@@ -702,10 +703,10 @@ function RuleForm({
           <TargetOptions targets={targets} />
         </select>
       </label>
-      <label className="field">
-        <span>When</span>
+      <div className="field" role="group" aria-labelledby={`${id}-when`}>
+        <span id={`${id}-when`}>When</span>
         <span className="inline">
-          <select value={metric} onChange={(e) => setMetric(e.target.value as AlertRule['metric'])}>
+          <select aria-label="Metric" value={metric} onChange={(e) => setMetric(e.target.value as AlertRule['metric'])}>
             {METRICS.map((m) => (
               <option key={m.value} value={m.value}>
                 {m.label}
@@ -714,7 +715,11 @@ function RuleForm({
           </select>
           {shape ? (
             <>
-              <select value={mode} onChange={(e) => setMode(e.target.value as 'auto' | 'tunable')}>
+              <select
+                aria-label="Threshold mode"
+                value={mode}
+                onChange={(e) => setMode(e.target.value as 'auto' | 'tunable')}
+              >
                 <option value="auto">auto (self-calibrated)</option>
                 <option value="tunable">tunable</option>
               </select>
@@ -722,6 +727,7 @@ function RuleForm({
                 <>
                   <span className="unit">&gt;</span>
                   <input
+                    aria-label="Threshold"
                     value={threshold}
                     size={5}
                     onChange={(e) => setThreshold(e.target.value)}
@@ -733,11 +739,16 @@ function RuleForm({
             </>
           ) : (
             <>
-              <select value={op} onChange={(e) => setOp(e.target.value as AlertRule['op'])}>
+              <select
+                aria-label="Condition"
+                value={op}
+                onChange={(e) => setOp(e.target.value as AlertRule['op'])}
+              >
                 <option value=">">is above</option>
                 <option value="<">is below</option>
               </select>
               <input
+                aria-label="Threshold"
                 value={threshold}
                 size={5}
                 onChange={(e) => setThreshold(e.target.value)}
@@ -747,7 +758,7 @@ function RuleForm({
             </>
           )}
         </span>
-      </label>
+      </div>
       {metric === 'shape' && (
         <label className="field">
           <span>Compared against</span>
@@ -771,18 +782,24 @@ function RuleForm({
             : 'Fires when the distribution splits into two clusters — a load-balanced or flapping path. Auto uses the 0.6 bimodality mark.'}
         </p>
       )}
-      <label className="field">
-        <span>For</span>
+      <div className="field" role="group" aria-labelledby={`${id}-for`}>
+        <span id={`${id}-for`}>For</span>
         <span className="inline">
-          <input value={forIntervals} size={3} onChange={(e) => setForIntervals(e.target.value)} />
+          <input
+            aria-label="Consecutive intervals before firing"
+            value={forIntervals}
+            size={3}
+            onChange={(e) => setForIntervals(e.target.value)}
+          />
           <span className="unit">consecutive intervals, clearing after</span>
           <input
+            aria-label="Intervals before clearing"
             value={clearIntervals}
             size={3}
             onChange={(e) => setClearIntervals(e.target.value)}
           />
         </span>
-      </label>
+      </div>
       <label className="field">
         <span>Severity</span>
         <select

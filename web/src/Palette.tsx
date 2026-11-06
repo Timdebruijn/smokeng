@@ -65,6 +65,7 @@ export default function Palette({
         <input
           ref={input}
           value={query}
+          aria-label="Jump to a target or a screen"
           placeholder="Jump to a target or a screen…"
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {

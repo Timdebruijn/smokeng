@@ -163,6 +163,7 @@ function AgentRow({
             agent.name
           ) : (
             <input
+              aria-label={`Rename ${agent.name}`}
               value={draft}
               disabled={busy}
               onChange={(e) => setDraft(e.target.value)}
