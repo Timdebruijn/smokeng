@@ -10,7 +10,7 @@ import {
 import { setCursor, subscribeCursor } from './crosshair'
 import { fmtLoss, fmtUs } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt } from './layout'
-import { useRenderWorker, useWidth } from './shared'
+import { useRenderWorker, useWidth, ErrorText } from './shared'
 
 interface Props {
   target: Target
@@ -465,7 +465,7 @@ export default function Plot({
           </>
         )}
       </div>
-      {fetchError && <p className="error">Measurements failed to load: {fetchError}</p>}
+      {fetchError && <ErrorText>Measurements failed to load: {fetchError}</ErrorText>}
       <div
         ref={stackRef}
         className="plot-stack"

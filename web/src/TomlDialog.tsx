@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { exportConfig, importConfig } from './api'
-import { useCopy } from './shared'
+import { useCopy, ErrorText } from './shared'
 
 /**
  * The target tree as text, in both directions.
@@ -70,8 +70,8 @@ export default function TomlDialog({
           onChange={(e) => setText(e.target.value)}
           placeholder={mode === 'import' ? 'Paste a targets.toml here…' : ''}
         />
-        {error && <p className="error">{error}</p>}
-        {result && <pre className="import-result">{result}</pre>}
+        {error && <ErrorText>{error}</ErrorText>}
+        <div role="status">{result && <pre className="import-result">{result}</pre>}</div>
         <div className="pill-row">
           {mode === 'import' ? (
             <button className="pill accent" disabled={busy || text.trim() === ''} onClick={() => void doImport()}>

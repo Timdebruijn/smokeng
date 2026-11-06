@@ -10,7 +10,7 @@ import {
   type AgentToken,
   type NewAgentToken,
 } from './api'
-import { ConfirmButton, useAction, useCopy } from './shared'
+import { ConfirmButton, useAction, useCopy, ErrorText } from './shared'
 
 const TTL_OPTIONS: { seconds: number; label: string }[] = [
   { seconds: 900, label: '15 minutes' },
@@ -49,7 +49,7 @@ export default function Agents({
 
   return (
     <>
-      {error && <p className="error">{error}</p>}
+      {error && <ErrorText>{error}</ErrorText>}
 
       <section className="card section-card">
         <div className="section-card-head">

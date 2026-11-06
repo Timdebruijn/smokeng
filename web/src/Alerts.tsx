@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState } from 'react'
-import { useAction } from './shared'
+import { useAction, ErrorText } from './shared'
 import {
   createAlertRule,
   deleteAlertRule,
@@ -86,7 +86,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
-      {error && <p className="error">{error}</p>}
+      {error && <ErrorText>{error}</ErrorText>}
       {!delivering && (
         <p className="hint warn">
           Rules are evaluated and their transitions recorded, but nothing is posted anywhere:

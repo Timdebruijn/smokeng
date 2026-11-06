@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { ErrorText } from './shared'
 
 interface Props {
   children: ReactNode
@@ -41,7 +42,7 @@ export default class ErrorBoundary extends Component<Props, State> {
     return (
       <section className="card section-card" role="alert">
         <h2>Something went wrong showing {this.props.what}</h2>
-        <p className="error">{error.message || error.name}</p>
+        <ErrorText>{error.message || error.name}</ErrorText>
         <p className="hint small">The rest of the page is unaffected.</p>
         <p>
           <button className="pill" onClick={() => this.setState({ error: null })}>

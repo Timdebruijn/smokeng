@@ -14,7 +14,7 @@ import {
   type SettingValue,
   type Target,
 } from './api'
-import { useAction } from './shared'
+import { useAction, ErrorText } from './shared'
 import { orderedTargets } from './util'
 
 interface SettingDef {
@@ -228,7 +228,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
         ))}
       </aside>
       <section className="detail">
-        {error && <p className="error">{error}</p>}
+        {error && <ErrorText>{error}</ErrorText>}
         {selected ? (
           <TargetDetail
             key={selected.id}
