@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createAgentToken,
   deleteAgent,
@@ -31,6 +31,13 @@ export default function Agents({
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [tokens, setTokens] = useState<AgentToken[]>([])
   const [adding, setAdding] = useState(false)
+  // The form replaces the button that opened it; give focus back when it closes.
+  const addButton = useRef<HTMLButtonElement>(null)
+  const wasAdding = useRef(false)
+  useEffect(() => {
+    if (wasAdding.current && !adding) addButton.current?.focus()
+    wasAdding.current = adding
+  }, [adding])
   // Holds the plaintext token right after minting. Nothing else — not even a
   // reload — can bring it back once it is dismissed.
   const [minted, setMinted] = useState<NewAgentToken | null>(null)
@@ -92,7 +99,7 @@ export default function Agents({
             />
           ) : (
             <div className="pill-row">
-              <button className="pill accent" disabled={busy} onClick={() => setAdding(true)}>
+              <button ref={addButton} className="pill accent" disabled={busy} onClick={() => setAdding(true)}>
                 Add an agent…
               </button>
             </div>

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createGrant,
   deleteGrant,
@@ -27,6 +27,13 @@ export default function Grants({
   const [grants, setGrants] = useState<Grant[]>([])
   const [targets, setTargets] = useState<Target[]>([])
   const [adding, setAdding] = useState(false)
+  // The form replaces the button that opened it; give focus back when it closes.
+  const addButton = useRef<HTMLButtonElement>(null)
+  const wasAdding = useRef(false)
+  useEffect(() => {
+    if (wasAdding.current && !adding) addButton.current?.focus()
+    wasAdding.current = adding
+  }, [adding])
 
   const load = useCallback(async () => {
     const [g, t] = await Promise.all([fetchGrants(), fetchTargets()])
@@ -121,7 +128,7 @@ export default function Grants({
             />
           ) : (
             <div className="pill-row">
-              <button className="pill accent" disabled={busy} onClick={() => setAdding(true)}>
+              <button ref={addButton} className="pill accent" disabled={busy} onClick={() => setAdding(true)}>
                 Add a grant…
               </button>
             </div>

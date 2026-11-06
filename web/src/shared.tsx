@@ -113,9 +113,19 @@ export function ConfirmButton({
   onConfirm: () => Promise<boolean>
 }) {
   const [confirming, setConfirming] = useState(false)
+  const confirmRef = useRef<HTMLButtonElement>(null)
+  const removeRef = useRef<HTMLButtonElement>(null)
+  const moved = useRef(false)
+  // The button that had focus is gone after each swap; put focus on its
+  // replacement, but not on first render.
+  useEffect(() => {
+    if (moved.current) (confirming ? confirmRef : removeRef).current?.focus()
+    moved.current = true
+  }, [confirming])
   return confirming ? (
     <>
       <button
+        ref={confirmRef}
         className="pill danger"
         disabled={busy}
         onClick={() => void onConfirm().then((ok) => ok && setConfirming(false))}
@@ -127,7 +137,7 @@ export function ConfirmButton({
       </button>
     </>
   ) : (
-    <button className="pill danger" disabled={busy} onClick={() => setConfirming(true)}>
+    <button ref={removeRef} className="pill danger" disabled={busy} onClick={() => setConfirming(true)}>
       Remove
     </button>
   )
