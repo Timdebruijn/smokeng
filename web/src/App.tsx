@@ -13,6 +13,7 @@ import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
 import { RANGES, fromLocalInput, refreshMs, resolveSeries, toLocalInput, zoomOut, type PlotSeries } from './util'
+import { ErrorText } from './shared'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
@@ -430,7 +431,7 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
             </form>
           )}
         </div>
-        {error && <p className="error">{error}</p>}
+        {error && <ErrorText>{error}</ErrorText>}
         {!error && leaves.length === 0 && (
           <p className="hint">
             No targets yet — add them under <strong>Targets</strong>, or import a SmokePing config
@@ -571,6 +572,7 @@ function TargetSidebar({
         className="filter"
         value={search}
         onChange={(e) => onSearch(e.target.value)}
+        aria-label="Filter targets"
         placeholder="Filter targets"
       />
       {rows.map((r) => (

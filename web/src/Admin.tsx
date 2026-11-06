@@ -1,5 +1,5 @@
 import TomlDialog from './TomlDialog'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import {
   SERIES_LABELS,
   SERIES_NAMES,
@@ -14,7 +14,7 @@ import {
   type SettingValue,
   type Target,
 } from './api'
-import { useAction } from './shared'
+import { useAction, ErrorText } from './shared'
 import { orderedTargets } from './util'
 
 interface SettingDef {
@@ -228,7 +228,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
         ))}
       </aside>
       <section className="detail">
-        {error && <p className="error">{error}</p>}
+        {error && <ErrorText>{error}</ErrorText>}
         {selected ? (
           <TargetDetail
             key={selected.id}
@@ -473,6 +473,10 @@ function SettingRow({
   const shown = isUnset(value) ? '' : String(value.effective)
   const [draft, setDraft] = useState(shown)
   const [problem, setProblem] = useState<string | null>(null)
+  const id = useId()
+  const label = { 'aria-labelledby': `${id}-l` }
+  const describedBy = [def.hint && `${id}-h`, problem && `${id}-e`].filter(Boolean).join(' ') || undefined
+  const field = { ...label, 'aria-describedby': describedBy, 'aria-invalid': problem ? true : undefined }
   useEffect(() => {
     setDraft(shown)
     setProblem(null)
@@ -493,16 +497,18 @@ function SettingRow({
 
   return (
     <tr>
-      <th>{def.label}</th>
+      <th id={`${id}-l`}>{def.label}</th>
       <td>
         {def.kind === 'series' ? (
           <SeriesPicker
+            {...label}
             selected={String(value.effective)}
             disabled={busy || !isLocal}
             onChange={set}
           />
         ) : def.kind === 'agents' ? (
           <AgentPicker
+            {...label}
             selected={String(value.effective)}
             agents={agents}
             disabled={busy || !isLocal}
@@ -510,6 +516,7 @@ function SettingRow({
           />
         ) : def.kind === 'bool' ? (
           <input
+            {...field}
             type="checkbox"
             checked={value.effective === true}
             disabled={busy || !isLocal}
@@ -517,6 +524,7 @@ function SettingRow({
           />
         ) : def.kind === 'choice' ? (
           <select
+            {...field}
             value={String(value.effective)}
             disabled={busy || !isLocal}
             onChange={(e) => set(e.target.value)}
@@ -530,6 +538,7 @@ function SettingRow({
         ) : (
           <>
             <input
+              {...field}
               value={draft}
               disabled={busy || !isLocal}
               size={10}
@@ -543,8 +552,16 @@ function SettingRow({
             {def.unit && <span className="unit">{def.unit}</span>}
           </>
         )}
-        {def.hint && <p className="hint small">{def.hint}</p>}
-        {problem && <p className="field-error">{problem}</p>}
+        {def.hint && (
+          <p id={`${id}-h`} className="hint small">
+            {def.hint}
+          </p>
+        )}
+        {problem && (
+          <p id={`${id}-e`} className="field-error" role="alert">
+            {problem}
+          </p>
+        )}
       </td>
       <td className="provenance">
         {isUnset(value) ? (
@@ -564,12 +581,13 @@ function SettingRow({
       </td>
       <td>
         {isLocal ? (
-          <button disabled={busy} onClick={() => void onSet(null)}>
+          <button disabled={busy} aria-label={`Revert ${def.label}`} onClick={() => void onSet(null)}>
             Revert
           </button>
         ) : (
           <button
             disabled={busy}
+            aria-label={`Override ${def.label}`}
             onClick={() => void onSet(value.effective === '' || shown === '' ? (def.seed ?? value.effective) : value.effective)}
           >
             Override
@@ -591,11 +609,13 @@ function SettingRow({
 // subtree also from ams-01" is one checkbox rather than a second inheritance
 // mechanism to reason about.
 function AgentPicker({
+  'aria-labelledby': labelledBy,
   selected,
   agents,
   disabled,
   onChange,
 }: {
+  'aria-labelledby': string
   selected: string
   agents: AgentInfo[]
   disabled: boolean
@@ -613,7 +633,7 @@ function AgentPicker({
   }
 
   return (
-    <div className="agent-picker">
+    <div className="agent-picker" role="group" aria-labelledby={labelledBy}>
       {[...known, ...orphaned].map((name) => (
         <label key={name} className="agent-option">
           <input
@@ -683,9 +703,9 @@ function AddChildForm({
         onSubmit(host ? { name, host, address_family: family } : { name })
       }}
     >
-      <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required />
-      <input placeholder="host (empty = group)" value={host} onChange={(e) => setHost(e.target.value)} />
-      <select value={family} onChange={(e) => setFamily(e.target.value)} disabled={!host}>
+      <input aria-label="Name" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required />
+      <input aria-label="Host" placeholder="host (empty = group)" value={host} onChange={(e) => setHost(e.target.value)} />
+      <select aria-label="Address family" value={family} onChange={(e) => setFamily(e.target.value)} disabled={!host}>
         <option value="v4">v4</option>
         <option value="v6">v6</option>
       </select>
@@ -706,10 +726,12 @@ function AddChildForm({
  * change a target's meaning on the next release that adds one.
  */
 function SeriesPicker({
+  'aria-labelledby': labelledBy,
   selected,
   disabled,
   onChange,
 }: {
+  'aria-labelledby': string
   selected: string
   disabled: boolean
   onChange: (v: string) => void
@@ -723,7 +745,7 @@ function SeriesPicker({
     onChange(SERIES_NAMES.filter((n) => next.has(n)).join(' '))
   }
   return (
-    <div className="series-picker">
+    <div className="series-picker" role="group" aria-labelledby={labelledBy}>
       <label>
         <input
           type="checkbox"

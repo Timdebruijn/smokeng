@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 
 /**
  * The reload / run-a-mutation / busy / error shape the admin screens share.
@@ -43,6 +43,15 @@ export function useAction(load: () => Promise<void>) {
   )
 
   return { error, busy, reload, run }
+}
+
+/** An error line that screen readers announce when it appears. */
+export function ErrorText({ children, id }: { children: ReactNode; id?: string }) {
+  return (
+    <p className="error" role="alert" id={id}>
+      {children}
+    </p>
+  )
 }
 
 /** Copy `text`, and say so for two seconds. */
