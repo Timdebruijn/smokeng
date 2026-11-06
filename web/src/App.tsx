@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import Admin from './Admin'
 import Agents from './Agents'
 import Alerts from './Alerts'
@@ -12,8 +12,8 @@ import Compare, { type CompareSeries } from './Compare'
 import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
-import { RANGES, fromLocalInput, refreshMs, resolveSeries, toLocalInput, zoomOut, type PlotSeries } from './util'
-import { ErrorText } from './shared'
+import { RANGES, fromLocalInput, resolveSeries, toLocalInput, type PlotSeries } from './util'
+import { ErrorText, useTimeWindow } from './shared'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
@@ -264,13 +264,8 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
   // Set only when listing agents failed outright, which is a different thing
   // from a list that came back without the name a target asked for.
   const [agentsError, setAgentsError] = useState<string | null>(null)
-  const [rangeS, setRangeS] = useState(3600)
-  const [refreshKey, setRefreshKey] = useState(0)
-  const [live, setLive] = useState(true)
+  const { rangeS, from, to, refreshKey, live, zoom, setZoom, pickRange, onZoomOut, toggleLive } = useTimeWindow()
   const [logScale, setLogScale] = useState(true)
-  // An explicit window from brush-zoom; null means a trailing live window.
-  // Free ranges are the mechanism, the presets are only sugar over it.
-  const [zoom, setZoom] = useState<{ from: number; to: number } | null>(null)
 
   useEffect(() => {
     fetchTargets()
@@ -292,32 +287,7 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
       })
   }, [])
 
-  useEffect(() => {
-    if (!live || zoom) return
-    const id = setInterval(() => setRefreshKey((k) => k + 1), refreshMs(rangeS))
-    return () => clearInterval(id)
-  }, [live, zoom, rangeS])
-
-  // Freeze the window per refresh tick so every stacked plot shares one time
-  // axis — the precondition for the shared crosshair meaning anything.
-  const [from, to] = useMemo(() => {
-    if (zoom) return [zoom.from, zoom.to]
-    const now = Math.floor(Date.now() / 1000)
-    return [now - rangeS, now]
-  }, [rangeS, refreshKey, zoom])
-
   const onZoom = (f: number, t: number) => setZoom({ from: f, to: t })
-
-  const pickRange = (seconds: number) => {
-    setZoom(null)
-    setRangeS(seconds)
-  }
-
-  const onZoomOut = () => {
-    const next = zoomOut(from, to, Math.floor(Date.now() / 1000))
-    if ('rangeS' in next) pickRange(next.rangeS)
-    else setZoom(next)
-  }
 
   // A window typed in: the free range the presets are sugar over.
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(null)
@@ -399,13 +369,10 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
             log
           </button>
           <button
-            className={live && !zoom ? 'pill active' : 'pill'}
-            onClick={() => {
-              setZoom(null)
-              setLive(!live)
-            }}
+            className={live ? 'pill active' : 'pill'}
+            onClick={toggleLive}
           >
-            {live && !zoom ? '● live' : '○ paused'}
+            {live ? '● live' : '○ paused'}
           </button>
           <button
             className={custom ? 'pill active' : 'pill'}

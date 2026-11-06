@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Plot from './Plot'
 import SeriesPlot from './SeriesPlot'
 import {
@@ -15,7 +15,7 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { Stat, ErrorText } from './shared'
+import { Stat, ErrorText, useTimeWindow } from './shared'
 import { RANGES, csvCell, summarise } from './util'
 
 // `types` limits a row to the probe types it means something for, the same way
@@ -90,7 +90,7 @@ export default function Detail({
   onBack: () => void
   onEdit: () => void
 }) {
-  const [rangeS, setRangeS] = useState(3600)
+  const { rangeS, from, to, refreshKey, live, zoom, setZoom, pickRange, toggleLive } = useTimeWindow()
   const [stats, setStats] = useState<ReturnType<typeof summarise> | null>(null)
   const [rules, setRules] = useState<AlertRule[]>([])
 
@@ -100,11 +100,6 @@ export default function Detail({
   // Null rather than 0: falling back to the local prober would show one
   // vantage point's measurements under another's name.
   const agentId = byName.get(agentNames[0]) ?? null
-
-  const [from, to] = useMemo(() => {
-    const now = Math.floor(Date.now() / 1000)
-    return [now - rangeS, now]
-  }, [rangeS])
 
   useEffect(() => {
     if (agentId === null) {
@@ -195,12 +190,20 @@ export default function Detail({
           {RANGES.map((r) => (
             <button
               key={r.label}
-              className={r.seconds === rangeS ? 'pill active' : 'pill'}
-              onClick={() => setRangeS(r.seconds)}
+              className={!zoom && r.seconds === rangeS ? 'pill active' : 'pill'}
+              onClick={() => pickRange(r.seconds)}
             >
               {r.label}
             </button>
           ))}
+          <button className={live ? 'pill active' : 'pill'} onClick={toggleLive}>
+            {live ? '● live' : '○ paused'}
+          </button>
+          {zoom && (
+            <button className="pill accent" onClick={() => setZoom(null)}>
+              reset zoom
+            </button>
+          )}
         </div>
         {agentId === null ? (
           <p className="hint">
@@ -213,8 +216,9 @@ export default function Detail({
             agentId={agentId}
             from={from}
             to={to}
+            refreshKey={refreshKey}
             logScale
-            onZoom={() => undefined}
+            onZoom={(f, t) => setZoom({ from: f, to: t })}
           />
         )}
         {agentId !== null &&
