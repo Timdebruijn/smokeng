@@ -1,8 +1,6 @@
 <div align="center">
 
-# smokeng
-
-### See the shape of your network, not its average.
+<img src="docs/images/banner.svg" width="900" alt="smokeng — See the shape of your network, not its average.">
 
 Self-hosted latency and packet-loss monitoring that keeps every round-trip time, alerts when the distribution changes shape, and flags any measurement it can't vouch for.
 

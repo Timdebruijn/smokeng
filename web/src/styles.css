@@ -622,6 +622,16 @@ a.button {
   font-size: 17px;
 }
 
+/* "ng" is next gen, and the wordmark says so in the accent. */
+.brand-ng {
+  color: var(--accent);
+}
+
+.brand-mark {
+  display: block;
+  margin-right: -4px;
+}
+
 .tabs {
   display: flex;
   gap: 2px;
