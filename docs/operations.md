@@ -392,6 +392,12 @@ answers 400, and the agent discards that batch (`agent: master could not decode 
 in the agent's log) instead of retrying it forever. Those measurements are lost. When a
 release changes the batch format, upgrade the master first.
 
+**Path changes need both sides at v0.26.0.** The master asks for them through
+`trace_interval_s` in the assignments, and an agent discovers paths only when its master
+asked. An older master never asks, so a newer agent traces nothing; a newer master asks an
+older agent, which ignores the field. A master downgraded after asking answers 404 to the
+path route, and the agent keeps its changes buffered until it is upgraded again.
+
 ## Tuning
 
 ### Receive buffer

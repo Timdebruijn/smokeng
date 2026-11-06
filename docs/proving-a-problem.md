@@ -13,8 +13,8 @@ Measure before you complain. A graph that starts after the fault shows nothing.
 
 **Two vantage points at least.** One probe can only say "this is slow from here". A second
 one, on another network or at the far end, separates a fault at your site from a fault on the
-target. See [Remote agents](agents.md). Remember that agents do not run traceroute, so path
-marks come from the master's own prober only.
+target. See [Remote agents](agents.md). Each vantage point records its own path, so a route
+change seen from one and not the other places it.
 
 **Separate your link from their network.** Add targets that cut the path in pieces:
 

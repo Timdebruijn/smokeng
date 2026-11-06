@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"log"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -314,4 +316,82 @@ func agentVersion(r *http.Request) string {
 		}
 	}
 	return v
+}
+
+// The bounds on one path submission. An agent sends at most pushPaths changes
+// at a time, and a traceroute stops at 30 hops; these are well above both and
+// keep a submission small enough to read whole.
+const (
+	maxPathsPerSubmission = 1000
+	maxHopsPerPath        = 64
+)
+
+// handleAgentPaths accepts the path changes a remote agent discovered (§9a),
+// stored under its id so its marks show on its own series. JSON rather than a
+// column in the measurement batch: a change is rare and small, and a second
+// message type inside the Arrow frame would widen what that screen accepts.
+// The rules are the measurement batch's: signed; only targets assigned to it;
+// nothing timestamped in the future; a bad row is dropped and the rest kept;
+// the first write wins.
+func (s *server) handleAgentPaths(w http.ResponseWriter, r *http.Request) {
+	agent, body, ok := s.agentAuth(w, r)
+	if !ok {
+		return
+	}
+	var sub struct {
+		Paths []struct {
+			TargetID int64    `json:"target_id"`
+			TS       int64    `json:"ts"`
+			Hops     []string `json:"hops"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(body, &sub); err != nil || len(sub.Paths) > maxPathsPerSubmission {
+		log.Printf("ingest: agent %q sent an unreadable path submission (%d paths): %v", agent.Name, len(sub.Paths), err)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad submission"})
+		return
+	}
+	assigned, err := s.assignedTargets(r.Context(), agent.Name)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	horizon := time.Now().Add(ingest.MaxSkew).Unix()
+	var kept []store.PathChange
+	var dropped int
+	for _, p := range sub.Paths {
+		if !assigned[p.TargetID] || p.TS > horizon || !validHops(p.Hops) {
+			dropped++
+			continue
+		}
+		kept = append(kept, store.PathChange{TargetID: p.TargetID, TS: p.TS, Hops: strings.Join(p.Hops, ",")})
+	}
+	if dropped > 0 {
+		log.Printf("ingest: agent %q submitted %d path change(s) for a target not assigned to it, "+
+			"timestamped in the future, or with a malformed hop list; those were discarded and the rest accepted",
+			agent.Name, dropped)
+	}
+	dup, err := s.st.IngestPaths(r.Context(), agent.ID, kept)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"accepted": len(kept) - dup, "duplicates": dup})
+}
+
+// validHops is a hop list as trace.Path.String writes one: at least one hop,
+// each an address or "*" for one that did not answer. Anything else would be
+// stored and later drawn as a hop name.
+func validHops(hops []string) bool {
+	if len(hops) == 0 || len(hops) > maxHopsPerPath {
+		return false
+	}
+	for _, h := range hops {
+		if h == "*" {
+			continue
+		}
+		if _, err := netip.ParseAddr(h); err != nil {
+			return false
+		}
+	}
+	return true
 }

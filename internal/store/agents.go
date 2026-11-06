@@ -398,6 +398,79 @@ func (s *SQLite) RecordPath(ctx context.Context, targetID, agentID, ts int64, ho
 	return err
 }
 
+// PendingPaths returns the path changes an agent has not yet had confirmed by
+// the master, oldest first.
+func (s *SQLite) PendingPaths(ctx context.Context, limit int) ([]PathChange, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT target_id, agent_id, ts, hops FROM paths
+		WHERE submitted = 0 ORDER BY ts LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PathChange
+	for rows.Next() {
+		var c PathChange
+		if err := rows.Scan(&c.TargetID, &c.AgentID, &c.TS, &c.Hops); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// PathsSubmitted records that the master confirmed these changes, and forgets
+// every confirmed change but the latest per target. Unlike a measurement, the
+// latest is kept: the agent decides whether a traceroute found a change by
+// comparing it with the last path it recorded (LastPath), and with that gone
+// every next run would look like one, and arrive at the master as a mark where
+// the route did not change.
+func (s *SQLite) PathsSubmitted(ctx context.Context, cs []PathChange) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, c := range cs {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE paths SET submitted = 1 WHERE target_id = ? AND agent_id = ? AND ts = ?",
+			c.TargetID, c.AgentID, c.TS); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM paths WHERE target_id = ? AND agent_id = ? AND submitted = 1
+			  AND ts < (SELECT MAX(ts) FROM paths WHERE target_id = ? AND agent_id = ?)`,
+			c.TargetID, c.AgentID, c.TargetID, c.AgentID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// IngestPaths writes the path changes a remote agent submitted, under its id.
+// As with measurements, the first write wins: a replayed or retried
+// submission changes nothing, and an agent cannot rewrite a change it has
+// already reported. It returns how many were already there.
+func (s *SQLite) IngestPaths(ctx context.Context, agentID int64, cs []PathChange) (duplicates int, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	for _, c := range cs {
+		res, err := tx.ExecContext(ctx,
+			"INSERT OR IGNORE INTO paths (target_id, agent_id, ts, hops, submitted) VALUES (?, ?, ?, ?, 1)",
+			c.TargetID, agentID, c.TS, c.Hops)
+		if err != nil {
+			return 0, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			duplicates++
+		}
+	}
+	return duplicates, tx.Commit()
+}
+
 // PathChanges returns the changes for one series over [from, to), plus the
 // one in force when the window opened — without it a window that contains no
 // change would look as though the path were unknown.

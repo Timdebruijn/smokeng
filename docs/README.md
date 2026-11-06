@@ -52,7 +52,7 @@ behaviour that looks surprising; these pages are the reference for running it.
 | Series | One target as seen from one vantage point. |
 | Coverage | The share of a window for which there is data. Availability is always given next to it. |
 | Quality badge | A flag on an interval saying the measurement itself is suspect: userspace timestamps, dropped replies, a clock step and more. |
-| Path change mark | A mark on the time axis where the traceroute hop list differed from the last one stored. Master only. |
+| Path change mark | A mark on the time axis where the traceroute hop list differed from the last one stored, per vantage point. |
 | Shape rule | An alert on how far the distribution drifted from its baseline (Wasserstein distance). |
 | Bimodality rule | An alert when one band of latency becomes two. |
 | Baseline | What a shape or bimodality rule compares against: `rolling` (the recent past) or `golden` (a window you captured). |

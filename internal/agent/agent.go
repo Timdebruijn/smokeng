@@ -53,6 +53,9 @@ type Agent struct {
 	key    ed25519.PrivateKey
 	st     *store.SQLite
 	client *http.Client
+	// pathsUnsupported is set once the master has answered that it has no
+	// route for path changes, so that is logged once and not every push.
+	pathsUnsupported bool
 }
 
 const (
@@ -62,6 +65,9 @@ const (
 	// small enough that a long backlog drains in visible steps rather than
 	// one enormous request that might time out repeatedly.
 	pushBatch = 2000
+	// pushPaths caps one path submission. Path changes are rare; this only
+	// matters for an agent that was cut off from its master for a long time.
+	pushPaths = 200
 )
 
 // LoadOrCreateKey reads the agent's private key, generating one on first
@@ -164,7 +170,7 @@ type assignment struct {
 	DNSRRType     string `json:"dns_rr_type"`
 	HTTPPath      string `json:"http_path"`
 	TLSSkipVerify bool   `json:"tls_skip_verify"`
-	// TraceIntervalS is absent from a master older than v0.25.0, and reads as
+	// TraceIntervalS is absent from a master older than v0.26.0, and reads as
 	// 0 then: no path discovery, since there would be nowhere to send a path.
 	TraceIntervalS int `json:"trace_interval_s"`
 }
@@ -277,9 +283,15 @@ func (a *Agent) mirror(ctx context.Context, targets []assignment) error {
 // has stopped, so a clean shutdown leaves nothing behind.
 func (a *Agent) Drain(ctx context.Context) { a.push(ctx) }
 
-// push drains buffered measurements to the master, oldest first, and deletes
-// only what the master confirmed.
+// push sends what is buffered: measurements, then path changes.
 func (a *Agent) push(ctx context.Context) {
+	a.pushMeasurements(ctx)
+	a.pushPaths(ctx)
+}
+
+// pushMeasurements drains buffered measurements to the master, oldest first,
+// and deletes only what the master confirmed.
+func (a *Agent) pushMeasurements(ctx context.Context) {
 	for {
 		batch, err := a.st.PendingMeasurements(ctx, pushBatch)
 		if err != nil {
@@ -340,6 +352,74 @@ func (a *Agent) push(ctx context.Context) {
 		}
 		log.Printf("agent: submitted %d measurements", len(batch))
 		if len(batch) < pushBatch {
+			return
+		}
+	}
+}
+
+// pushPaths sends the path changes the prober recorded (§9a), oldest first,
+// and marks only what the master confirmed. A path is discovered only when the
+// master's assignment asked for it (trace_interval_s), so a master that has no
+// route for them is one that was downgraded after asking: the changes are kept
+// until it is upgraded again rather than thrown away.
+func (a *Agent) pushPaths(ctx context.Context) {
+	for {
+		batch, err := a.st.PendingPaths(ctx, pushPaths)
+		if err != nil {
+			log.Printf("agent: read path buffer: %v", err)
+			return
+		}
+		if len(batch) == 0 {
+			return
+		}
+		type wire struct {
+			TargetID int64    `json:"target_id"`
+			TS       int64    `json:"ts"`
+			Hops     []string `json:"hops"`
+		}
+		out := make([]wire, 0, len(batch))
+		for _, c := range batch {
+			out = append(out, wire{TargetID: c.TargetID, TS: c.TS, Hops: strings.Split(c.Hops, ",")})
+		}
+		body, err := json.Marshal(map[string]any{"paths": out})
+		if err != nil {
+			log.Printf("agent: encode paths: %v", err)
+			return
+		}
+		req, err := a.signedRequest(ctx, http.MethodPost, "/api/v1/agent/paths", body)
+		if err != nil {
+			log.Printf("agent: sign paths: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := a.client.Do(req)
+		if err != nil {
+			log.Printf("agent: push paths: %v (keeping %d buffered)", err, len(batch))
+			return
+		}
+		resp.Body.Close()
+		switch {
+		case resp.StatusCode == http.StatusNotFound:
+			if !a.pathsUnsupported {
+				log.Printf("agent: the master has no route for path changes (it is older than v0.26.0); "+
+					"keeping %d buffered until it is upgraded", len(batch))
+				a.pathsUnsupported = true
+			}
+			return
+		case resp.StatusCode == http.StatusBadRequest:
+			// As with a measurement batch: the same bytes would be refused
+			// again, and re-sending them would stop every later change.
+			log.Printf("agent: master refused %d path change(s) (%s); discarding them", len(batch), resp.Status)
+		case resp.StatusCode != http.StatusOK:
+			log.Printf("agent: master rejected path changes with %s (keeping %d buffered)", resp.Status, len(batch))
+			return
+		}
+		a.pathsUnsupported = false
+		if err := a.st.PathsSubmitted(ctx, batch); err != nil {
+			log.Printf("agent: clearing the path buffer: %v", err)
+			return
+		}
+		if len(batch) < pushPaths {
 			return
 		}
 	}

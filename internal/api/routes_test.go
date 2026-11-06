@@ -61,6 +61,7 @@ func TestEveryRouteIsClassified(t *testing.T) {
 		"DELETE /api/v1/grants/{id}":               classGlobalAdmin,
 		"POST /api/v1/ingest":                      classAgentSigned,
 		"GET /api/v1/agent/targets":                classAgentSigned,
+		"POST /api/v1/agent/paths":                 classAgentSigned,
 	}
 
 	for pattern, class := range built {
