@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { refreshMs, zoomOut } from './util'
 
 /**
  * The reload / run-a-mutation / busy / error shape the admin screens share.
@@ -219,4 +220,52 @@ export function Modal({
       {children}
     </dialog>
   )
+}
+
+/**
+ * The time window a graphs screen shows: a trailing window of `rangeS` that
+ * moves forward while live, or an explicit window from brush-zoom or a typed
+ * range, which pauses it. Picking a range or zooming out back into the present
+ * makes it live again.
+ *
+ * The window is frozen per refresh tick, so every plot on the screen shares one
+ * time axis — the precondition for the shared crosshair meaning anything.
+ */
+export function useTimeWindow(initialRangeS = 3600) {
+  const [rangeS, setRangeS] = useState(initialRangeS)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [live, setLive] = useState(true)
+  // Null means a trailing live window. Free ranges are the mechanism, the
+  // presets are only sugar over it.
+  const [zoom, setZoom] = useState<{ from: number; to: number } | null>(null)
+
+  useEffect(() => {
+    if (!live || zoom) return
+    const id = setInterval(() => setRefreshKey((k) => k + 1), refreshMs(rangeS))
+    return () => clearInterval(id)
+  }, [live, zoom, rangeS])
+
+  const [from, to] = useMemo(() => {
+    if (zoom) return [zoom.from, zoom.to]
+    const now = Math.floor(Date.now() / 1000)
+    return [now - rangeS, now]
+  }, [rangeS, refreshKey, zoom])
+
+  const pickRange = (seconds: number) => {
+    setZoom(null)
+    setRangeS(seconds)
+  }
+
+  const onZoomOut = () => {
+    const next = zoomOut(from, to, Math.floor(Date.now() / 1000))
+    if ('rangeS' in next) pickRange(next.rangeS)
+    else setZoom(next)
+  }
+
+  const toggleLive = () => {
+    setZoom(null)
+    setLive(!live)
+  }
+
+  return { rangeS, from, to, refreshKey, live: live && !zoom, zoom, setZoom, pickRange, onZoomOut, toggleLive }
 }
