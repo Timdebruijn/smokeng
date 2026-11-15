@@ -4,7 +4,6 @@ _smokeng_arch_map:
   x86_64: amd64
   aarch64: arm64
   armv7l: arm
-  i386: "386"
 smokeng_arch: "{{ _smokeng_arch_map[ansible_facts['architecture']] | default('amd64') }}"
 
 # Whether the pinned smokeng accepts --alert-webhook-file and

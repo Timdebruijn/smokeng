@@ -321,7 +321,7 @@ func (t fbTable) countNodes(budget *int, depth int) error {
 }
 
 // The bounds are written as off > len(b)-n rather than off+n > len(b): on a
-// 32-bit target (linux/386 and linux/arm are release builds) an offset near
+// 32-bit target (linux/arm is a release build) an offset near
 // MaxInt32 makes off+n wrap negative, the comparison passes, and the slice
 // expression panics. The offsets come from a header the sender wrote.
 func le16(b []byte, off int) (uint16, bool) {

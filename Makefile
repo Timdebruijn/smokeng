@@ -4,7 +4,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 # discovery and drop counting are Linux facilities; darwin builds so the
 # project can be developed on a Mac, with those degradations flagged at
 # runtime rather than hidden.
-PLATFORMS := linux/amd64 linux/arm64 linux/arm linux/386 darwin/amd64 darwin/arm64
+PLATFORMS := linux/amd64 linux/arm64 linux/arm darwin/amd64 darwin/arm64
 
 .PHONY: all build web test check notices dist clean
 
@@ -29,7 +29,7 @@ test:
 check:
 	gofmt -l cmd internal web/embed.go
 	go vet ./...
-	@for a in amd64 arm64 386 arm; do \
+	@for a in amd64 arm64 arm; do \
 		echo "vet linux/$$a"; \
 		GOOS=linux GOARCH=$$a go vet ./... || exit 1; \
 	done
