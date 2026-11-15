@@ -2,6 +2,7 @@ package tree
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -65,7 +66,6 @@ func TestCheckLimitsFields(t *testing.T) {
 		{"interval 0", func(t *Target) { t.Settings.IntervalS = ptr(0) }, false},
 		{"interval at the limit", func(t *Target) { t.Settings.IntervalS = ptr(MaxIntervalS) }, true},
 		{"interval over the limit", func(t *Target) { t.Settings.IntervalS = ptr(MaxIntervalS + 1) }, false},
-		{"interval that overflows a Duration", func(t *Target) { t.Settings.IntervalS = ptr(9_223_372_037) }, false},
 		{"pings 1", func(t *Target) { t.Settings.PingsPerInterval = ptr(1) }, true},
 		{"pings 0", func(t *Target) { t.Settings.PingsPerInterval = ptr(0) }, false},
 		{"pings at the limit", func(t *Target) { t.Settings.PingsPerInterval = ptr(MaxPings) }, true},
@@ -84,7 +84,6 @@ func TestCheckLimitsFields(t *testing.T) {
 		{"trace under the floor", func(t *Target) { t.Settings.TraceIntervalS = ptr(MinTraceS - 1) }, false},
 		{"trace at the ceiling", func(t *Target) { t.Settings.TraceIntervalS = ptr(MaxTraceS) }, true},
 		{"trace over the ceiling", func(t *Target) { t.Settings.TraceIntervalS = ptr(MaxTraceS + 1) }, false},
-		{"trace that overflows a Duration", func(t *Target) { t.Settings.TraceIntervalS = ptr(18_446_744_074) }, false},
 		{"retention forever", func(t *Target) { t.Settings.RetentionS = ptr(0) }, true},
 		{"retention at the floor", func(t *Target) { t.Settings.RetentionS = ptr(MinRetentionS) }, true},
 		{"retention of one second, which deletes", func(t *Target) { t.Settings.RetentionS = ptr(1) }, false},
@@ -101,6 +100,20 @@ func TestCheckLimitsFields(t *testing.T) {
 		{"http path over the limit", func(t *Target) { t.Settings.HTTPPath = ptr("/" + long(MaxHTTPPathLen)) }, false},
 		{"agents over the limit", func(t *Target) { t.Settings.Agents = ptr(long(MaxAgentsLen + 1)) }, false},
 		{"agents with a newline", func(t *Target) { t.Settings.Agents = ptr("a\nb") }, false},
+	}
+	// Seconds values that overflow a Duration only fit an int on 64-bit; on
+	// 32-bit they cannot be represented, so the case does not exist there.
+	// The conversions are non-constant so this still compiles on 32-bit.
+	if strconv.IntSize == 64 {
+		interval, trace := int64(9_223_372_037), int64(18_446_744_074)
+		cases = append(cases, []struct {
+			name   string
+			mutate func(*Target)
+			ok     bool
+		}{
+			{"interval that overflows a Duration", func(t *Target) { t.Settings.IntervalS = ptr(int(interval)) }, false},
+			{"trace that overflows a Duration", func(t *Target) { t.Settings.TraceIntervalS = ptr(int(trace)) }, false},
+		}...)
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

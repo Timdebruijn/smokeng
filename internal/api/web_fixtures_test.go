@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -298,7 +299,10 @@ func pooledFixture() (arrowBytes, jsonBytes []byte) {
 // round it.
 func pooledHugeSum() []byte {
 	var buf bytes.Buffer
-	writePooledArrow(&buf, []store.Column{{From: 1, To: 2, Rounds: 1, Sent: 1<<53 + 1}}, 8192)
+	// Non-constant, so this compiles where int is 32 bits; the only caller
+	// skips there, since the fixture cannot be produced.
+	huge := int64(1<<53 + 1)
+	writePooledArrow(&buf, []store.Column{{From: 1, To: 2, Rounds: 1, Sent: int(huge)}}, 8192)
 	return buf.Bytes()
 }
 
@@ -370,6 +374,9 @@ func fixtureFiles() map[string][]byte {
 }
 
 func TestWebFixturesAreWhatTheWriterProduces(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("the huge-sum fixture needs a 64-bit int")
+	}
 	dir := filepath.Join("..", "..", "web", "testdata")
 	files := fixtureFiles()
 	if os.Getenv("UPDATE_WEB_FIXTURES") != "" {
