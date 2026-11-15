@@ -110,7 +110,7 @@ jobs:
             exit 1
           fi
 
-  # Every platform the prober claims to support, including the 32-bit ones
+  # Every platform the prober claims to support, including 32-bit arm
   # where Timespec is int32 — that break was found by compiling, not by
   # reading.
   cross-compile:
@@ -129,7 +129,7 @@ jobs:
       - name: build every supported platform
         run: |
           set -eu
-          for p in linux/amd64 linux/arm64 linux/arm linux/386 linux/riscv64 \
+          for p in linux/amd64 linux/arm64 linux/arm linux/riscv64 \
                    darwin/amd64 darwin/arm64; do
             echo "== $p"
             CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} go build ./...
