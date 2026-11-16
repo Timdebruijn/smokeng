@@ -278,3 +278,12 @@ func TestTheOriginFallbackComparesSchemeHostAndPort(t *testing.T) {
 		}
 	}
 }
+
+func TestFaviconIcoRedirectsToTheSVG(t *testing.T) {
+	h := New(seededStore(t), Options{}, fstest.MapFS{"favicon.svg": {Data: []byte("<svg/>")}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/favicon.ico", nil))
+	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/favicon.svg" {
+		t.Fatalf("/favicon.ico = %d Location %q, want 301 to /favicon.svg", rec.Code, rec.Header().Get("Location"))
+	}
+}
