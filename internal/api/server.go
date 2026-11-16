@@ -235,6 +235,9 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	rt.handle(classAgentSigned, "GET /api/v1/agent/targets", s.handleAgentTargets)
 	rt.handle(classAgentSigned, "POST /api/v1/agent/paths", s.handleAgentPaths)
 	s.routes = rt
+	// Browsers ask for /favicon.ico regardless of the <link rel="icon">;
+	// point them at the SVG the frontend ships instead of a 404.
+	mux.Handle("GET /favicon.ico", http.RedirectHandler("/favicon.svg", http.StatusMovedPermanently))
 	mux.Handle("/", http.FileServerFS(webFS))
 	return &handler{Handler: s.protect(mux), srv: s}
 }
