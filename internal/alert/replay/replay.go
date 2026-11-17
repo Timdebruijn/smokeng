@@ -366,23 +366,21 @@ func Run(ctx context.Context, src Source, opts Options) (*Report, error) {
 	defer cancel()
 	slots := make(chan struct{}, min(runtime.GOMAXPROCS(0), maxParallel))
 	var wg sync.WaitGroup
+	// The first series to fail, noted before the rest are cancelled: whatever
+	// the cancellation then makes of the others' reads, this is the cause.
+	var failed *seriesRun
+	var once sync.Once
 	for _, sr := range jobs {
 		slots <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-slots }()
 			if sr.out, sr.err = sr.run(ctx); sr.err != nil {
+				once.Do(func() { failed = sr })
 				cancel() // the rest would be thrown away
 			}
 		})
 	}
 	wg.Wait()
-	// The first failure, not a cancellation it caused in a later series.
-	var failed *seriesRun
-	for _, sr := range jobs {
-		if sr.err != nil && (failed == nil || errors.Is(failed.err, context.Canceled)) {
-			failed = sr
-		}
-	}
 	if failed != nil {
 		return nil, fmt.Errorf("replay: %s from %s: %w", failed.app.Path, names[failed.agent], failed.err)
 	}

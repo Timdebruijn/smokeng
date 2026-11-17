@@ -6,7 +6,9 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/alert/replay"
@@ -603,5 +605,34 @@ func TestAFailedSeriesIsTheErrorReported(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "db") {
 		t.Errorf("the error does not name the series that failed: %v", err)
+	}
+}
+
+// inflight counts how many reads are in progress at once.
+type inflight struct {
+	replay.Source
+	now, peak atomic.Int64
+}
+
+func (f *inflight) QueryRange(ctx context.Context, tg, ag, from, to int64) ([]store.Measurement, error) {
+	n := f.now.Add(1)
+	defer f.now.Add(-1)
+	for p := f.peak.Load(); n > p && !f.peak.CompareAndSwap(p, n); p = f.peak.Load() {
+	}
+	// Long enough that every series allowed in is in at the same time.
+	time.Sleep(2 * time.Millisecond)
+	return f.Source.QueryRange(ctx, tg, ag, from, to)
+}
+
+// Protects the memory bound across series: a rule on the root reaches three
+// targets from two agents, six series, and no more than four are ever being
+// read at once.
+func TestNoMoreThanFourSeriesAtOnce(t *testing.T) {
+	e := newEnv(t)
+	e.save(e.rule(1, "loss", alert.MetricLoss, alert.OpGreater, 20, 2, 2))
+	src := &inflight{Source: e.st}
+	run(t, src, opts("loss", 0, 2500))
+	if p := src.peak.Load(); p > 4 || p < 1 {
+		t.Errorf("%d series were being read at once, want between 1 and 4", p)
 	}
 }

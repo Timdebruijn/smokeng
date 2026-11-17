@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -8,8 +9,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/timdebruijn/smokeng/internal/alert/replay"
@@ -61,6 +64,14 @@ func parseReplayArgs(args []string, now time.Time) (replayArgs, error) {
 		return a, fmt.Errorf("%s\n%s", fmt.Sprintf(format, v...), replayUsage)
 	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			// The flag set prints nowhere, so that a mistyped flag gives one
+			// error and not two; asking for help is the case that wants the list.
+			var flags strings.Builder
+			fs.SetOutput(&flags)
+			fs.PrintDefaults()
+			return a, fmt.Errorf("%s\n\n%s", replayUsage, flags.String())
+		}
 		return fail("%v", err)
 	}
 	if fs.NArg() != 0 {
@@ -111,7 +122,9 @@ func parseReplayArgs(args []string, now time.Time) (replayArgs, error) {
 func parseSince(s string) (time.Duration, error) {
 	unit := map[byte]time.Duration{'d': 24 * time.Hour, 'h': time.Hour, 'm': time.Minute}[s[len(s)-1]]
 	n, err := strconv.Atoi(s[:len(s)-1])
-	if unit == 0 || err != nil || n <= 0 {
+	// The upper bound is where the multiplication below would wrap: unchecked,
+	// --since 213504d came out as a window of 25 minutes.
+	if unit == 0 || err != nil || n <= 0 || time.Duration(n) > math.MaxInt64/unit {
 		return 0, fmt.Errorf("--since is a positive number with d, h or m (30d, 36h, 90m), not %q", s)
 	}
 	return time.Duration(n) * unit, nil
@@ -156,17 +169,19 @@ func alertsReplay(args []string, now time.Time, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
+	// To stderr in every format. csv has nowhere to put a warning, and without
+	// this a golden rule with no reference gave a header and no rows, which
+	// reads as a rule that never fires rather than one that cannot.
+	for _, w := range rep.Warnings {
+		fmt.Fprintln(stderr, "warning:", w)
+	}
 	switch a.format {
 	case "json":
 		return writeReplayJSON(stdout, rep)
 	case "csv":
 		return writeReplayCSV(stdout, rep)
 	}
-	writeReplayText(stdout, rep)
-	for _, w := range rep.Warnings {
-		fmt.Fprintln(stderr, "warning:", w)
-	}
-	return nil
+	return writeReplayText(stdout, rep)
 }
 
 func writeReplayJSON(w io.Writer, rep *replay.Report) error {
@@ -206,7 +221,10 @@ func writeReplayCSV(w io.Writer, rep *replay.Report) error {
 // to see what fired.
 const quietListed = 3
 
-func writeReplayText(w io.Writer, rep *replay.Report) {
+func writeReplayText(out io.Writer, rep *replay.Report) error {
+	// Buffered so that one failed write, a closed pipe or a full disk, is
+	// remembered and returned by Flush rather than checked on every line.
+	w := bufio.NewWriter(out)
 	day := "2006-01-02 15:04Z"
 	fmt.Fprintf(w, "Replay %s to %s (silences: %s)\n", rep.From.Format(day), rep.To.Format(day), rep.Silences)
 	for i := 0; i < len(rep.Series); {
@@ -251,8 +269,17 @@ func writeReplayText(w io.Writer, rep *replay.Report) {
 		i = j
 	}
 	t := rep.Totals
-	fmt.Fprintf(w, "\n%d series evaluated, %d with episodes: %d episodes (%.2f per day), %d suppressed by silences\n",
-		t.Series, t.SeriesFiring, t.Episodes, t.EpisodesPerDay, t.Suppressed)
+	// Under report those episodes are in the list above, so calling them
+	// suppressed would say they are missing from it.
+	silenced := fmt.Sprintf("%d fired under a silence", t.Suppressed)
+	switch rep.Silences {
+	case replay.SilenceRespect:
+		silenced = fmt.Sprintf("%d more left out, suppressed by silences", t.Suppressed)
+	case replay.SilenceIgnore:
+		silenced = "silences not consulted"
+	}
+	fmt.Fprintf(w, "\n%d series evaluated, %d with episodes: %d episodes (%.2f per day), %s\n",
+		t.Series, t.SeriesFiring, t.Episodes, t.EpisodesPerDay, silenced)
 	if len(rep.Warnings) > 0 {
 		fmt.Fprintln(w, "\nWarnings:")
 		for _, x := range rep.Warnings {
@@ -263,6 +290,7 @@ func writeReplayText(w io.Writer, rep *replay.Report) {
 	for _, x := range rep.Notes {
 		fmt.Fprintln(w, "  -", x)
 	}
+	return w.Flush()
 }
 
 // dur renders seconds the way an operator reads a firing time.

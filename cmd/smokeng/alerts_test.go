@@ -44,6 +44,8 @@ func TestAlertsReplayFlags(t *testing.T) {
 		{"zero", "--rule r --since 0d", "--since"},
 		{"negative", "--rule r --since -5d", "--since"},
 		{"no number", "--rule r --since d", "--since"},
+		{"overflows a duration", "--rule r --since 213504d", "--since"},
+		{"overflows in minutes", "--rule r --since 307445734562m", "--since"},
 		{"not rfc3339", "--rule r --from 2026-11-01 --to 2026-11-02", "RFC 3339"},
 		{"to before from", "--rule r --from 2026-11-02T00:00:00Z --to 2026-11-01T00:00:00Z", "after --from"},
 		{"bad silences", "--rule r --since 1d --silences maybe", "--silences"},
@@ -169,7 +171,7 @@ func TestReplayTextShowsWhatMatters(t *testing.T) {
 	writeReplayText(&buf, sampleReport())
 	out := buf.String()
 	for _, want := range []string{"rule loss on /Production: loss > 5% for 3 intervals", "still firing",
-		"[fire silenced]", "crossed at 7.5, peak 31", "1 suppressed by silences", "Notes:", "Warnings:"} {
+		"[fire silenced]", "crossed at 7.5, peak 31", "1 fired under a silence", "Notes:", "Warnings:"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text output lacks %q:\n%s", want, out)
 		}
@@ -248,6 +250,29 @@ for_intervals = 2
 		t.Errorf("text:\n%s", out.String())
 	}
 
+	// A warning reaches stderr whatever the format. csv has no place for one,
+	// and a golden rule with no reference would otherwise print a header and
+	// nothing else, which reads as a rule that never fires.
+	golden := filepath.Join(dir, "golden.toml")
+	os.WriteFile(golden, []byte(`
+[targets."Production".alerts.drift]
+metric = "shape"
+op = ">"
+threshold = 5
+mode = "tunable"
+baseline = "golden"
+`), 0o600)
+	for _, format := range []string{"csv", "json", "text"} {
+		out.Reset()
+		errb.Reset()
+		if err := alertsReplay([]string{"--db", db, "--rules-file", golden, "--since", "2h", "--format", format}, replayNow, &out, &errb); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(errb.String(), "warning:") || !strings.Contains(errb.String(), "no captured reference") {
+			t.Errorf("--format %s: stderr = %q, want the warning that the rule cannot fire", format, errb.String())
+		}
+	}
+
 	// An empty file must not silently fall back to the stored rules.
 	empty := filepath.Join(dir, "empty.toml")
 	os.WriteFile(empty, []byte("[defaults]\ninterval_s = 60\n"), 0o600)
@@ -263,5 +288,32 @@ for_intervals = 2
 	defer ro.Close()
 	if stored, _ := ro.ListAlertRules(ctx); len(stored) != 0 {
 		t.Errorf("the replay imported %d rules", len(stored))
+	}
+}
+
+// Protects -h: the flag set prints nowhere, so help has to be put together by
+// hand, and it once said only "help requested".
+func TestAlertsReplayHelpListsTheFlags(t *testing.T) {
+	_, err := parseReplayArgs([]string{"-h"}, replayNow)
+	if err == nil {
+		t.Fatal("-h returned no text")
+	}
+	for _, want := range []string{"usage: smokeng alerts replay", "-rules-file", "-silences", "window ending now"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("help lacks %q:\n%v", want, err)
+		}
+	}
+}
+
+// brokenPipe refuses every write, as a closed pipe does.
+type brokenPipe struct{}
+
+func (brokenPipe) Write([]byte) (int, error) { return 0, os.ErrClosed }
+
+// Protects the exit status: a text report that could not be written is a
+// failure, as it already was for json and csv, not a truncated success.
+func TestReplayTextReportsAFailedWrite(t *testing.T) {
+	if err := writeReplayText(brokenPipe{}, sampleReport()); err == nil {
+		t.Error("writing to a closed pipe returned no error")
 	}
 }

@@ -206,7 +206,11 @@ rule slow-p95 on /Production: p95 > 80ms for 5 intervals
     2026-11-02 14:00Z -> 2026-11-02 15:00Z  1h0m  crossed at 84.2, peak 212  [fire silenced]
     2026-11-09 08:30Z -> 2026-11-09 08:40Z  10m  crossed at 88, peak 97.5
 
-2 series evaluated, 1 with episodes: 3 episodes (0.10 per day), 1 suppressed by silences
+2 series evaluated, 1 with episodes: 3 episodes (0.10 per day), 1 fired under a silence
+
+Notes:
+  - These are rule transitions, not notifications: Alertmanager grouping, repeats and routing are not simulated.
+  (four more notes follow)
 ```
 
 Each line under a series is one firing period: when the rule fired (the interval that
@@ -239,7 +243,8 @@ defines it.
 
 Narrow the replay with `--target /Production/web` (a node and everything under it) and
 `--vantage ams` (one agent; `local` is the master's own prober). A target and agent with no
-measurements in the window are left out. Warnings are printed in the report and to stderr:
+measurements in the window are left out. Warnings go to stderr in every format, and the text
+and JSON reports carry them too:
 a shape rule with less history before the window than it wants (it is quiet until its
 baseline fills, as live is after a restart), a golden rule with no captured reference (it
 cannot fire), a reference captured inside the replayed window (that stretch is compared with

@@ -244,14 +244,17 @@ smokeng alerts replay --db smokeng.db --rule loss --from 2026-11-01T00:00:00Z --
 | `--silences` | `report` | `report` lists every episode and marks silenced ones, `respect` leaves out episodes whose fire was silenced (counting them as suppressed), `ignore` does not consult silences. A silence counts if it covered the transition at its own time, not now. |
 | `--format` | `text` | `text`, `json` or `csv`. |
 
-Output goes to stdout. For `text`, warnings are also written to stderr.
+Output goes to stdout. Warnings are written to stderr in every format; `text` and `json` carry
+them in the report as well. `-h` prints the flags.
 
 `json` is the whole report as indented JSON with `"schema": 1`: `from`, `to`, `silences`,
 `series`, `totals`, `warnings` and `notes`. Timestamps are RFC 3339 UTC. Each series carries
 `rule`, `rule_node`, `condition`, `target`, `target_id`, `vantage`, `agent_id`, `intervals`,
 `fired`, `resolved`, `firing_seconds`, `longest_seconds`, `episodes` and `warnings`; each episode
 `start`, `end` (absent while still firing), `open`, `seconds`, `crossed_at`, `peak`,
-`fire_silenced` and `resolve_silenced`.
+`fire_silenced` and `resolve_silenced`. `totals.suppressed` counts the episodes whose fire fell
+under a silence: listed and marked under `report`, left out under `respect`, always 0 under
+`ignore`.
 
 `csv` has one row per episode, with the header
 `rule,rule_node,target,vantage,start,end,seconds,crossed_at,peak,open,fire_silenced,resolve_silenced`
