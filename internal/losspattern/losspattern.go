@@ -37,6 +37,7 @@ package losspattern
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 	"math/rand/v2"
 	"strings"
@@ -89,10 +90,13 @@ type Verdict struct {
 	Why    string
 	// Flagged is true when the loss sits at positions chance does not explain.
 	Flagged bool
-	// P is the estimated p-value. When AtLeast is set the test stopped as soon
-	// as the outcome was settled and P is a lower bound.
+	// P is the p-value: counted exactly for a small window, estimated for a
+	// large one. When AtLeast is set the test stopped as soon as the window
+	// could no longer be flagged and P is a lower bound. When AtMost is set the
+	// window was flagged without counting and P is an upper bound.
 	P       float64
 	AtLeast bool
+	AtMost  bool
 
 	Probes    int   // probes per interval in the window
 	Spread    bool  // the window's probe mode
@@ -112,9 +116,10 @@ type Verdict struct {
 // starts a new regime, and positions in one do not mean what they mean in the
 // other.
 //
-// full estimates the p-value to the end. Without it the test stops once the
-// window can no longer be flagged, which for ordinary loss is after a handful
-// of rounds.
+// full works the p-value out to the end. Without it the test stops as soon as
+// the verdict is settled: for ordinary loss after a handful of rounds, and for
+// a strong pattern before the first one, on a bound that needs no counting.
+// The verdict is the same either way; only how exactly P is known differs.
 //
 // The same history always gives the same verdict: the random mirrorings are
 // the same ones every time.
@@ -186,6 +191,16 @@ func Test(history []Interval, full bool) Verdict {
 	}
 	observed := lopsidedness(sum)
 
+	// A strong pattern is settled by arithmetic. This is what keeps the test
+	// affordable where it runs on every lossy interval written: counting to the
+	// end costs milliseconds, and a series that is rate-limited all day would
+	// pay that on each of them, inside the write.
+	bound := chanceBound(tilts, observed)
+	if bound < PMax && !full {
+		v.P, v.AtMost, v.Flagged = bound, true, true
+		return v
+	}
+
 	var asExtreme, of int
 	var complete bool
 	if m := len(tilts); m <= 20 && (1<<m)*half <= exactWork {
@@ -195,8 +210,58 @@ func Test(history []Interval, full bool) Verdict {
 	}
 	v.P = float64(asExtreme) / float64(of)
 	v.AtLeast = !complete
+	// The bound decides here too, so that a window is flagged or not whichever
+	// way it was asked. An estimate can land above PMax for a window whose true
+	// p the bound has already shown to be below it; the bound is then the
+	// better figure, and reporting it keeps a flagged window from being shown
+	// beside a p-value that would not flag it.
+	if bound < PMax && v.P >= PMax {
+		v.P, v.AtLeast = bound, false
+	}
 	v.Flagged = v.P < PMax
 	return v
+}
+
+// chanceBound is an upper bound on the p-value that needs no counting.
+//
+// The statistic is a sum, over mirrored pairs of positions, of the square of
+// the pair's summed tilt. If chance makes it at least as large as observed,
+// then for at least one of the k pairs that tilt at all, the square is at
+// least observed/k. A pair's sum is a sum of independent random signs, one for
+// each of the n intervals that tilt there, so by Hoeffding's inequality it
+// reaches a in size with probability at most 2·exp(−a²/2n). The pairs' chances
+// add up.
+//
+// It is loose, by a wide margin for a weak pattern, and that costs nothing: a
+// window it cannot settle is counted.
+func chanceBound(tilts [][]int8, observed int) float64 {
+	if len(tilts) == 0 {
+		return 1
+	}
+	n := make([]int, len(tilts[0]))
+	for _, row := range tilts {
+		for i, t := range row {
+			if t != 0 {
+				n[i]++
+			}
+		}
+	}
+	k := 0
+	for _, c := range n {
+		if c > 0 {
+			k++
+		}
+	}
+	if k == 0 {
+		return 1
+	}
+	bound := 0.0
+	for _, c := range n {
+		if c > 0 {
+			bound += 2 * math.Exp(-float64(observed)/float64(k)/(2*float64(c)))
+		}
+	}
+	return min(bound, 1)
 }
 
 // settled reports whether a count may stop early. The mirrorings not yet tried
@@ -239,26 +304,57 @@ func countExact(tilts [][]int8, sum []int, observed int, full bool) (asExtreme, 
 // with too many intervals to try them all. The generator starts from the same
 // state on every call, so a window is not flagged on one evaluation and passed
 // on the next.
+//
+// A round is one random word, bit j saying whether interval j is mirrored. For
+// each pair of positions the intervals that tilt one way and those that tilt
+// the other are kept as two bit sets, so the pair's sum under a mirroring is
+// its plain sum minus twice (the mirrored ones that tilt one way less the
+// mirrored ones that tilt the other): two ANDs and two bit counts, whatever
+// the number of intervals. Adding the rows up one by one cost fifteen times as
+// much, and this runs on every lossy interval the master writes for as long as
+// a series stays flagged.
 func countRandom(tilts [][]int8, sum []int, observed int, full bool) (asExtreme, of int, complete bool) {
+	// One word of mirrorings: the window never holds more intervals than that.
+	if len(tilts) > 64 {
+		panic("losspattern: a window of more than 64 intervals")
+	}
+	up, down := make([]uint64, len(sum)), make([]uint64, len(sum))
+	for j, row := range tilts {
+		for i, t := range row {
+			switch t {
+			case 1:
+				up[i] |= 1 << j
+			case -1:
+				down[i] |= 1 << j
+			}
+		}
+	}
+	// Only the pairs that tilt in some interval: the others are zero under
+	// every mirroring, and with a thousand probes they are nearly all of them.
+	n := 0
+	for i := range up {
+		if up[i]|down[i] != 0 {
+			up[n], down[n] = up[i], down[i]
+			n++
+		}
+	}
+	up, down = up[:n], down[:n]
+	plain := make([]int, n)
+	for i := range plain {
+		plain[i] = bits.OnesCount64(up[i]) - bits.OnesCount64(down[i])
+	}
+
 	rng := rand.New(rand.NewPCG(1, 2))
 	of, asExtreme = rounds+1, 1 // counting the data as observed, as the exact count does
 	done := 0
 	for ; done < rounds && !settled(asExtreme, of, full); done++ {
-		clear(sum)
-		var coin uint64
-		for j, row := range tilts {
-			if j%64 == 0 {
-				coin = rng.Uint64()
-			}
-			sign := 1
-			if coin>>(j%64)&1 == 1 {
-				sign = -1
-			}
-			for i, t := range row {
-				sum[i] += sign * int(t)
-			}
+		mirrored := rng.Uint64()
+		s := 0
+		for i := range plain {
+			d := plain[i] - 2*(bits.OnesCount64(up[i]&mirrored)-bits.OnesCount64(down[i]&mirrored))
+			s += d * d
 		}
-		if lopsidedness(sum) >= observed {
+		if s >= observed {
 			asExtreme++
 		}
 	}

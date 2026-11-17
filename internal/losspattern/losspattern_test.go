@@ -372,7 +372,10 @@ func TestVerdictIsDeterministicAndEarlyStopAgrees(t *testing.T) {
 			if !reflect.DeepEqual(a, b) {
 				t.Fatalf("two evaluations of one window differ:\n%+v\n%+v", a, b)
 			}
-			if early := Test(w, false); early.Flagged != a.Flagged || early.P > a.P {
+			// Stopped early because it could not be flagged, P is a lower bound;
+			// settled by the bound, an upper one.
+			early := Test(w, false)
+			if early.Flagged != a.Flagged || (early.AtLeast && early.P > a.P) {
 				t.Fatalf("early stop disagrees: early %+v, full %+v", early, a)
 			}
 		}
@@ -396,8 +399,9 @@ func TestWhereNamesThePositions(t *testing.T) {
 	}
 }
 
-// What one evaluation costs, for a window that is flagged (every round runs)
-// and for ordinary bursty loss (it stops early), at 20 probes and at 1000.
+// What one evaluation costs: for a strong pattern, which the bound settles;
+// for a weaker one that is still flagged, where every round runs; and for
+// ordinary bursty loss, where counting stops early. At 20 probes and at 1000.
 func BenchmarkTest(b *testing.B) {
 	rng := rand.New(rand.NewPCG(5, 5))
 	wide := func(n int) []Interval {
@@ -410,10 +414,33 @@ func BenchmarkTest(b *testing.B) {
 		}
 		return ivs
 	}
+	// A pattern strong enough to be flagged and too weak for the bound to
+	// settle, so that every round is run: the last three probes lost one time
+	// in five, three and two. This is what a partly rate-limited target costs.
+	partly := func(n int) []Interval {
+		for {
+			ivs := make([]Interval, 0, Window)
+			for i := range Window {
+				lost := make([]bool, n)
+				for k, p := range []float64{0.2, 0.35, 0.5} {
+					lost[n-3+k] = rng.Float64() < p
+				}
+				if partial(lost) {
+					ivs = append(ivs, Interval{TS: int64(i) * 60, Lost: lost})
+				}
+			}
+			// Keep drawing until it is the case this benchmark is named for.
+			if v := Test(ivs, false); v.Flagged && !v.AtMost && !v.AtLeast {
+				return ivs
+			}
+		}
+	}
 	for name, w := range map[string][]Interval{
-		"flagged/20 probes":   wide(20),
-		"flagged/1000 probes": wide(1000),
-		"bursty/20 probes":    window(rng, gilbertElliott(0.01, 0.10)),
+		"flagged by the bound/20 probes":   wide(20),
+		"flagged by the bound/1000 probes": wide(1000),
+		"flagged by counting/20 probes":    partly(20),
+		"flagged by counting/1000 probes":  partly(1000),
+		"bursty/20 probes":                 window(rng, gilbertElliott(0.01, 0.10)),
 	} {
 		b.Run(name, func(b *testing.B) {
 			for b.Loop() {
@@ -541,5 +568,52 @@ func TestEstimateAgreesWithExactCount(t *testing.T) {
 
 	if v := Test(tailEvery(30, span(15, 20)...), true); v.AtLeast || v.P != 1.0/(rounds+1) {
 		t.Errorf("thirty intervals that all lost their tail: P = %v, want exactly %v", v.P, 1.0/(rounds+1))
+	}
+}
+
+// Protects the shortcut that settles a strong pattern without counting. It is
+// only sound if the bound is never below the true p-value, so it is checked
+// against the exact count on windows small enough to count; and it has to
+// actually settle the plain case it exists for, a tail lost in every interval,
+// with the same verdict as counting to the end gives.
+func TestBoundIsNeverBelowTheExactCount(t *testing.T) {
+	rng := rand.New(rand.NewPCG(9, 9))
+	const half = probes / 2
+	for trial := range 300 {
+		// From nearly symmetric to nearly one-sided, so that p ranges from
+		// about one down to the smallest sixteen intervals can give.
+		lean := rng.Float64()
+		tilts := make([][]int8, 16)
+		for j := range tilts {
+			tilts[j] = make([]int8, half)
+			for i := range tilts[j] {
+				if rng.Float64() < 0.4 {
+					tilts[j][i] = 1
+					if rng.Float64() > 0.5+lean/2 {
+						tilts[j][i] = -1
+					}
+				}
+			}
+		}
+		data := make([]int, half)
+		for _, row := range tilts {
+			for i, v := range row {
+				data[i] += int(v)
+			}
+		}
+		observed := lopsidedness(data)
+		a, of, _ := countExact(tilts, data, observed, true)
+		if exact, bound := float64(a)/float64(of), chanceBound(tilts, observed); bound < exact {
+			t.Fatalf("trial %d: bound %g is below the exact p-value %g", trial, bound, exact)
+		}
+	}
+
+	w := tailEvery(30, span(15, 20)...)
+	quick, counted := Test(w, false), Test(w, true)
+	if !quick.Flagged || !quick.AtMost || quick.P >= PMax {
+		t.Errorf("thirty intervals that all lost their tail were not settled by the bound: %+v", quick)
+	}
+	if !counted.Flagged || counted.AtMost {
+		t.Errorf("counted to the end: %+v", counted)
 	}
 }

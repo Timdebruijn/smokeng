@@ -39,6 +39,11 @@ type Measurement struct {
 	// lossmask.go. nil means not recorded: the interval predates it, was not
 	// lossy in part, or its positions cannot be trusted.
 	LossMask []byte
+	// Positional is set when the master found this interval's series to lose
+	// probes at fixed send positions as of this interval (internal/losspattern);
+	// nil means not flagged. It is derived on the master at write time and is
+	// never read from an agent.
+	Positional *PositionalLoss
 	// Series holds the extra per-packet distributions a probe measured beside
 	// the round trip, keyed by series name (see SeriesIPDVSend and friends), in
 	// µs and sorted ascending. Signed, because inter-packet delay variation is.
@@ -51,6 +56,18 @@ type Measurement struct {
 	// Collapsing the two made a lossy target report an instrumentation problem
 	// it did not have.
 	Series map[string][]int32
+}
+
+// PositionalLoss is the detector's finding for the window that ends at an
+// interval: its p-value, how many intervals and lost probes the window held,
+// and per send position how many of those intervals lost that probe. For a
+// strong pattern, which the detector settles without counting, P is an upper
+// bound on the p-value rather than an estimate of it.
+type PositionalLoss struct {
+	P         float64
+	Intervals int
+	Lost      int
+	Counts    []int
 }
 
 // The extra per-packet series are named in package series, which sits below

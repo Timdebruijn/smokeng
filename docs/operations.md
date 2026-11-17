@@ -470,7 +470,9 @@ it costs disk in a way that a fixed-size RRD file does not:
 
 The cost is per *series*, and a series is a (target, agent) pair. Ping count barely moves
 it — samples are stored as sorted deltas in microseconds, so 20 pings and 60 pings differ
-by a handful of bytes. Halving `interval_s` doubles it.
+by a handful of bytes. Halving `interval_s` doubles it. An interval the master flags as
+losing probes at fixed send positions takes one more small row (`positional_loss`, a few
+tens of bytes).
 
 The SQLite backend is comfortable into the **low thousands of series** (roughly 30–60
 GB/year). Past that a single SQLite file is the wrong shape, and the `Store` interface is
