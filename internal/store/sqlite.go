@@ -418,6 +418,11 @@ UPDATE targets SET graph_series = 'all' WHERE parent_id IS NULL AND graph_series
 UPDATE paths SET submitted = 1
   WHERE ts < (SELECT MAX(p.ts) FROM paths p WHERE p.target_id = paths.target_id AND p.agent_id = paths.agent_id);
 CREATE INDEX paths_pending ON paths (ts) WHERE submitted = 0;`,
+	// v25: which probes of an interval were lost, in send order (lossmask.go).
+	// Samples are stored sorted, so without this the position of a loss is gone.
+	// NULL is not recorded: every interval before this column, and every one with
+	// no loss, total loss, or positions that cannot be trusted.
+	`ALTER TABLE measurements ADD COLUMN loss_mask BLOB`,
 }
 
 func (s *SQLite) migrate() error {
@@ -483,8 +488,8 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 	if !replace {
 		verb, suffix = "INSERT INTO", " ON CONFLICT DO NOTHING"
 	}
-	stmt, err := tx.PrepareContext(ctx, verb+` measurements (target_id, agent_id, ts, sent, received, flags, samples, icmp_error, send_error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`+suffix)
+	stmt, err := tx.PrepareContext(ctx, verb+` measurements (target_id, agent_id, ts, sent, received, flags, samples, icmp_error, send_error, loss_mask)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`+suffix)
 	if err != nil {
 		return nil, err
 	}
@@ -516,7 +521,7 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 			return nil, err
 		}
 		res, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.TS, m.Sent, m.Received,
-			m.Flags, blob, m.ICMPErr, m.SendErr)
+			m.Flags, blob, m.ICMPErr, m.SendErr, m.LossMask)
 		if err != nil {
 			return nil, err
 		}
@@ -554,7 +559,7 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 
 func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ts, sent, received, flags, samples, icmp_error, send_error FROM measurements
+		SELECT ts, sent, received, flags, samples, icmp_error, send_error, loss_mask FROM measurements
 		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?
 		ORDER BY ts`, targetID, agentID, from, to)
 	if err != nil {
@@ -566,7 +571,7 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 	for rows.Next() {
 		m := Measurement{TargetID: targetID, AgentID: agentID}
 		var blob []byte
-		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &m.ICMPErr, &m.SendErr); err != nil {
+		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &m.ICMPErr, &m.SendErr, &m.LossMask); err != nil {
 			return nil, err
 		}
 		// Counted from the column, before the blob is decoded, so the row that
