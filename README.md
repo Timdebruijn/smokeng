@@ -214,13 +214,18 @@ Every tool here is good at what it was built for.
 | Maturity | Young, one maintainer | Proven over two decades, still maintained | Large community | Industry standard |
 
 **Pick something else if** you need status pages or many notification channels (Uptime Kuma, Gatus),
-you are happy with per-scrape values inside an existing Prometheus stack (blackbox_exporter), or you
-want hop-by-hop MTR graphs (smokeng records whether the route changed, not per-hop latency).
+you are happy with per-scrape values inside an existing Prometheus stack (blackbox_exporter), you
+want hop-by-hop mtr reports next to latency (PingScope; smokeng records whether the route changed,
+not per-hop latency), or you want Telegram and email alerts built in rather than through
+Alertmanager (PingScope).
 
 2026 also brought other SmokePing successors, each with real strengths: **smokestack** stores
 DDSketch histograms with bounded error, which keeps storage small and percentiles accurate across
 rollups; **heliograph** keeps raw samples on TimescaleDB with mTLS agents; **smoketrace** puts
-traceroute and latency on one time axis. smokeng's trade-off is exact samples at about 28 MB per
+traceroute and latency on one time axis; **PingScope** measures IPv4 and IPv6 side by side per
+target, runs mtr automatically while a target degrades, and ships Telegram and email alerts with a
+replay preview behind a one-script installer, keeping per-round data for 14 days by default and
+hourly quantile summaries after that. smokeng's trade-off is exact samples at about 28 MB per
 series per year, with shape alerting, self-flagged measurements and subtree tenancy on top.
 
 ## Documentation
