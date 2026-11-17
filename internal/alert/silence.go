@@ -33,6 +33,25 @@ func (s *Silence) activeAt(t int64) bool {
 	return t >= s.StartsAt && t < s.EndsAt
 }
 
+// Covers reports whether the silence applies, at time t, to an alert of this
+// rule for this series. ancestors is the target's ancestor set, itself
+// included: a silence on a node covers its whole subtree.
+func (s *Silence) Covers(t, ruleID, agentID int64, ancestors map[int64]bool) bool {
+	if !s.activeAt(t) {
+		return false
+	}
+	if s.RuleID != nil && *s.RuleID != ruleID {
+		return false
+	}
+	if s.AgentID != nil && *s.AgentID != agentID {
+		return false
+	}
+	if s.TargetID != nil && !ancestors[*s.TargetID] {
+		return false
+	}
+	return true
+}
+
 // Validate checks a silence is well formed before it is stored. Scope is not
 // checked here — an unknown target or agent id simply matches nothing, which is
 // a silence that does nothing rather than an error.

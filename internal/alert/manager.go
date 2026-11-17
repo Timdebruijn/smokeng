@@ -36,14 +36,6 @@ type stateKey struct {
 	ruleID, targetID, agentID int64
 }
 
-// applicable is a leaf target's resolved alerting context.
-type applicable struct {
-	rules     []*Rule
-	intervalS int
-	path      string
-	host      string
-}
-
 // Manager owns rule resolution, evaluation state and notification. It is fed
 // finalized measurements and emits notifications on state changes only —
 // edge-triggered, per the design — plus a periodic repeat of what is still
@@ -53,7 +45,7 @@ type Manager struct {
 	notifier Notifier
 
 	mu         sync.Mutex
-	byTarget   map[int64]applicable
+	byTarget   map[int64]Applicable
 	states     map[stateKey]*State
 	rules      map[int64]*Rule
 	agentNames map[int64]string
@@ -80,7 +72,7 @@ func NewManager(st Store, notifier Notifier) *Manager {
 	return &Manager{
 		st:         st,
 		notifier:   notifier,
-		byTarget:   map[int64]applicable{},
+		byTarget:   map[int64]Applicable{},
 		states:     map[stateKey]*State{},
 		rules:      map[int64]*Rule{},
 		agentNames: map[int64]string{},
@@ -90,17 +82,10 @@ func NewManager(st Store, notifier Notifier) *Manager {
 	}
 }
 
-// Reload rebuilds the resolved rule set from the tree. Rules inherit like
-// every other setting and replace rather than accumulate: the nearest
-// ancestor that defines any rules defines the whole set for its subtree, so
-// a child's rules are a complete override, and there is no puzzle about how
-// to remove an inherited one.
+// Reload rebuilds the resolved rule set from the tree; Resolve says how rules
+// inherit.
 func (m *Manager) Reload(ctx context.Context) error {
 	targets, err := m.st.ListTargets(ctx)
-	if err != nil {
-		return err
-	}
-	tr, err := tree.New(targets)
 	if err != nil {
 		return err
 	}
@@ -129,53 +114,14 @@ func (m *Manager) Reload(ctx context.Context) error {
 		golden[b.RuleID] = b
 	}
 
-	// Ancestor sets, so a silence scoped to a group can be matched against any
-	// leaf beneath it by a map lookup rather than a walk. Each target maps to
-	// itself and every id above it.
-	byNodeID := map[int64]*tree.Target{}
-	for i := range targets {
-		byNodeID[targets[i].ID] = &targets[i]
+	resolved, err := Resolve(targets, rules)
+	if err != nil {
+		return err
 	}
-	ancestors := map[int64]map[int64]bool{}
-	for i := range targets {
-		set := map[int64]bool{}
-		for cur := &targets[i]; cur != nil; {
-			set[cur.ID] = true
-			if cur.ParentID == nil {
-				break
-			}
-			cur = byNodeID[*cur.ParentID]
-		}
-		ancestors[targets[i].ID] = set
-	}
-
-	byNode := map[int64][]*Rule{}
+	ancestors := Ancestors(targets)
 	byID := map[int64]*Rule{}
 	for i := range rules {
-		r := &rules[i]
-		byID[r.ID] = r
-		byNode[r.TargetID] = append(byNode[r.TargetID], r)
-	}
-
-	resolved := map[int64]applicable{}
-	for i := range targets {
-		n := &targets[i]
-		if n.Host == nil || !n.Enabled {
-			continue
-		}
-		res, err := tr.Resolve(n.ID)
-		if err != nil {
-			return err
-		}
-		path, err := tr.Path(n.ID)
-		if err != nil {
-			return err
-		}
-		app := applicable{intervalS: res.IntervalS.Effective, path: path, host: *n.Host}
-		if node, ok := NearestRuleNode(tr, func(id int64) bool { return len(byNode[id]) > 0 }, n.ID); ok {
-			app.rules = byNode[node]
-		}
-		resolved[n.ID] = app
+		byID[rules[i].ID] = &rules[i]
 	}
 
 	kept := map[stateKey]*State{}
@@ -233,32 +179,26 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 	for i := range ms {
 		meas := &ms[i]
 		app, ok := m.byTarget[meas.TargetID]
-		if !ok || len(app.rules) == 0 {
+		if !ok || len(app.Rules) == 0 {
 			continue
 		}
-		for _, r := range app.rules {
+		for _, r := range app.Rules {
 			key := stateKey{r.ID, meas.TargetID, meas.AgentID}
 			st, ok := m.states[key]
 			if !ok {
 				st = &State{RuleID: r.ID, TargetID: meas.TargetID, AgentID: meas.AgentID}
 				m.states[key] = st
 			}
-			var t Transition
+			// The manager owns a shape rule's baseline and divergence buffers;
+			// the other metrics have none.
+			var ss *shapeState
 			if r.Metric.IsShape() {
-				// Shape metrics are computed from history, not from one interval:
-				// the manager owns the baseline and divergence buffers and feeds
-				// the value into the same hysteresis every other rule uses.
-				ss := m.shapes[key]
-				if ss == nil {
+				if ss = m.shapes[key]; ss == nil {
 					ss = &shapeState{}
 					m.shapes[key] = ss
 				}
-				value, ok := ss.value(r, meas, m.golden[r.ID].Samples)
-				t = EvaluateValue(r, st, value, ok, meas.RTTTrusted, meas.TS, app.intervalS)
-			} else {
-				t = Evaluate(r, st, meas, app.intervalS)
 			}
-			switch t {
+			switch step(r, st, ss, meas, m.golden[r.ID].Samples, app.IntervalS) {
 			case Fired:
 				fired = append(fired, m.alertLocked(r, st, app, true))
 			case Resolved:
@@ -317,7 +257,7 @@ func (m *Manager) Firing() []Alert {
 }
 
 // alertLocked builds a notification; the caller holds m.mu.
-func (m *Manager) alertLocked(r *Rule, st *State, app applicable, firing bool) Alert {
+func (m *Manager) alertLocked(r *Rule, st *State, app Applicable, firing bool) Alert {
 	agentName := m.agentNames[st.AgentID]
 	if agentName == "" {
 		// Reload runs periodically, so a just-enrolled or just-removed agent
@@ -327,7 +267,7 @@ func (m *Manager) alertLocked(r *Rule, st *State, app applicable, firing bool) A
 	}
 	a := Alert{
 		Rule: r, TargetID: st.TargetID, AgentID: st.AgentID,
-		TargetPath: app.path, TargetHost: app.host,
+		TargetPath: app.Path, TargetHost: app.Host,
 		AgentName: agentName, Firing: firing, Value: st.Value,
 	}
 	if st.Since != 0 {
@@ -427,16 +367,7 @@ func (m *Manager) silencedLocked(now int64, a Alert) (bool, int64) {
 	silenced := false
 	for i := range m.silences {
 		s := &m.silences[i]
-		if !s.activeAt(now) {
-			continue
-		}
-		if s.RuleID != nil && *s.RuleID != ruleID {
-			continue
-		}
-		if s.AgentID != nil && *s.AgentID != a.AgentID {
-			continue
-		}
-		if s.TargetID != nil && !m.ancestors[a.TargetID][*s.TargetID] {
+		if !s.Covers(now, ruleID, a.AgentID, m.ancestors[a.TargetID]) {
 			continue
 		}
 		silenced = true
