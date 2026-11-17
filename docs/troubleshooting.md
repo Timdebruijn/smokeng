@@ -278,6 +278,11 @@ The graph shows loss on one target, and the target, its CPE or a router in front
 rate limiting ICMP. On a graph that looks like network loss. In the order the probes were sent
 it does not: a rate limiter answers the first probes of a burst and drops the tail.
 
+The master looks for this by itself. Intervals whose loss sits at fixed send positions carry the
+`positional loss` badge on the graph; hover it for the positions. The command below is for
+looking at the evidence behind the badge, and for a window or a target you want to judge
+yourself.
+
 ```bash
 smokeng diag loss-pattern --db smokeng.db --target /Production/web --since 24h
 ```
@@ -355,6 +360,7 @@ Meanings: [Reading graphs](reading-graphs.md). What to do:
 | `clock step` | Check NTP: `timedatectl`, `chronyc tracking`. Ignore the spike. |
 | `cut short` | Nothing to fix. Do not read a one-off loss there as an outage. |
 | `not sent` plus a reason | See the next table. |
+| `positional loss` | Run `smokeng diag loss-pattern` ([above](#loss-on-a-graph-that-might-be-rate-limiting)). If it is rate limiting, try `probe_mode = "spread"` ([Probes](probes.md#rate-limiting-and-burst-or-spread)). The badge does not change the loss figures or any alert. |
 | An ICMP error name (`host unreachable`, `administratively filtered`, `TTL exceeded`, ...) | Look at the router or firewall the error names. `administratively filtered` is a filter rule. |
 
 The `not sent` reasons, and where to look:

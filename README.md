@@ -179,6 +179,7 @@ deletes whole intervals; it never coarsens them.
 | `clock step` | wall clock and monotonic clock diverged; those RTTs are not trusted |
 | ICMP error, by name | "administratively prohibited" is a different finding from silence |
 | `not sent` | the probes never went out; the reason says why. Counted as lost, not drawn as empty |
+| `positional loss` | the loss sits at fixed places in the send order; consistent with rate limiting by the target, not proof of it |
 
 The data model, encoding and render pipeline: [DESIGN.md](DESIGN.md) and
 [Reading the graphs](docs/reading-graphs.md). What each probe can and cannot tell you:
