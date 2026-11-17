@@ -76,6 +76,30 @@
   null,
   null
  ],
+ "loss_positions": [
+  null,
+  [
+   16,
+   17,
+   18,
+   19,
+   20
+  ],
+  null,
+  [],
+  null,
+  null,
+  null
+ ],
+ "loss_window": [
+  null,
+  43,
+  null,
+  60,
+  null,
+  null,
+  null
+ ],
  "series": {
   "ipdv_receive": [
    [],
