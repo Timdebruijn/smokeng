@@ -147,10 +147,40 @@ towards saying nothing.
 
 The consecutive-interval counter resets when smokeng cannot trust the input: a gap in the
 data of more than two intervals, or an interval flagged as untrustworthy (a clock step, a
-receive-queue overflow). Only two flags change what a rule reads: a socket overflow
-is left out of loss, and a clock step is left out of the round-trip metrics. A probe that
-failed to send (for example local file-descriptor exhaustion) still counts as sent and lost,
-so it can fire a loss alert.
+receive-queue overflow). Three things change what a rule reads: a socket overflow
+is left out of loss, a clock step is left out of the round-trip metrics, and, by default, an
+interval flagged `positional loss` is left out of loss. A probe that failed to send (for
+example local file-descriptor exhaustion) still counts as sent and lost, so it can fire a
+loss alert.
+
+### Loss at fixed send positions
+
+An interval whose loss sits at the same places in the send order, interval after interval,
+is the signature of a target's ICMP rate limiter rather than of loss on the path; the graph
+marks it `positional loss` (see [Reading the graphs](reading-graphs.md)). Loss that a target's
+own rate limiter produces is not loss on the network, and a loss rule that pages on it pages
+about the target's configuration. So, as for dropped replies, a rule on `loss` leaves such an
+interval out: it counts neither towards firing nor towards clearing, and it resets the streak,
+so a firing alert does not clear on flagged intervals either. The interval is still stored,
+drawn and counted as loss everywhere else, in the availability figures included.
+
+Rules on median, p95, spread, shape and bimodality are not affected: the round-trip times of
+a rate-limited interval are real.
+
+This is a default, not a certainty. The flag says the pattern does not fit random loss, which
+rate limiting explains and does not prove. To count flagged intervals like any other for a
+subtree, set `positional_loss` there (`[defaults]` or any target table; it inherits like every
+other setting, and the admin page has it as "Positional loss"):
+
+```toml
+[targets."Lab"]
+positional_loss = "flag_only"   # "exclude" (the default) or "flag_only"
+```
+
+The first intervals of a rate-limited stretch are not flagged yet: the detector needs twelve
+intervals with lopsided loss before it can tell. A loss rule can therefore still fire at the
+start of one, and then stays firing until the loss stops or the rule clears on intervals it
+can read.
 
 Alert state is persisted, so an alert that has been firing for an hour does not resolve
 and re-fire every time the service restarts.
@@ -217,7 +247,7 @@ rule slow-p95 on /Production: p95 > 80ms for 5 intervals
 
 Notes:
   - These are rule transitions, not notifications: Alertmanager grouping, repeats and routing are not simulated.
-  (five more notes follow)
+  (six more notes follow)
 ```
 
 Each line under a series is one firing period: when the rule fired (the interval that
@@ -242,6 +272,9 @@ with notes, which say what the output is not:
 - **Late intervals are replayed in order.** The live engine does not evaluate an interval that
   arrives after a later one of the same series (an agent whose clock stepped back); the replay
   reads history in time order and evaluates it where it belongs.
+- **Positional loss is as the master flagged it.** The intervals left out of loss rules are
+  the ones the master flagged when it stored them, under the target's current
+  `positional_loss` setting.
 
 How the rule applies is decided as after an import. A rule from the file replaces the stored
 rule of the same name on the same node, keeping its captured golden baseline and its
