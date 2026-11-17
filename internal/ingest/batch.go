@@ -29,6 +29,9 @@ var BatchSchema = arrow.NewSchema([]arrow.Field{
 	// Why the local side could not send, when it could not. Optional on the
 	// wire like the series columns: an agent built before it simply omits it.
 	{Name: "send_error", Type: arrow.PrimitiveTypes.Uint8, Nullable: true},
+	// Which probes of the interval were lost, in send order (store.LossMask).
+	// Optional on the wire for the same reason; null when none was recorded.
+	{Name: "loss_mask", Type: arrow.BinaryTypes.Binary, Nullable: true},
 	// The extra per-packet series, one nullable column each. Null means the
 	// probe did not measure it — an irtt peer that returns no timestamps, or
 	// any other probe type, for which these are simply not a thing. An empty
@@ -59,10 +62,11 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 	valB := listB.ValueBuilder().(*array.Uint32Builder)
 	icmpB := rb.Field(6).(*array.Uint16Builder)
 	sendErrB := rb.Field(7).(*array.Uint8Builder)
+	maskB := rb.Field(8).(*array.BinaryBuilder)
 	seriesB := make([]*array.ListBuilder, len(seriesColumns))
 	seriesV := make([]*array.Int32Builder, len(seriesColumns))
 	for i := range seriesColumns {
-		seriesB[i] = rb.Field(8 + i).(*array.ListBuilder)
+		seriesB[i] = rb.Field(9 + i).(*array.ListBuilder)
 		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
 	}
 
@@ -83,6 +87,11 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 			sendErrB.Append(*m.SendErr)
 		} else {
 			sendErrB.AppendNull()
+		}
+		if m.LossMask != nil {
+			maskB.Append(m.LossMask)
+		} else {
+			maskB.AppendNull()
 		}
 		for i, name := range seriesColumns {
 			vals, ok := m.Series[name]
@@ -169,7 +178,7 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 	defer reader.Release()
 
 	var out []store.Measurement
-	var resorted, impossible int
+	var resorted, impossible, badMasks int
 	// Every row the stream carries counts, not only the ones that are kept: a
 	// row dropped below is still a row that was materialised, and counting what
 	// was kept let a stream of record batches full of dropped rows through at
@@ -225,6 +234,13 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 				return nil, fmt.Errorf("ingest: column \"send_error\" is not uint8")
 			}
 		}
+		var masks *array.Binary
+		if c := col("loss_mask"); c != nil {
+			var ok bool
+			if masks, ok = c.(*array.Binary); !ok {
+				return nil, fmt.Errorf("ingest: column \"loss_mask\" is not binary")
+			}
+		}
 		// IsNull indexes the validity bitmap without checking its length, and
 		// the reader does not check it either, so a bitmap shorter than its
 		// column is an out-of-range panic on the first row.
@@ -233,6 +249,11 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 		}
 		if sendErrs != nil {
 			if err := checkValidity("send_error", sendErrs); err != nil {
+				return nil, err
+			}
+		}
+		if masks != nil {
+			if err := checkValidity("loss_mask", masks); err != nil {
 				return nil, err
 			}
 		}
@@ -306,6 +327,18 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 			if sendErrs != nil && !sendErrs.IsNull(i) {
 				m.SendErr = new(sendErrs.Value(i))
 			}
+			// A mask comes from another machine and is checked against this row's
+			// own counts. A bad one is dropped and the row kept: refusing the
+			// batch is a 400, the agent discards a batch it was refused, and
+			// that would lose the measurements for the sake of an annotation.
+			if masks != nil && !masks.IsNull(i) {
+				mask := masks.Value(i)
+				if _, _, err := store.DecodeLossMask(mask, m.Sent, m.Received); err != nil {
+					badMasks++
+				} else {
+					m.LossMask = slices.Clone(mask)
+				}
+			}
 			for _, name := range seriesColumns {
 				l := series[name]
 				if l == nil || l.IsNull(i) {
@@ -355,6 +388,10 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 	if impossible > 0 {
 		log.Printf("ingest: agent %d sent %d measurement(s) with more replies than probes; "+
 			"those were dropped and the rest of the batch accepted", agentID, impossible)
+	}
+	if badMasks > 0 {
+		log.Printf("ingest: agent %d sent %d loss mask(s) that do not fit their row; "+
+			"the masks were dropped and the measurements kept", agentID, badMasks)
 	}
 	return out, reader.Err()
 }
