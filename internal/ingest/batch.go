@@ -178,7 +178,7 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 	defer reader.Release()
 
 	var out []store.Measurement
-	var resorted, impossible, badMasks int
+	var resorted, impossible, badMasks, maskBytes int
 	// Every row the stream carries counts, not only the ones that are kept: a
 	// row dropped below is still a row that was materialised, and counting what
 	// was kept let a stream of record batches full of dropped rows through at
@@ -328,21 +328,30 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 				m.SendErr = new(sendErrs.Value(i))
 			}
 			// A mask comes from another machine and is checked against this row's
-			// own counts. A bad one is dropped and the row kept: refusing the
-			// batch is a 400, the agent discards a batch it was refused, and
-			// that would lose the measurements for the sake of an annotation.
+			// own counts. One that does not fit is dropped and the row kept:
+			// refusing the batch is a 400, the agent discards a batch it was
+			// refused, and that would lose the measurements for the sake of an
+			// annotation. (A column that is not well-formed Arrow is another
+			// matter and refuses the batch, as it does for every column.)
 			//
 			// Fitting the counts is not enough. An honest agent sends a mask only
 			// for an interval that may carry one, and holding every agent to that
 			// is what lets a reader take a stored mask to mean partial loss at
 			// trusted positions, whoever measured it.
+			//
+			// The copies are bounded by the body. An honest batch's masks are
+			// separate bytes of it; a column whose offsets all point at one
+			// value would otherwise have every row keep its own copy of the same
+			// eight kilobytes.
 			if masks != nil && !masks.IsNull(i) {
 				mask := masks.Value(i)
-				_, _, err := store.DecodeLossMask(mask, m.Sent, m.Received)
-				if err != nil || !store.LossMaskRecordable(m.Flags, m.Sent, m.Received) {
+				if !store.LossMaskRecordable(m.Flags, m.Sent, m.Received) ||
+					maskBytes+len(mask) > len(body) ||
+					store.CheckLossMask(mask, m.Sent, m.Received) != nil {
 					badMasks++
 				} else {
 					m.LossMask = slices.Clone(mask)
+					maskBytes += len(mask)
 				}
 			}
 			for _, name := range seriesColumns {

@@ -53,33 +53,41 @@ func EncodeLossMask(spread bool, lost []bool) []byte {
 	return out
 }
 
-// DecodeLossMask checks a mask against the counts of the row it belongs to and
-// returns what it says. The counts are what make it checkable: a mask from
-// another machine whose length or popcount disagrees with sent and received did
-// not describe this interval.
-func DecodeLossMask(mask []byte, sent, received int) (spread bool, lost []bool, err error) {
+// CheckLossMask checks a mask against the counts of the row it belongs to. The
+// counts are what make it checkable: a mask from another machine whose length
+// or popcount disagrees with sent and received did not describe this interval.
+// It allocates nothing, so the master can run it on every row an agent sends.
+func CheckLossMask(mask []byte, sent, received int) error {
 	if sent < 0 || received < 0 || received > sent {
-		return false, nil, fmt.Errorf("loss mask: %d received of %d sent", received, sent)
+		return fmt.Errorf("loss mask: %d received of %d sent", received, sent)
 	}
 	if want := 1 + (sent+7)/8; len(mask) != want {
-		return false, nil, fmt.Errorf("loss mask: %d bytes for %d probes, want %d", len(mask), sent, want)
+		return fmt.Errorf("loss mask: %d bytes for %d probes, want %d", len(mask), sent, want)
 	}
 	if mask[0]&^lossMaskSpread != 0 {
-		return false, nil, errors.New("loss mask: reserved header bits set")
+		return errors.New("loss mask: reserved header bits set")
 	}
 	if pad := sent % 8; pad != 0 && mask[len(mask)-1]>>pad != 0 {
-		return false, nil, errors.New("loss mask: bits set past the last probe")
+		return errors.New("loss mask: bits set past the last probe")
 	}
-	lost = make([]bool, sent)
 	n := 0
-	for i := range lost {
-		lost[i] = mask[1+i/8]&(1<<(i%8)) != 0
-	}
 	for _, b := range mask[1:] {
 		n += bits.OnesCount8(b)
 	}
 	if n != sent-received {
-		return false, nil, fmt.Errorf("loss mask: %d probes marked lost, but %d sent and %d received", n, sent, received)
+		return fmt.Errorf("loss mask: %d probes marked lost, but %d sent and %d received", n, sent, received)
+	}
+	return nil
+}
+
+// DecodeLossMask checks a mask as CheckLossMask does and returns what it says.
+func DecodeLossMask(mask []byte, sent, received int) (spread bool, lost []bool, err error) {
+	if err := CheckLossMask(mask, sent, received); err != nil {
+		return false, nil, err
+	}
+	lost = make([]bool, sent)
+	for i := range lost {
+		lost[i] = mask[1+i/8]&(1<<(i%8)) != 0
 	}
 	return mask[0]&lossMaskSpread != 0, lost, nil
 }

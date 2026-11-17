@@ -888,8 +888,10 @@ A row that fails those last two, or that claims more replies than probes, is dro
 the rest accepted — a 400 makes the agent discard its whole batch, so one bad row must not
 cost the rest. The batch carries `loss_mask` (§3.4) as an optional nullable `Binary` column
 beside `send_error`; the master checks each mask against its row's `sent` and `received`,
-and against the same rule the prober applies for which intervals may carry one, and drops a
-mask that fails either, keeping the row and logging one line per batch.
+and against the part of the prober's rule a row can show (its flags, and that the loss is
+partial), and drops a mask that fails either, keeping the row and logging one line per
+batch. It cannot check the rest: the probe type and the configured number of probes are
+not in the row.
 
 **Replay is harmless because ingest keeps what is stored.** The nonce cache is in-memory
 and empties on master restart; the timestamp window alone would then admit a captured

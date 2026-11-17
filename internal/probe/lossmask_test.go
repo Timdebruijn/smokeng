@@ -80,10 +80,13 @@ func TestLossMaskSpreadHeader(t *testing.T) {
 
 // A late reply and an ICMP error both give no sample, so both are lost in the
 // mask; the mask must agree with Received or the two disagree about the loss.
+// A probe that drew an ICMP error and a reply as well gave a sample, and is
+// not lost.
 func TestLossMaskLateReplyAndICMPError(t *testing.T) {
 	c := maskCollector(5, 3)
 	c.pings[1].rx = c.pings[1].txUser.Add(1500 * time.Millisecond) // after the 1 s timeout
 	c.pings[3].icmpErr, c.pings[3].icmpType, c.pings[3].icmpCode = true, 3, 1
+	c.pings[4].icmpErr, c.pings[4].icmpType, c.pings[4].icmpCode = true, 3, 1 // answered too
 	m := c.finalize(maskSpec(5), 100, conditions{})
 	if _, at := lostPositions(t, m); len(at) != 2 || at[0] != 1 || at[1] != 3 {
 		t.Errorf("lost = %v, want [1 3]", at)
