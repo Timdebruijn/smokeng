@@ -8,7 +8,7 @@ import {
   type Target,
 } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
-import { fmtLoss, fmtUs } from './format'
+import { fmtLoss, fmtUs, positionalTitle } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt } from './layout'
 import { useRenderWorker, useWidth, ErrorText } from './shared'
 
@@ -101,7 +101,7 @@ function tally(flags: Uint8Array, codes: (number | null)[], bit: number): [numbe
  * was: so the labels are shown without counts, and the per-interval detail is
  * what zooming in is for.
  */
-function pooledFlags(flags: Uint8Array): { label: string; title: string; count: number }[] {
+function pooledFlags(flags: Uint8Array, positional: Float64Array): { label: string; title: string; count: number }[] {
   let any = 0
   for (let i = 0; i < flags.length; i++) any |= flags[i]
   const out = FLAGS.filter((f) => any & f.bit).map((f) => ({ label: f.label, title: f.title, count: 0 }))
@@ -112,6 +112,16 @@ function pooledFlags(flags: Uint8Array): { label: string; title: string; count: 
       count: 0,
     })
   }
+  // Not one of the flag bits: the master derives it from the order probes were
+  // sent in, so it has its own column and is added here by hand.
+  if (positional.some((n) => n > 0)) {
+    out.push({
+      label: 'positional loss',
+      title:
+        'Some intervals here lost their probes at fixed places in the send order, which is consistent with rate limiting by the target. Zoom in to see which positions.',
+      count: 0,
+    })
+  }
   return out
 }
 
@@ -119,6 +129,8 @@ function flagCounts(
   flags: Uint8Array,
   icmpErrors: (number | null)[],
   sendErrors: (number | null)[],
+  lossPositions: (number[] | null)[],
+  lossWindows: (number | null)[],
 ): { label: string; title: string; count: number }[] {
   const out = FLAGS.map((f) => {
     let count = 0
@@ -146,6 +158,21 @@ function flagCounts(
       title: 'Why probes could not be put on the wire, as opposed to going unanswered.',
       count,
     })
+  }
+
+  // Loss at fixed send positions, which is not a bit of the flags either. The
+  // tooltip describes the most recent finding: the window it rests on slides, so
+  // the newest is the one that still describes the series.
+  let count = 0
+  let last = -1
+  for (let i = 0; i < lossPositions.length; i++) {
+    if (lossPositions[i] !== null) {
+      count++
+      last = i
+    }
+  }
+  if (count > 0) {
+    out.push({ label: 'positional loss', title: positionalTitle(lossPositions[last]!, lossWindows[last] ?? 0), count })
   }
   return out
 }
@@ -346,7 +373,11 @@ export default function Plot({
           rows.loss[i] = series.sent[i] > 0 ? 1 - series.received[i] / series.sent[i] : NaN
         }
         rowsRef.current = rows
-        setQuality(series.pooled ? pooledFlags(series.flags) : flagCounts(series.flags, series.icmpErrors, series.sendErrors))
+        setQuality(
+          series.pooled
+            ? pooledFlags(series.flags, series.pooled.positional)
+            : flagCounts(series.flags, series.icmpErrors, series.sendErrors, series.lossPositions, series.lossWindows),
+        )
         // Counts are per interval; a pooled read has columns, so none are shown.
         setRowCount(series.pooled ? 0 : n)
         workerRef.current.postMessage(
