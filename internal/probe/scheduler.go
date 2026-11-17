@@ -321,6 +321,10 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	errCounts := map[uint16]int{}
 	sendCounts := map[uint8]int{}
 	deadline := now.Add(-timeout)
+	// Which positions were counted and gave no sample, in send order. Filled in
+	// the loop that builds Samples, so the two cannot disagree: a position is
+	// lost exactly when it was counted in Sent and contributed nothing.
+	lost := make([]bool, len(c.pings))
 	for i := range c.pings {
 		p := &c.pings[i]
 		if !p.sent {
@@ -338,6 +342,7 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 		// lost. Dropping it from the count would render an unreachable target
 		// as no data at all rather than as total loss.
 		m.Sent++
+		lost[i] = true
 		if p.sendFailed {
 			m.Flags |= store.FlagSendFailed
 			if p.sendReason != 0 {
@@ -391,6 +396,7 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 			us = math.MaxUint32
 		}
 		m.Samples = append(m.Samples, uint32(us))
+		lost[i] = false
 	}
 	slices.Sort(m.Samples)
 	m.Received = len(m.Samples)
@@ -415,7 +421,31 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 		m.SendErr = new(modeOf(sendCounts))
 	}
 	m.Series = c.series
+	m.LossMask = lossMask(spec, m, lost)
 	return m
+}
+
+// lossMask encodes where in the send order the interval's losses fell, or
+// returns nil when that is not known or says nothing.
+//
+// Positions are only trusted when every configured one was attempted and
+// counted, so lost[i] is the i-th probe sent. An unsent or truncated-away
+// position would shift what the bits mean. irtt is left out because its result
+// order is assumed, not verified, to be the send order. The four flags each
+// mean some of the loss is this process's doing, at a position that is not
+// known. With no loss or all of it the mask is all zeros or all ones and
+// follows from the counts, so it is not stored.
+func lossMask(spec TargetSpec, m store.Measurement, lost []bool) []byte {
+	switch spec.ProbeType {
+	case "", "icmp", "dns", "tcp", "http", "https":
+	default:
+		return nil
+	}
+	const untrusted = store.FlagSendFailed | store.FlagTruncated | store.FlagSocketOverflow | store.FlagClockStep
+	if m.Sent != len(lost) || m.Flags&untrusted != 0 || m.Received == 0 || m.Received == m.Sent {
+		return nil
+	}
+	return store.EncodeLossMask(spec.Mode == "spread", lost)
 }
 
 // modeOf returns the most frequent key. Ties break on the lower key so the
