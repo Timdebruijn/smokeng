@@ -150,7 +150,8 @@ with `--default-role none`.) [Access control →](docs/access-control.md)
 <summary><b>Under the hood: storage, probes and quality flags</b></summary>
 
 **What is stored.** One row per target, vantage point and interval: sent, received, a quality
-bitfield, an ICMP error code, and the sorted RTTs in microseconds as delta-varints. Nothing is
+bitfield, an ICMP error code, the positions of the lost probes where those are known and the
+loss was partial, and the sorted RTTs in microseconds as delta-varints. Nothing is
 averaged or downsampled when it is written, when it ages or when it is drawn. At a 60 s interval
 that is about **28 MB per series per year** ([estimate and examples](docs/operations.md#storage-growth-and-sizing));
 SQLite stays comfortable into the low thousands of series. Retention is opt-in per subtree and

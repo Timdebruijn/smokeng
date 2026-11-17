@@ -216,6 +216,8 @@ func TestDecodeBatchIgnoresUnknownColumn(t *testing.T) {
 			} else {
 				b.AppendNull()
 			}
+		case *array.BinaryBuilder:
+			b.AppendNull()
 		case *array.ListBuilder:
 			if f.Name == "samples" {
 				b.Append(true)
