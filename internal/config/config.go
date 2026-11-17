@@ -175,6 +175,15 @@ func (s Summary) String() string {
 // of an unknown name is a typo, and a typo means nobody measures that target
 // (DESIGN.md §4.4).
 func Import(ctx context.Context, st Store, data []byte, prune, allowUnknownAgents bool) (Summary, error) {
+	f, err := Parse(data)
+	if err != nil {
+		return Summary{}, err
+	}
+	return Apply(ctx, st, f, prune, allowUnknownAgents)
+}
+
+// Parse decodes a TOML configuration without applying it.
+func Parse(data []byte) (File, error) {
 	var f File
 	// Strict: a key smokeng does not know is a mistake, and accepting it
 	// quietly is how "probe_type = dns" ends up in a file, changing nothing,
@@ -187,11 +196,68 @@ func Import(ctx context.Context, st Store, data []byte, prune, allowUnknownAgent
 		// offending lines, which is the whole point of refusing.
 		var strict *toml.StrictMissingError
 		if errors.As(err, &strict) {
-			return Summary{}, fmt.Errorf("config: unknown setting:\n%s", strict.String())
+			return File{}, fmt.Errorf("config: unknown setting:\n%s", strict.String())
 		}
-		return Summary{}, fmt.Errorf("config: parse: %w", err)
+		return File{}, fmt.Errorf("config: parse: %w", err)
 	}
-	return Apply(ctx, st, f, prune, allowUnknownAgents)
+	return f, nil
+}
+
+// AlertRules turns the alert rules of a parsed file into rules on the nodes of
+// an existing tree, without importing anything: [default_alerts] lands on the
+// root, a target's alerts on that target. Defaults and validation are
+// import's, since both go through toAlertRule. A path the tree does not have is
+// an error rather than a node created on the way, because the caller is
+// checking a rule against history that only exists for the nodes it has. The
+// rules carry ID 0; the caller decides what to call them.
+func AlertRules(f File, targets []tree.Target) ([]alert.Rule, error) {
+	tr, err := tree.New(targets)
+	if err != nil {
+		return nil, err
+	}
+	byPath := map[string]int64{}
+	var rootID int64
+	for i := range targets {
+		p, err := tr.Path(targets[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		byPath[p] = targets[i].ID
+		if targets[i].ParentID == nil {
+			rootID = targets[i].ID
+		}
+	}
+	var out []alert.Rule
+	add := func(node int64, rules map[string]AlertRule) error {
+		for _, name := range slices.Sorted(maps.Keys(rules)) {
+			r, err := toAlertRule(name, rules[name], node)
+			if err != nil {
+				return err
+			}
+			out = append(out, r)
+		}
+		return nil
+	}
+	if err := add(rootID, f.DefaultAlerts); err != nil {
+		return nil, err
+	}
+	for _, p := range slices.Sorted(maps.Keys(f.Targets)) {
+		e := f.Targets[p]
+		if len(e.Alerts) == 0 {
+			continue
+		}
+		if err := validatePath(p); err != nil {
+			return nil, err
+		}
+		id, ok := byPath["/"+p]
+		if !ok {
+			return nil, fmt.Errorf("config: alert rules on %q, which is not in the database", "/"+p)
+		}
+		if err := add(id, e.Alerts); err != nil {
+			return nil, fmt.Errorf("config: %q: %w", p, err)
+		}
+	}
+	return out, nil
 }
 
 // Apply syncs an already-parsed configuration into the store. Both the TOML
