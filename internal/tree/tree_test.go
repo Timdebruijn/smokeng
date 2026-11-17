@@ -18,6 +18,7 @@ func testTargets() []Target {
 			TraceIntervalS:   ptr(300),
 			RetentionS:       ptr(0),
 			GraphSeries:      ptr("all"),
+			PositionalLoss:   ptr("exclude"),
 			ProbeType:        ptr("icmp"),
 			TLSSkipVerify:    ptr(false),
 		}},

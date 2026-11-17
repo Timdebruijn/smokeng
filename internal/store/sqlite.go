@@ -487,6 +487,12 @@ CREATE INDEX paths_pending ON paths (ts) WHERE submitted = 0;`,
   PRIMARY KEY (target_id, agent_id, ts)
 ) WITHOUT ROWID;
 CREATE INDEX measurements_masked ON measurements (target_id, agent_id, ts) WHERE loss_mask IS NOT NULL;`,
+	// v27: whether alert rules on loss count the intervals v26 flagged. Only the
+	// root is set, to exclude: loss from a target's own rate limiter is not loss
+	// on the network, and a rule that pages on it pages about the target's
+	// configuration. Everything below inherits, so a subtree can say flag_only.
+	`ALTER TABLE targets ADD COLUMN positional_loss TEXT;
+UPDATE targets SET positional_loss = 'exclude' WHERE parent_id IS NULL AND positional_loss IS NULL;`,
 }
 
 func (s *SQLite) migrate() error {
@@ -893,7 +899,7 @@ func (s *SQLite) AvailabilitySeries(ctx context.Context, targetID, agentID, from
 
 const targetCols = `id, parent_id, name, host, address_family, title, notes,
 	hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
-	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s, graph_series`
+	burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s, probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s, graph_series, positional_loss`
 
 func (s *SQLite) ListTargets(ctx context.Context) ([]tree.Target, error) {
 	return listTargets(ctx, s.db)
@@ -925,7 +931,7 @@ func scanTarget(rows *sql.Rows) (tree.Target, error) {
 		&t.Hidden, &t.Enabled, &t.SortOrder, &st.IntervalS, &st.PingsPerInterval, &st.ProbeMode,
 		&st.BurstGapMS, &st.TimeoutMS, &st.PacketSize, &st.DSCP, &st.Agents, &st.TraceIntervalS,
 		&st.ProbeType, &st.ProbePort, &st.DNSQuery, &st.DNSRRType, &st.HTTPPath, &st.TLSSkipVerify,
-		&st.RetentionS, &st.GraphSeries)
+		&st.RetentionS, &st.GraphSeries, &st.PositionalLoss)
 	return t, err
 }
 
@@ -948,8 +954,8 @@ func upsertTarget(ctx context.Context, q idRunner, t *tree.Target) error {
 			hidden, enabled, sort_order, interval_s, pings_per_interval, probe_mode,
 			burst_gap_ms, timeout_ms, packet_size, dscp, agents, trace_interval_s,
 			probe_type, probe_port, dns_query, dns_rr_type, http_path, tls_skip_verify, retention_s,
-			graph_series)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			graph_series, positional_loss)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			parent_id = excluded.parent_id, name = excluded.name,
 			host = excluded.host, address_family = excluded.address_family,
@@ -972,7 +978,8 @@ func upsertTarget(ctx context.Context, q idRunner, t *tree.Target) error {
 			http_path = excluded.http_path,
 			tls_skip_verify = excluded.tls_skip_verify,
 			retention_s = excluded.retention_s,
-			graph_series = excluded.graph_series`,
+			graph_series = excluded.graph_series,
+			positional_loss = excluded.positional_loss`,
 		t.ID, t.ParentID, t.Name, t.Host, t.AddressFamily,
 		t.Title, t.Notes, t.Hidden, t.Enabled, t.SortOrder,
 		t.Settings.IntervalS, t.Settings.PingsPerInterval,
@@ -983,7 +990,7 @@ func upsertTarget(ctx context.Context, q idRunner, t *tree.Target) error {
 		t.Settings.ProbeType, t.Settings.ProbePort,
 		t.Settings.DNSQuery, t.Settings.DNSRRType,
 		t.Settings.HTTPPath, t.Settings.TLSSkipVerify,
-		t.Settings.RetentionS, t.Settings.GraphSeries)
+		t.Settings.RetentionS, t.Settings.GraphSeries, t.Settings.PositionalLoss)
 	return err
 }
 

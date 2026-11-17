@@ -56,6 +56,9 @@ type Values struct {
 	// everything measured is stored whatever this says, so turning a graph on
 	// later shows its history rather than starting it from that moment.
 	GraphSeries *string `toml:"graph_series,omitempty"`
+	// PositionalLoss is "exclude" (the default) or "flag_only": whether an alert
+	// rule on loss leaves out intervals whose loss sits at fixed send positions.
+	PositionalLoss *string `toml:"positional_loss,omitempty"`
 	// What the probes of an interval are, and the settings the chosen type
 	// reads (DESIGN.md §3.2b). A setting belonging to another type is stored
 	// and inherited as usual, and simply not read.
@@ -725,6 +728,7 @@ func valuesFrom(s tree.Settings) Values {
 		TraceIntervalS:   s.TraceIntervalS,
 		RetentionS:       s.RetentionS,
 		GraphSeries:      s.GraphSeries,
+		PositionalLoss:   s.PositionalLoss,
 	}
 }
 
@@ -753,6 +757,7 @@ func (v Values) settings() tree.Settings {
 		TraceIntervalS: v.TraceIntervalS,
 		RetentionS:     v.RetentionS,
 		GraphSeries:    v.GraphSeries,
+		PositionalLoss: v.PositionalLoss,
 	}
 }
 
@@ -775,6 +780,7 @@ func overlayValues(dst *tree.Settings, v Values) {
 	set(&dst.TraceIntervalS, s.TraceIntervalS)
 	set(&dst.RetentionS, s.RetentionS)
 	set(&dst.GraphSeries, s.GraphSeries)
+	set(&dst.PositionalLoss, s.PositionalLoss)
 	if v.Agents != nil {
 		dst.Agents = s.Agents
 	}
