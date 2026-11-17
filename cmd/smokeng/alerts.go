@@ -80,27 +80,9 @@ func parseReplayArgs(args []string, now time.Time) (replayArgs, error) {
 	if *rule == "" && a.rulesFile == "" {
 		return fail("--rule is required unless --rules-file is given")
 	}
-	switch {
-	case *since != "" && (*from != "" || *to != ""):
-		return fail("give either --since or --from and --to, not both")
-	case *since != "":
-		d, err := parseSince(*since)
-		if err != nil {
-			return fail("%v", err)
-		}
-		a.opts.From, a.opts.To = now.Add(-d).Unix(), now.Unix()
-	case *from != "" && *to != "":
-		f, err1 := time.Parse(time.RFC3339, *from)
-		t, err2 := time.Parse(time.RFC3339, *to)
-		if err := errors.Join(err1, err2); err != nil {
-			return fail("--from and --to are RFC 3339 times, like 2026-11-01T00:00:00Z: %v", err)
-		}
-		if !t.After(f) {
-			return fail("--to must be after --from")
-		}
-		a.opts.From, a.opts.To = f.Unix(), t.Unix()
-	default:
-		return fail("give a window: --since, or both --from and --to")
+	var err error
+	if a.opts.From, a.opts.To, err = parseWindow(*since, *from, *to, now); err != nil {
+		return fail("%v", err)
 	}
 	switch replay.Mode(*silences) {
 	case replay.SilenceReport, replay.SilenceRespect, replay.SilenceIgnore:
@@ -115,6 +97,33 @@ func parseReplayArgs(args []string, now time.Time) (replayArgs, error) {
 	a.opts.RuleName, a.opts.Target, a.opts.Vantage = *rule, *target, *vantage
 	a.opts.Silences = replay.Mode(*silences)
 	return a, nil
+}
+
+// parseWindow turns --since or --from and --to into unix seconds. It is shared
+// by the commands that read a stretch of stored history, so that they take the
+// window in the same words and refuse the same mistakes.
+func parseWindow(since, from, to string, now time.Time) (int64, int64, error) {
+	switch {
+	case since != "" && (from != "" || to != ""):
+		return 0, 0, errors.New("give either --since or --from and --to, not both")
+	case since != "":
+		d, err := parseSince(since)
+		if err != nil {
+			return 0, 0, err
+		}
+		return now.Add(-d).Unix(), now.Unix(), nil
+	case from != "" && to != "":
+		f, err1 := time.Parse(time.RFC3339, from)
+		t, err2 := time.Parse(time.RFC3339, to)
+		if err := errors.Join(err1, err2); err != nil {
+			return 0, 0, fmt.Errorf("--from and --to are RFC 3339 times, like 2026-11-01T00:00:00Z: %v", err)
+		}
+		if !t.After(f) {
+			return 0, 0, errors.New("--to must be after --from")
+		}
+		return f.Unix(), t.Unix(), nil
+	}
+	return 0, 0, errors.New("give a window: --since, or both --from and --to")
 }
 
 // parseSince reads a duration of days, hours or minutes. time.ParseDuration has

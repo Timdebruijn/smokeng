@@ -272,6 +272,77 @@ certificate. The log names the first two once per interval. Tables and the fixes
 A probe this host could not send carries the `not sent` badge with a reason (see below). Fix
 the local cause (`ulimit -n`, `LimitNOFILE=`, route, firewall), not the target.
 
+## Loss on a graph that might be rate limiting
+
+The graph shows loss on one target, and the target, its CPE or a router in front of it may be
+rate limiting ICMP. On a graph that looks like network loss. In the order the probes were sent
+it does not: a rate limiter answers the first probes of a burst and drops the tail.
+
+```bash
+smokeng diag loss-pattern --db smokeng.db --target /Production/web --since 24h
+```
+
+Sample (the list of recent intervals is shortened here):
+
+```
+/Production/web from local, 2026-11-16 12:00Z to 2026-11-17 12:00Z
+
+90 intervals, 21 with loss, 20 of those with recorded positions
+1 had loss without recorded positions: measured before positions were recorded, total loss, an irtt probe, or an interval flagged as partly smokeng's own doing
+
+Judged: the last 20 intervals with recorded loss, from 2026-11-16 21:00Z to 2026-11-17 11:00Z, 10 probes per interval, burst
+
+Losses per send position:
+   1                                            0
+   2                                            0
+   3                                            0
+   4                                            0
+   5                                            0
+   6                                            0
+   7                                            0
+   8  ██████████████████████████████            15
+   9  ████████████████████████████████████████  20
+  10  ████████████████████████████████████████  20
+
+p = 0.0001
+
+Last 20 intervals with recorded loss, newest last (. answered, x lost, in send order):
+  2026-11-16 21:00Z  .......xxx
+  2026-11-16 22:00Z  .......xxx
+  2026-11-16 23:00Z  .......xxx
+  …
+  2026-11-17 09:00Z  .......xxx
+  2026-11-17 10:00Z  .......xxx
+  2026-11-17 11:00Z  .......xxx
+
+Loss is concentrated at probes 8–10. That does not fit loss that falls where it happens to; it is consistent with rate limiting by the target, and is not proof of it.
+```
+
+How to read it: the histogram counts, per send position, how many of the judged intervals lost
+that probe. Loss from the network falls where it happens to and gives a flat histogram; here
+all the loss is at positions 8 to 10 and positions 1 to 7 lose nothing. The p-value is how
+often chance alone, on loss with the same shape, made the profile this lopsided. The command
+flags a window below p = 0.0005. The conclusion line says which of the three cases it is.
+
+What it can and cannot tell you:
+
+- **A flag means "does not fit random loss", not "is rate limiting".** Anything else that
+  drops the same probes at the same positions looks the same.
+- **No flag is not a clean bill.** It says the loss was not lopsided enough to rule chance
+  out, which is also what a short or weak pattern looks like.
+- It needs at least twelve intervals with lopsided recorded loss, and ten lost probes, in the
+  window. Less is reported as `Not enough to judge`, with the reason.
+- It only sees intervals measured since loss positions were recorded. Older intervals, total
+  loss, intervals flagged as partly smokeng's own doing (`not sent`, `cut short`, `dropped
+  replies`, `clock step`) and `irtt` targets have counts but no positions; the output says how
+  many.
+- It cannot see a pattern that is its own mirror image, such as the first and the last probe
+  lost equally often.
+- It judges the newest recorded intervals, at most 60 and none more than a day older than the
+  newest, and stops at a change of probe count or mode.
+
+Detail: [Command-line reference](cli.md#diag-loss-pattern).
+
 ## Quality badges
 
 Meanings: [Reading graphs](reading-graphs.md). What to do:

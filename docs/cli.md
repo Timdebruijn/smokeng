@@ -3,7 +3,7 @@
 For operators and anyone writing a unit file or playbook. It answers: which subcommands exist,
 which flags each takes, and what the defaults are.
 
-There is one binary, `smokeng`. Five commands: `serve`, `config`, `agent`, `alerts` and `version`.
+There is one binary, `smokeng`. Six commands: `serve`, `config`, `agent`, `alerts`, `diag` and `version`.
 
 - **No configuration file and no environment variables.** The binary never reads either. Run
   settings are flags. The target tree and everything else lives in the SQLite database
@@ -30,6 +30,7 @@ smokeng agent enable|disable|remove [--db PATH] ID
 smokeng agent key [--key PATH]
 smokeng agent run --master URL [--agent-id ID | --token TOKEN] [flags]
 smokeng alerts replay [--db PATH] (--rule NAME | --rules-file FILE [--rule NAME]) (--since 30d | --from TIME --to TIME) [flags]
+smokeng diag loss-pattern [--db PATH] --target PATH [--vantage NAME] (--since 24h | --from TIME --to TIME) [--format text|json]
 smokeng version
 ```
 
@@ -259,6 +260,57 @@ under a silence: listed and marked under `report`, left out under `respect`, alw
 `csv` has one row per episode, with the header
 `rule,rule_node,target,vantage,start,end,seconds,crossed_at,peak,open,fire_silenced,resolve_silenced`
 (`end` is empty for an episode still firing).
+
+## diag
+
+Looks at stored measurements for a cause. Only `loss-pattern` exists.
+
+### diag loss-pattern
+
+For one target, shows after the fact whether its loss sits at particular places in the send
+order, which is what ICMP rate limiting at the target looks like. It reads stored measurements
+and sends nothing. What the output means and what it
+cannot see: [Loss on a graph that might be rate limiting](troubleshooting.md#loss-on-a-graph-that-might-be-rate-limiting).
+
+It opens the database **read-only**, like `alerts replay`: it writes nothing, does not migrate
+and does not create the file, so it is safe to run next to a running `serve`. It refuses a
+database whose schema version differs from the binary's, so run it with the same smokeng
+version as the server.
+
+```
+smokeng diag loss-pattern --db smokeng.db --target /Production/web --since 24h
+smokeng diag loss-pattern --db smokeng.db --target Production/web --vantage ams-01 --from 2026-11-16T00:00:00Z --to 2026-11-17T00:00:00Z --format json
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--db` | `smokeng.db` | Path to the SQLite database. Must exist. |
+| `--target` | empty | Required. The target as a tree path (`/Production/web`, the leading `/` is optional). It must be a target with a host: a group or an unknown path is an error. |
+| `--vantage` | empty | Only this agent's measurements; `local` is the master's own prober. An unknown name is an error. Without it, every agent with measurements for the target in the window gets its own section, in name order. |
+| `--since` | empty | Window ending now: a number with `d`, `h` or `m` (`24h`, `7d`, `90m`). |
+| `--from`, `--to` | empty | Window `[from, to)` as RFC 3339 times. Give `--since`, or both of these, not a mix. |
+| `--format` | `text` | `text` or `json`. |
+
+The window is at most 400 days. The counts cover all of it; the verdict is about its newest
+intervals with recorded loss, at most 60 of them.
+
+Output goes to stdout; `-h` prints the flags. A target with no measurements in the window is
+reported as such and is not an error.
+
+`text` has one section per agent: the interval counts, what the verdict was based on, a
+histogram of losses per send position (positions numbered from 1; past 40 probes several
+positions share a row), the p-value, the last 20 intervals with recorded loss as a pattern in
+send order (`.` answered, `x` lost; cut after 80 positions), and a one- or two-sentence
+conclusion.
+
+`json` is one indented object with `"schema": 1`: `target`, `from`, `to` and `series`.
+Timestamps are RFC 3339 UTC. Each series carries `vantage`, `agent_id`, `intervals`,
+`with_loss`, `recorded`, `verdict`, `recent` and `conclusion` (the sentence the text form
+ends with). `verdict` has `tested`, `why`, `flagged`, `p`, `p_at_least`, `probes`, `mode`
+(`burst` or `spread`), `window_intervals`, `lost`, `counts` (per position), `window_from`,
+`window_to` (null when no interval was judged) and `where`. `p` is null when the window was
+not tested, and `where` is empty unless it was flagged. `recent` is a list of `ts` and the
+full `pattern`, not cut at 80.
 
 ## version
 
