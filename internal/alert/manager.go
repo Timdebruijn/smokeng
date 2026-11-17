@@ -44,6 +44,14 @@ type Manager struct {
 	st       Store
 	notifier Notifier
 
+	// observing admits one Observe at a time. The prober's writer was the only
+	// caller; the ingest handler is a second, on its own goroutines. Evaluation
+	// was already under mu, but each call saves its snapshot of the states and
+	// records its transitions after releasing it, and two calls could do that
+	// in the other order: the older snapshot written last, so a restart read
+	// back an alert as firing that had resolved.
+	observing sync.Mutex
+
 	mu         sync.Mutex
 	byTarget   map[int64]Applicable
 	states     map[stateKey]*State
@@ -172,6 +180,8 @@ func (m *Manager) Reload(ctx context.Context) error {
 // Notifications are best-effort: a webhook that is down must never stop
 // measurement, so a failure is logged and the state still advances.
 func (m *Manager) Observe(ctx context.Context, ms []Input) {
+	m.observing.Lock()
+	defer m.observing.Unlock()
 	var fired []Alert
 	var dirty []State
 
@@ -188,6 +198,15 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 			if !ok {
 				st = &State{RuleID: r.ID, TargetID: meas.TargetID, AgentID: meas.AgentID}
 				m.states[key] = st
+			}
+			// An interval at or before the last one this rule has seen is
+			// history arriving late: an agent whose clock stepped back, or the
+			// prober rewriting an interval it cut short. The rule counts
+			// consecutive intervals forwards, so a step back would count as the
+			// next one, and would move LastTS, which dates a resolve, into the
+			// past. It is stored and drawn; it is not evaluated.
+			if st.LastTS != 0 && meas.TS <= st.LastTS {
+				continue
 			}
 			// The manager owns a shape rule's baseline and divergence buffers;
 			// the other metrics have none.
@@ -538,12 +557,21 @@ func (m *Manager) record(ctx context.Context, alerts []Alert) {
 // Delivering reports whether transitions go anywhere beyond the log.
 func (m *Manager) Delivering() bool { return m.notifier != nil }
 
-// transitionTS is when a transition happened. Since is when the condition
-// started holding and Evaluate clears it on the way out, so a resolved alert
-// carries the zero time — whose Unix() is -62135596800, the year 1.
+// transitionTS is when a transition happened: the interval that fired the
+// rule, or the one that resolved it. Since is when the condition started
+// holding and Evaluate clears it on the way out, so a resolved alert carries
+// the zero time — whose Unix() is -62135596800, the year 1 — and is dated by
+// Ended instead.
+//
+// Not by the clock: an agent that was cut off delivers its intervals hours
+// later, and a resolve stamped on arrival beside a fire stamped by its interval
+// recorded an episode as lasting until the link came back.
 func transitionTS(a Alert, now int64) int64 {
 	if a.Firing && !a.Since.IsZero() {
 		return a.Since.Unix()
+	}
+	if !a.Firing && !a.Ended.IsZero() {
+		return a.Ended.Unix()
 	}
 	return now
 }
