@@ -636,3 +636,41 @@ func TestAResolvedAlertEndsAtTheIntervalThatResolvedIt(t *testing.T) {
 		}
 	}
 }
+
+// Whether a loss rule leaves out positional loss is the target's own
+// resolved setting, read through the tree: a leaf under the root's default
+// (exclude) stays quiet on a flagged interval while a leaf under a subtree set
+// to flag_only fires on the same input. Protects Resolve filling the policy per
+// target rather than globally.
+func TestPositionalLossPolicyFollowsTheTree(t *testing.T) {
+	ctx := context.Background()
+	st, _, leafID := setup(t) // /Production inherits exclude from the root
+	lab := tree.Target{ParentID: ptr(int64(1)), Name: "Lab", Enabled: true,
+		Settings: tree.Settings{IntervalS: ptr(60), PositionalLoss: ptr("flag_only")}}
+	if err := st.UpsertTarget(ctx, &lab); err != nil {
+		t.Fatal(err)
+	}
+	labLeaf := tree.Target{ParentID: &lab.ID, Name: "gw", Enabled: true,
+		Host: ptr("10.0.0.2"), AddressFamily: ptr("v4")}
+	if err := st.UpsertTarget(ctx, &labLeaf); err != nil {
+		t.Fatal(err)
+	}
+	// One rule on the root reaches both leaves.
+	rule := alert.Rule{TargetID: 1, Name: "loss", Metric: alert.MetricLoss,
+		Op: alert.OpGreater, Threshold: 5, For: 1, ClearFor: 1, Enabled: true, Severity: alert.SeverityWarning}
+	if err := st.UpsertAlertRule(ctx, &rule); err != nil {
+		t.Fatal(err)
+	}
+	m := alert.NewManager(st, nil)
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a, b := input(leafID, 0, 20, 17), input(labLeaf.ID, 0, 20, 17)
+	a.PositionalLoss, b.PositionalLoss = true, true
+	m.Observe(ctx, []alert.Input{a, b})
+
+	firing := m.Firing()
+	if len(firing) != 1 || firing[0].TargetPath != "/Lab/gw" {
+		t.Errorf("Firing() = %+v, want only /Lab/gw", firing)
+	}
+}

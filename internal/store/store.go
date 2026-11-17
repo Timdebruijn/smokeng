@@ -180,6 +180,8 @@ func (m *Measurement) AlertInput() alert.Input {
 		Samples:     m.Samples,
 		LossTrusted: m.Flags&FlagSocketOverflow == 0,
 		RTTTrusted:  m.Flags&FlagClockStep == 0,
+		// Whether that matters is the target's setting, which this does not know.
+		PositionalLoss: m.Positional != nil,
 	}
 }
 

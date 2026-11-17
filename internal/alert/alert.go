@@ -32,6 +32,12 @@ type Input struct {
 	// unreliable. Alerting on either would page someone about smokeng rather
 	// than about the network.
 	LossTrusted, RTTTrusted bool
+	// PositionalLoss is true when the master found this interval's loss to sit
+	// at fixed places in the send order, which a target's own ICMP rate limiter
+	// produces and loss on the path does not. Whether a loss rule leaves such an
+	// interval out is the target's setting, applied in step, so that the live
+	// manager and a replay cannot disagree about it.
+	PositionalLoss bool
 }
 
 // Metric is the quantity a rule tests.
