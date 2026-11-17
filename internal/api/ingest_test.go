@@ -129,6 +129,24 @@ func TestIngestStoresMeasurements(t *testing.T) {
 	}
 }
 
+// The mask an agent measured has to reach the master's store, or loss position
+// exists only on the agents' own disks.
+func TestIngestStoresLossMask(t *testing.T) {
+	h, st, agentID, key, mine, _ := ingestFixture(t)
+	m := measurement(mine, 1_756_400_000) // 5 sent, 3 received
+	m.LossMask = store.EncodeLossMask(false, []bool{false, false, false, true, true})
+	if rec := submit(t, h, agentID, key, []store.Measurement{m}, time.Now()); rec.Code != http.StatusOK {
+		t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
+	}
+	got, err := st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !bytes.Equal(got[0].LossMask, m.LossMask) {
+		t.Errorf("stored %+v, want mask %v", got, m.LossMask)
+	}
+}
+
 // Idempotency is the real replay defense: a batch delivered twice must leave
 // exactly the same rows, not duplicates.
 func TestIngestIsIdempotent(t *testing.T) {

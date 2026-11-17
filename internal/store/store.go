@@ -35,6 +35,10 @@ type Measurement struct {
 	// bug here. That question came up on a real deployment and the stored data
 	// could not answer it.
 	SendErr *uint8
+	// LossMask says which probes of the interval were lost, in send order; see
+	// lossmask.go. nil means not recorded: the interval predates it, was not
+	// lossy in part, or its positions cannot be trusted.
+	LossMask []byte
 	// Series holds the extra per-packet distributions a probe measured beside
 	// the round trip, keyed by series name (see SeriesIPDVSend and friends), in
 	// µs and sorted ascending. Signed, because inter-packet delay variation is.

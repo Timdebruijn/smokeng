@@ -56,6 +56,10 @@ func main() {
 		if err := agentCmd(os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}
+	case "alerts":
+		if err := alertsCmd(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 	case "version":
 		fmt.Printf("smokeng %s %s/%s (%s)\n",
 			version, runtime.GOOS, runtime.GOARCH, runtime.Version())
@@ -78,6 +82,7 @@ commands:
   agent enable|disable|remove ID         change an agent's standing
   agent key [--key PATH]                 create the agent's key if absent, print its public half
   agent run --master URL --agent-id ID   run as a remote measurement node
+  alerts replay --rule N --since 30d     show when a rule would have fired over stored history
   version                                print version`)
 }
 

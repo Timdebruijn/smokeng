@@ -113,6 +113,7 @@ CREATE TABLE measurements (
   flags      INTEGER NOT NULL DEFAULT 0,  -- see §3.4
   samples    BLOB NOT NULL,               -- encoded sorted RTTs, see §3.3
   icmp_error INTEGER,                     -- schema v2; see §3.4
+  loss_mask  BLOB,                        -- schema v25; see §3.4, NULL = not recorded
   PRIMARY KEY (target_id, agent_id, ts)
 ) WITHOUT ROWID;
 
@@ -317,6 +318,7 @@ per row rather than silent (brief requirement):
 - bit 4 — at least one probe drew an ICMP error; `icmp_error` names which
 - bit 5 — the wall clock stepped during the interval, so its RTTs are unreliable
 - bit 6 — the local stack refused to transmit some probes (no route, local firewall)
+- bit 7 — the interval was finalized before its window closed (shutdown, settings change)
 
 Added after the design was agreed (2026-08-29), on the same principle as the original
 three: a measurement is worth what its conditions are worth, and every way it can mean
@@ -329,6 +331,21 @@ A probe the kernel declines to send counts as attempted and lost — otherwise a
 unreachable target renders as an empty graph rather than as a failing one.
 
 The frontend can badge series rendered from degraded data.
+
+**Loss mask.** Samples are stored sorted, so which probes were lost, and where in the send
+order, is gone once an interval is written; ICMP rate limiting at a target shows up
+exactly there (the tail of a burst). `loss_mask` (schema v25) keeps it: one header byte,
+bit 0 set when the probes were sent in `spread` mode and clear for `burst`, bits 1–7
+reserved and zero; then `ceil(sent/8)` bytes in which probe *i* in send order is bit
+`i%8` (least significant first) of byte *i/8*, set when it got no valid reply within the
+timeout. Bits past the last probe are zero, and a reader refuses a mask whose length,
+reserved bits, padding or number of set bits (`sent − received`) are wrong. NULL means not
+recorded, which is the case for every interval before v25 and for any interval where the
+mask would mislead or say nothing: probe type `irtt` (its result order is not verified to
+be the send order); an interval where not every configured probe was attempted and
+counted; one flagged send-failed, truncated, socket-overflow or clock-step (some of the
+loss is ours, at an unknown position); and one with no loss or total loss (the mask would
+be all zeros or all ones, and the counts already say so). It is not served to the browser.
 
 ### 3.5 Storage size, honestly
 
@@ -869,7 +886,12 @@ at most 10,000 rows), then decoded, and then every measurement in the batch must
 to a target assigned to this agent and not be timestamped later than the skew allows.
 A row that fails those last two, or that claims more replies than probes, is dropped and
 the rest accepted — a 400 makes the agent discard its whole batch, so one bad row must not
-cost the rest.
+cost the rest. The batch carries `loss_mask` (§3.4) as an optional nullable `Binary` column
+beside `send_error`; the master checks each mask against its row's `sent` and `received`,
+and against the part of the prober's rule a row can show (its flags, and that the loss is
+partial), and drops a mask that fails either, keeping the row and logging one line per
+batch. It cannot check the rest: the probe type and the configured number of probes are
+not in the row.
 
 **Replay is harmless because ingest keeps what is stored.** The nonce cache is in-memory
 and empties on master restart; the timestamp window alone would then admit a captured

@@ -176,6 +176,93 @@ what applies to a node is visible in one place.
 The practical consequence: if you want a node to keep the inherited loss rule *and* add a
 latency rule, restate both on that node.
 
+## Testing a rule before you enable it
+
+`smokeng alerts replay` runs a rule over stored history and lists when it would have fired and
+resolved. The rule can be one in the database, or one in a TOML file that you have not
+imported, so a threshold can be tried against last month before it pages anyone.
+
+The replay uses the code the live engine uses: the same hysteresis, the same quality flags, the
+same shape baselines, fed the stored intervals oldest first. Nothing after an interval is
+visible to it when it judges that interval.
+
+Take a file with one rule, `rules.toml`:
+
+```toml
+[targets."Production".alerts.slow-p95]
+metric = "p95"
+op = ">"
+threshold = 80
+for_intervals = 5
+```
+
+and replay it over the last 30 days:
+
+```bash
+smokeng alerts replay --db /var/lib/smokeng/smokeng.db \
+  --rules-file rules.toml --since 30d
+```
+
+```
+Replay 2026-10-18 12:00Z to 2026-11-17 12:00Z (silences: report)
+
+rule slow-p95 on /Production: p95 > 80ms for 5 intervals
+  /Production/db from local: no episodes (43198 intervals)
+  /Production/web from local: 3 episodes, firing 1h25m, longest 1h0m (43198 intervals)
+    2026-10-24 02:10Z -> 2026-10-24 02:25Z  15m  crossed at 91.4, peak 133
+    2026-11-02 14:00Z -> 2026-11-02 15:00Z  1h0m  crossed at 84.2, peak 212  [fire silenced]
+    2026-11-09 08:30Z -> 2026-11-09 08:40Z  10m  crossed at 88, peak 97.5
+
+2 series evaluated, 1 with episodes: 3 episodes (0.10 per day), 1 fired under a silence
+
+Notes:
+  - These are rule transitions, not notifications: Alertmanager grouping, repeats and routing are not simulated.
+  (five more notes follow)
+```
+
+Each line under a series is one firing period: when the rule fired (the interval that
+completed its `for_intervals`, not the first bad one), when it resolved (or `still firing` at
+the end of the window), how long, the value that tipped it over, and the highest value
+(lowest, for a `<` rule) while it fired. `[fire silenced]` means a silence covered the
+moment it fired; `--silences respect` leaves those out, `--silences ignore` does not look at
+silences at all. Under the default, `report`, everything is listed and marked. The report ends
+with notes, which say what the output is not:
+
+- **These are rule transitions, not notifications.** Alertmanager grouping, repeats and routing
+  are not simulated. "Three episodes" is three times the rule fired, not three messages.
+- **Hysteresis starts clean.** At the start of the window every rule is "not firing", so an
+  alert that was already firing then appears a few intervals later. Shape baselines are the
+  exception: the replay reads the intervals before the window to fill them, as the live engine
+  would have had them.
+- **Restarts are not known.** The live engine rebuilds shape baselines after every restart and
+  stays quiet while it does; the replay assumes it never restarted.
+- **Gap detection uses each target's current `interval_s`**, which may differ from what it was
+  when the data was measured.
+- **Deleted silences are not known.**
+- **Late intervals are replayed in order.** The live engine does not evaluate an interval that
+  arrives after a later one of the same series (an agent whose clock stepped back); the replay
+  reads history in time order and evaluates it where it belongs.
+
+How the rule applies is decided as after an import. A rule from the file replaces the stored
+rule of the same name on the same node, keeping its captured golden baseline and its
+rule-scoped silences, and a rule on a node replaces the set inherited from above (see
+[Inheritance](#inheritance)). A path in the file that is not in the database is an error.
+Disabled rules are replayed, which is the point; disabled targets are not. Without
+`--rules-file`, `--rule NAME` replays every stored rule of that name, one block per node that
+defines it.
+
+Narrow the replay with `--target /Production/web` (a node and everything under it) and
+`--vantage ams` (one agent; `local` is the master's own prober). A target and agent with no
+measurements in the window are left out. Warnings go to stderr in every format, and the text
+and JSON reports carry them too:
+a shape rule with less history before the window than it wants (it is quiet until its
+baseline fills, as live is after a restart), a golden rule with no captured reference (it
+cannot fire), a reference captured inside the replayed window (that stretch is compared with
+itself), and a rule that reaches no target.
+
+`--format json` writes the report as indented JSON, and `--format csv` writes one row per
+episode; see [the command-line reference](cli.md#alerts-replay).
+
 ## Delivery
 
 Firing and resolved alerts are POSTed to a webhook in Alertmanager's v2 format:

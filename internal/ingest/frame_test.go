@@ -293,6 +293,7 @@ func TestDecodeBatchRefusesAShortValidityBitmap(t *testing.T) {
 		field[*array.ListBuilder](t, rb, "samples").Append(true)
 		field[*array.Uint16Builder](t, rb, "icmp_error").AppendNull()
 		field[*array.Uint8Builder](t, rb, "send_error").AppendNull()
+		field[*array.BinaryBuilder](t, rb, "loss_mask").AppendNull()
 		for _, name := range store.KnownSeries {
 			field[*array.ListBuilder](t, rb, name).AppendNull()
 		}
