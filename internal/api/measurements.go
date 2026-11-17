@@ -66,8 +66,9 @@ var pooledSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "received", Type: arrow.PrimitiveTypes.Uint64},
 	{Name: "flags", Type: arrow.PrimitiveTypes.Uint8},
 	{Name: "flagged", Type: arrow.PrimitiveTypes.Uint32},
-	// Of those, how many sit at fixed send positions (the loss_positions column
-	// of a raw read says which); not a quality flag, so not part of flagged.
+	// How many of the column's intervals lost their probes at fixed send
+	// positions (the loss_positions column of a raw read says which). It is not
+	// a quality flag, so these are counted here and not in flagged.
 	{Name: "positional", Type: arrow.PrimitiveTypes.Uint32},
 	{Name: "quantiles", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint32)},
 	// The extra series pooled the same way, null where no interval in the
