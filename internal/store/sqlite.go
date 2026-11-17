@@ -9,9 +9,11 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite"
 
+	"github.com/timdebruijn/smokeng/internal/losspattern"
 	"github.com/timdebruijn/smokeng/internal/report"
 	"github.com/timdebruijn/smokeng/internal/series"
 	"github.com/timdebruijn/smokeng/internal/store/enc"
@@ -85,6 +87,9 @@ type SQLite struct {
 	// Its callback reads through the pool while its transaction holds one, so
 	// with as many waiting writers as connections none could finish.
 	treeWrites chan struct{}
+	// detect is whether writing an interval also tests its series for loss at
+	// fixed send positions. See DetectPositionalLoss.
+	detect atomic.Bool
 }
 
 var _ Store = (*SQLite)(nil)
@@ -460,6 +465,28 @@ CREATE INDEX paths_pending ON paths (ts) WHERE submitted = 0;`,
 	// NULL is not recorded: every interval before this column, and every one with
 	// no loss, total loss, or positions that cannot be trusted.
 	`ALTER TABLE measurements ADD COLUMN loss_mask BLOB`,
+	// v26: the intervals the master found to lose probes at fixed places in the
+	// send order (internal/losspattern), one row each; no row means not flagged.
+	// A table of its own rather than a quality-flag bit: all eight bits of flags
+	// are taken, and its width is fixed in the agent protocol and in the browser
+	// reader. A bit could not say which positions, either.
+	//
+	// The partial index is what the detector reads through. "The last sixty
+	// intervals of this series that recorded a mask" is a seek into it and a walk
+	// of sixty entries; without it that is a scan of up to a day of rows, since
+	// most intervals carry no mask, once per lossy interval written. Nothing is
+	// flagged retroactively: the rows are written as intervals arrive.
+	`CREATE TABLE positional_loss (
+  target_id INTEGER NOT NULL,
+  agent_id  INTEGER NOT NULL,
+  ts        INTEGER NOT NULL,
+  p         REAL    NOT NULL,
+  intervals INTEGER NOT NULL,
+  lost      INTEGER NOT NULL,
+  counts    BLOB    NOT NULL,
+  PRIMARY KEY (target_id, agent_id, ts)
+) WITHOUT ROWID;
+CREATE INDEX measurements_masked ON measurements (target_id, agent_id, ts) WHERE loss_mask IS NOT NULL;`,
 }
 
 func (s *SQLite) migrate() error {
@@ -489,6 +516,17 @@ func (s *SQLite) migrate() error {
 
 func (s *SQLite) Close() error { return s.db.Close() }
 
+// DetectPositionalLoss switches on, for this handle, the test for loss at fixed
+// send positions: every interval written that lost some probes is judged, in
+// the write's transaction, against its series' recent masks, and flagged ones
+// get a positional_loss row. The master switches it on. An agent's local
+// buffer does not: it would be judging its own series on the master's behalf,
+// and nothing reads the result there. Call it before the handle is shared.
+func (s *SQLite) DetectPositionalLoss() { s.detect.Store(true) }
+
+// WriteMeasurements writes a batch, replacing rows at existing keys. With
+// detection on it sets Positional on the elements of ms that were flagged, so
+// the caller can pass the same batch on (to alerting) without asking again.
 func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error {
 	_, err := s.writeMeasurements(ctx, ms, true)
 	return err
@@ -504,6 +542,8 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 // silently rewrote stored history. First write wins, so a stored interval is
 // the interval the agent reported at the time. A replay changes nothing either
 // way, being byte-identical; what this changes is a submission that is not.
+//
+// The rows returned carry Positional where detection flagged them.
 func (s *SQLite) IngestMeasurements(ctx context.Context, ms []Measurement) (stored []Measurement, err error) {
 	return s.writeMeasurements(ctx, ms, false)
 }
@@ -548,7 +588,29 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 		return nil, err
 	}
 	defer putSeries.Close()
-	for _, m := range ms {
+	detect := s.detect.Load()
+	var history, delPositional, putPositional *sql.Stmt
+	if detect {
+		// Newest first, so that LIMIT keeps the newest Window. The partial
+		// index measurements_masked serves it: (target, agent, ts) in order.
+		if history, err = tx.PrepareContext(ctx, historyQuery); err != nil {
+			return nil, err
+		}
+		defer history.Close()
+		if delPositional, err = tx.PrepareContext(ctx, `
+			DELETE FROM positional_loss WHERE target_id = ? AND agent_id = ? AND ts = ?`); err != nil {
+			return nil, err
+		}
+		defer delPositional.Close()
+		if putPositional, err = tx.PrepareContext(ctx, `
+			INSERT INTO positional_loss (target_id, agent_id, ts, p, intervals, lost, counts)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`); err != nil {
+			return nil, err
+		}
+		defer putPositional.Close()
+	}
+	for i := range ms {
+		m := &ms[i]
 		if m.Received != len(m.Samples) {
 			return nil, fmt.Errorf("store: measurement (%d,%d,%d): received=%d but %d samples",
 				m.TargetID, m.AgentID, m.TS, m.Received, len(m.Samples))
@@ -569,10 +631,32 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 		} else if n == 0 {
 			continue
 		}
-		written = append(written, m)
 		if _, err := delSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
 			return nil, err
 		}
+		if detect {
+			// As with the series: a replaced interval is a different interval,
+			// and a flag earned by the old one must not outlive it.
+			m.Positional = nil
+			if _, err := delPositional.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
+				return nil, err
+			}
+			if m.LossMask != nil {
+				pl, err := detectPositional(ctx, history, m)
+				if err != nil {
+					return nil, err
+				}
+				if pl != nil {
+					cblob := EncodePositionalCounts(pl.Counts)
+					if _, err := putPositional.ExecContext(ctx, m.TargetID, m.AgentID, m.TS,
+						pl.P, pl.Intervals, pl.Lost, cblob); err != nil {
+						return nil, err
+					}
+					m.Positional = pl
+				}
+			}
+		}
+		written = append(written, *m)
 		for _, name := range slices.Sorted(maps.Keys(m.Series)) {
 			if !series.Valid(name) {
 				return nil, fmt.Errorf("store: measurement (%d,%d,%d): unknown series %q",
@@ -592,6 +676,53 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 		return nil, err
 	}
 	return written, nil
+}
+
+// historyQuery reads a series' latest recorded masks up to a given interval.
+// INDEXED BY is not decoration: left to itself the planner prefers the primary
+// key, which has the same leading columns, and walks every unmasked interval of
+// the day to find sixty masked ones. loss_mask IS NOT NULL is what makes the
+// partial index applicable.
+const historyQuery = `
+	SELECT ts, sent, received, loss_mask FROM measurements INDEXED BY measurements_masked
+	WHERE target_id = ? AND agent_id = ? AND ts <= ? AND ts >= ? AND loss_mask IS NOT NULL
+	ORDER BY ts DESC LIMIT ?`
+
+// detectPositional runs the test on the window that ends at m, which is
+// already written in the transaction, as are any earlier rows of the same
+// batch. It returns nil when the window is not flagged.
+func detectPositional(ctx context.Context, history *sql.Stmt, m *Measurement) (*PositionalLoss, error) {
+	rows, err := history.QueryContext(ctx, m.TargetID, m.AgentID, m.TS, m.TS-losspattern.MaxAgeS, losspattern.Window)
+	if err != nil {
+		return nil, err
+	}
+	var newestFirst []losspattern.Interval
+	for rows.Next() {
+		var ts int64
+		var sent, received int
+		var mask []byte
+		if err := rows.Scan(&ts, &sent, &received, &mask); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		// A row that does not decode is one that was not recorded.
+		spread, lost, err := DecodeLossMask(mask, sent, received)
+		if err != nil {
+			continue
+		}
+		newestFirst = append(newestFirst, losspattern.Interval{TS: ts, Spread: spread, Lost: lost})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	slices.Reverse(newestFirst)
+	v := losspattern.Test(newestFirst, false)
+	if !v.Flagged {
+		return nil, nil
+	}
+	return &PositionalLoss{P: v.P, Intervals: v.Intervals, Lost: v.Lost, Counts: v.Counts}, nil
 }
 
 func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error) {
@@ -627,7 +758,48 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 	if err := s.attachSeries(ctx, targetID, agentID, from, to, out); err != nil {
 		return nil, err
 	}
+	if err := s.attachPositional(ctx, targetID, agentID, from, to, out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// attachPositional fills in Positional for an already-read range, in one query
+// rather than one per interval.
+func (s *SQLite) attachPositional(ctx context.Context, targetID, agentID, from, to int64, ms []Measurement) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ts, p, intervals, lost, counts FROM positional_loss
+		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?`,
+		targetID, agentID, from, to)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byTS := make(map[int64]*Measurement, len(ms))
+	for i := range ms {
+		byTS[ms[i].TS] = &ms[i]
+	}
+	for rows.Next() {
+		var ts int64
+		var pl PositionalLoss
+		var blob []byte
+		if err := rows.Scan(&ts, &pl.P, &pl.Intervals, &pl.Lost, &blob); err != nil {
+			return err
+		}
+		m := byTS[ts]
+		if m == nil {
+			continue // pruned together with its measurement, so only a stray
+		}
+		// Derived data: one that will not decode is not flagged, and the
+		// interval stays readable, as with the optional series.
+		if pl.Counts, err = DecodePositionalCounts(blob, m.Sent); err != nil {
+			log.Printf("store: measurement (%d,%d,%d) positional loss will not decode (%v); "+
+				"serving the interval unflagged", targetID, agentID, ts, err)
+			continue
+		}
+		m.Positional = &pl
+	}
+	return rows.Err()
 }
 
 // attachSeries fills in the extra per-packet distributions for an already-read
@@ -851,6 +1023,12 @@ func (s *SQLite) PruneMeasurements(ctx context.Context, targetID, cutoff, sliceS
 			defer tx.Rollback()
 			if _, err := tx.ExecContext(ctx,
 				"DELETE FROM measurement_series WHERE target_id = ? AND ts < ?", targetID, end); err != nil {
+				return 0, err
+			}
+			// Likewise the positional flags: they are derived from the intervals
+			// being deleted, and one left behind describes nothing.
+			if _, err := tx.ExecContext(ctx,
+				"DELETE FROM positional_loss WHERE target_id = ? AND ts < ?", targetID, end); err != nil {
 				return 0, err
 			}
 			res, err := tx.ExecContext(ctx,

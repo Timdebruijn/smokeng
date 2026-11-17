@@ -32,6 +32,9 @@ type Column struct {
 	// Flagged how many intervals carried one.
 	Flags   uint8
 	Flagged int
+	// Positional is how many intervals in the column were flagged as losing
+	// probes at fixed send positions (Measurement.Positional).
+	Positional int
 	// Quantiles holds the pooled samples, sorted ascending, when there are at
 	// most ColumnQuantiles of them; otherwise ColumnQuantiles evenly spaced
 	// order statistics (the sample at each mid-rank), each standing for an
@@ -112,9 +115,15 @@ func (s *SQLite) QueryColumns(ctx context.Context, targetID, agentID, from, to i
 		if err := s.poolSeries(ctx, targetID, agentID, from, to, p, cols, read); err != nil {
 			return nil, nil, err
 		}
+		if err := s.poolPositional(ctx, targetID, agentID, from, to, p, cols); err != nil {
+			return nil, nil, err
+		}
 		return nil, cols, nil
 	}
 	if err := s.attachSeries(ctx, targetID, agentID, from, to, raw); err != nil {
+		return nil, nil, err
+	}
+	if err := s.attachPositional(ctx, targetID, agentID, from, to, raw); err != nil {
 		return nil, nil, err
 	}
 	return raw, nil, nil
@@ -272,6 +281,29 @@ func (s *SQLite) poolSeries(ctx context.Context, targetID, agentID, from, to int
 	}
 	flush()
 	return nil
+}
+
+// poolPositional counts the flagged intervals into the columns already built.
+// Only the timestamps are read: the counts are not pooled. A flag whose column
+// holds no measurement belongs to none and is skipped.
+func (s *SQLite) poolPositional(ctx context.Context, targetID, agentID, from, to int64, p *pooler, cols []Column) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ts FROM positional_loss
+		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?`, targetID, agentID, from, to)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ts int64
+		if err := rows.Scan(&ts); err != nil {
+			return err
+		}
+		if j, ok := slices.BinarySearch(p.outIdx, p.column(ts)); ok {
+			cols[j].Positional++
+		}
+	}
+	return rows.Err()
 }
 
 // quantiles sorts pool and returns it whole when it has at most q values, or q

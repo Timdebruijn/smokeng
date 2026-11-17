@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/bits"
@@ -90,4 +91,33 @@ func DecodeLossMask(mask []byte, sent, received int) (spread bool, lost []bool, 
 		lost[i] = mask[1+i/8]&(1<<(i%8)) != 0
 	}
 	return mask[0]&lossMaskSpread != 0, lost, nil
+}
+
+// EncodePositionalCounts packs the per-position loss counts of a flagged
+// interval, one uvarint each.
+func EncodePositionalCounts(counts []int) []byte {
+	out := make([]byte, 0, len(counts))
+	for _, c := range counts {
+		out = binary.AppendUvarint(out, uint64(c))
+	}
+	return out
+}
+
+// DecodePositionalCounts is the inverse, for an interval that sent n probes.
+// It insists on exactly n well-formed values, so a truncated, padded or
+// otherwise damaged blob is refused rather than read as something else.
+func DecodePositionalCounts(b []byte, n int) ([]int, error) {
+	counts := make([]int, 0, n)
+	for len(b) > 0 {
+		v, w := binary.Uvarint(b)
+		if w <= 0 || v > 1<<31 {
+			return nil, errors.New("positional loss: malformed count")
+		}
+		counts = append(counts, int(v))
+		b = b[w:]
+	}
+	if len(counts) != n {
+		return nil, fmt.Errorf("positional loss: %d counts for %d probes", len(counts), n)
+	}
+	return counts, nil
 }
