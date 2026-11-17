@@ -377,8 +377,9 @@ gains columns over time, and both directions tolerate the difference: a master
 resolves columns by name and ignores one it has never heard of, so a newer
 agent's batch is read by an older master; and every column added so far is
 optional, so an older agent's batch is read by a newer master and simply carries
-less. Both are pinned by tests, because this is the kind of property that is
-easy to believe and easy to break.
+less (`loss_mask` is one more such column: agents older than the release that added it
+send none). Both are pinned by tests, because this is the kind of property that is easy to
+believe and easy to break.
 
 The rule that keeps it true is that **a column added to the batch format must be
 optional**. Making one required would refuse every older agent's batch, and an
