@@ -259,6 +259,8 @@ func serve(args []string) error {
 		return err
 	}
 	defer st.Close()
+	// Only the master judges series; see DetectPositionalLoss.
+	st.DetectPositionalLoss()
 
 	if *externalURL != "" {
 		u, err := url.Parse(*externalURL)
