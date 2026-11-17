@@ -127,7 +127,7 @@ with `--default-role none`.) [Access control →](docs/access-control.md)
 | | |
 |---|---|
 | **Remote agents** | The same binary in another mode. Push-only, so they work behind NAT. One-time enrolment tokens, Ed25519-signed requests, first write wins, and a local buffer that rides out a master outage and back-fills the graphs. Agents receive data, never code. [Agents →](docs/agents.md) |
-| **Alerting** | Loss, median, p95, spread, shape and bimodality. Acknowledge, silences and booked maintenance windows built in; delivery to an Alertmanager v2 webhook. [Alerting →](docs/alerting.md) |
+| **Alerting** | Loss, median, p95, spread, shape and bimodality. Acknowledge, silences and booked maintenance windows built in; delivery to an Alertmanager v2 webhook. `smokeng alerts replay` shows when a rule, even one not yet imported, would have fired over stored history. [Alerting →](docs/alerting.md) |
 | **Target tree** | Settings inherit down the tree, and the admin UI shows per value whether it is set here or inherited, and from where. [Configuration →](docs/configuration.md) |
 | **GitOps** | Targets, alert rules and grants round-trip through one TOML file; silences and enrolled agents stay in the database. Import is declarative: absent targets are disabled, not deleted. [Configuration →](docs/configuration.md) |
 | **Access** | OIDC login (Authentik, Keycloak, Entra, Okta, …). Viewer and editor grants per subtree; admin is global. [Access control →](docs/access-control.md) |

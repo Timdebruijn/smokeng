@@ -3,7 +3,7 @@
 For operators and anyone writing a unit file or playbook. It answers: which subcommands exist,
 which flags each takes, and what the defaults are.
 
-There is one binary, `smokeng`. Four commands: `serve`, `config`, `agent` and `version`.
+There is one binary, `smokeng`. Five commands: `serve`, `config`, `agent`, `alerts` and `version`.
 
 - **No configuration file and no environment variables.** The binary never reads either. Run
   settings are flags. The target tree and everything else lives in the SQLite database
@@ -29,6 +29,7 @@ smokeng agent list [--db PATH]
 smokeng agent enable|disable|remove [--db PATH] ID
 smokeng agent key [--key PATH]
 smokeng agent run --master URL [--agent-id ID | --token TOKEN] [flags]
+smokeng alerts replay [--db PATH] (--rule NAME | --rules-file FILE [--rule NAME]) (--since 30d | --from TIME --to TIME) [flags]
 smokeng version
 ```
 
@@ -210,6 +211,51 @@ the key file, so `--token` is spent once and later restarts do not need it.
 | `--tls-ca-file` | empty | Comma-separated PEM files that `https` probes trust, in addition to the system roots and the CAs the master hands down. |
 | `--irtt-hmac-keys` | empty | **Secret file.** Same format as on the master. The master does not hand these down; deploy the file to the agent host. |
 | `--no-remote-cas` | `false` | Refuse the CA certificates the master supplies. They only reach `https` probes, never the agent's own connection to the master. |
+
+## alerts
+
+Reads alert history. Only `replay` exists.
+
+### alerts replay
+
+Replays an alert rule, one stored in the database or one in a TOML file that is not imported,
+over stored measurements, and reports when it would have fired and resolved. What the output
+means, and a worked example: [Testing a rule before you enable it](alerting.md#testing-a-rule-before-you-enable-it).
+
+It opens the database **read-only**: it writes nothing, does not migrate and does not create
+the file, so it is safe to run next to a running `serve`. It refuses a database whose schema
+version differs from the binary's, so run it with the same smokeng version as the server.
+Measurements the server writes while it runs may or may not be in the window.
+
+```
+smokeng alerts replay --db smokeng.db --rules-file rules.toml --since 30d
+smokeng alerts replay --db smokeng.db --rule loss --from 2026-11-01T00:00:00Z --to 2026-11-08T00:00:00Z --format csv
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--db` | `smokeng.db` | Path to the SQLite database. Must exist. |
+| `--rule` | empty | Name of the rule to replay. Required unless `--rules-file` is given. A name is unique per node, not globally: every stored rule with this name is replayed. |
+| `--rules-file` | empty | Replay the alert rules of this TOML file instead of the stored ones. Only the alert rules are read; settings, hosts and grants in the file are ignored. With `--rule`, only that rule. |
+| `--since` | empty | Window ending now: a number with `d`, `h` or `m` (`30d`, `36h`, `90m`). |
+| `--from`, `--to` | empty | Window `[from, to)` as RFC 3339 times. Give `--since`, or both of these, not a mix. |
+| `--target` | empty | Only targets under this node, written as tree paths are (`/Production/web`). An unknown path is an error. |
+| `--vantage` | empty | Only this agent's measurements; `local` is the master's own prober. An unknown name is an error. |
+| `--silences` | `report` | `report` lists every episode and marks silenced ones, `respect` leaves out episodes whose fire was silenced (counting them as suppressed), `ignore` does not consult silences. A silence counts if it covered the transition at its own time, not now. |
+| `--format` | `text` | `text`, `json` or `csv`. |
+
+Output goes to stdout. For `text`, warnings are also written to stderr.
+
+`json` is the whole report as indented JSON with `"schema": 1`: `from`, `to`, `silences`,
+`series`, `totals`, `warnings` and `notes`. Timestamps are RFC 3339 UTC. Each series carries
+`rule`, `rule_node`, `condition`, `target`, `target_id`, `vantage`, `agent_id`, `intervals`,
+`fired`, `resolved`, `firing_seconds`, `longest_seconds`, `episodes` and `warnings`; each episode
+`start`, `end` (absent while still firing), `open`, `seconds`, `crossed_at`, `peak`,
+`fire_silenced` and `resolve_silenced`.
+
+`csv` has one row per episode, with the header
+`rule,rule_node,target,vantage,start,end,seconds,crossed_at,peak,open,fire_silenced,resolve_silenced`
+(`end` is empty for an episode still firing).
 
 ## version
 
