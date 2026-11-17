@@ -209,9 +209,10 @@ rule slow-p95 on /Production: p95 > 80ms for 5 intervals
 2 series evaluated, 1 with episodes: 3 episodes (0.10 per day), 1 suppressed by silences
 ```
 
-Each line under a series is one firing period: when it started, when it ended (or `still
-firing` at the end of the window), how long, the value that tipped it over, and the highest
-value (lowest, for a `<` rule) while it fired. `[fire silenced]` means a silence covered the
+Each line under a series is one firing period: when the rule fired (the interval that
+completed its `for_intervals`, not the first bad one), when it resolved (or `still firing` at
+the end of the window), how long, the value that tipped it over, and the highest value
+(lowest, for a `<` rule) while it fired. `[fire silenced]` means a silence covered the
 moment it fired; `--silences respect` leaves those out, `--silences ignore` does not look at
 silences at all. Under the default, `report`, everything is listed and marked. The report ends
 with notes, which say what the output is not:

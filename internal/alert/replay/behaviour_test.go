@@ -2,6 +2,7 @@ package replay_test
 
 import (
 	"context"
+	"errors"
 	"math"
 	"reflect"
 	"strings"
@@ -568,5 +569,39 @@ func TestSeriesOrderIsDeterministic(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("order = %v", got)
+	}
+}
+
+// failing refuses every read of one target.
+type failing struct {
+	replay.Source
+	target int64
+	err    error
+}
+
+func (f *failing) QueryRange(ctx context.Context, tg, ag, from, to int64) ([]store.Measurement, error) {
+	if tg == f.target {
+		return nil, f.err
+	}
+	return f.Source.QueryRange(ctx, tg, ag, from, to)
+}
+
+// Protects the error a replay reports when series run side by side: the read
+// that failed, named by its series, and not the cancellation that failure
+// caused in the series still running.
+func TestAFailedSeriesIsTheErrorReported(t *testing.T) {
+	e := newEnv(t)
+	e.save(e.rule(e.prod, "loss", alert.MetricLoss, alert.OpGreater, 20, 2, 2))
+	for _, tg := range []int64{e.web, e.db} {
+		e.put(tg, 0, lossPattern(strings.Repeat("g", 2600)))
+		e.put(tg, e.ams, lossPattern(strings.Repeat("g", 2600)))
+	}
+	boom := errors.New("disk on fire")
+	_, err := replay.Run(context.Background(), &failing{Source: e.st, target: e.db, err: boom}, opts("loss", 0, 2500))
+	if !errors.Is(err, boom) {
+		t.Fatalf("Run = %v, want the read error", err)
+	}
+	if !strings.Contains(err.Error(), "db") {
+		t.Errorf("the error does not name the series that failed: %v", err)
 	}
 }

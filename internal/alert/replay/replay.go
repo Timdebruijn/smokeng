@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
@@ -57,6 +59,9 @@ type Options struct {
 // series is never held whole: 500 intervals of even a 1 s, 100-ping target is
 // 50,000 samples, far below the limit one QueryRange enforces.
 const chunkIntervals = 500
+
+// maxParallel is how many series are replayed at once, at most.
+const maxParallel = 4
 
 // Report is the result of a replay. The JSON form is a stable schema.
 type Report struct {
@@ -329,6 +334,7 @@ func Run(ctx context.Context, src Source, opts Options) (*Report, error) {
 		}
 	}
 
+	var jobs []*seriesRun
 	for _, leaf := range leaves {
 		app := resolved[leaf]
 		var rules []*alert.Rule
@@ -344,21 +350,49 @@ func Run(ctx context.Context, src Source, opts Options) (*Report, error) {
 			return nil, fmt.Errorf("replay: %s has interval %d", app.Path, app.IntervalS)
 		}
 		for _, agent := range agentIDs {
-			sr := seriesRun{
+			jobs = append(jobs, &seriesRun{
 				src: src, opts: opts, mode: mode, silences: silences, golden: goldenOf,
 				ancestors: ancestors[leaf], leaf: leaf, agent: agent, app: app, rules: rules,
+			})
+		}
+	}
+
+	// A few series at a time. A series is independent of every other, and a
+	// shape rule spends its time computing, not reading: measured on two cores,
+	// thirty days of fifty series took a minute one after another. The bound is
+	// what keeps memory to a handful of chunks, and no more than a read-only
+	// handle has connections for.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	slots := make(chan struct{}, min(runtime.GOMAXPROCS(0), maxParallel))
+	var wg sync.WaitGroup
+	for _, sr := range jobs {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			if sr.out, sr.err = sr.run(ctx); sr.err != nil {
+				cancel() // the rest would be thrown away
 			}
-			out, err := sr.run(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("replay: %s from %s: %w", app.Path, names[agent], err)
-			}
-			for _, o := range out {
-				o.rep.RuleNode = paths[o.ruleNode]
-				o.rep.Target, o.rep.TargetID = app.Path, leaf
-				o.rep.Vantage, o.rep.AgentID = names[agent], agent
-				rep.Series = append(rep.Series, o.rep)
-				rep.Totals.Suppressed += o.suppressed
-			}
+		})
+	}
+	wg.Wait()
+	// The first failure, not a cancellation it caused in a later series.
+	var failed *seriesRun
+	for _, sr := range jobs {
+		if sr.err != nil && (failed == nil || errors.Is(failed.err, context.Canceled)) {
+			failed = sr
+		}
+	}
+	if failed != nil {
+		return nil, fmt.Errorf("replay: %s from %s: %w", failed.app.Path, names[failed.agent], failed.err)
+	}
+	for _, sr := range jobs {
+		for _, o := range sr.out {
+			o.rep.RuleNode = paths[o.ruleNode]
+			o.rep.Target, o.rep.TargetID = sr.app.Path, sr.leaf
+			o.rep.Vantage, o.rep.AgentID = names[sr.agent], sr.agent
+			rep.Series = append(rep.Series, o.rep)
+			rep.Totals.Suppressed += o.suppressed
 		}
 	}
 
@@ -393,6 +427,9 @@ type seriesRun struct {
 	agent     int64
 	app       alert.Applicable
 	rules     []*alert.Rule
+
+	out []seriesOut
+	err error
 }
 
 type seriesOut struct {
