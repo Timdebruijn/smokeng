@@ -37,6 +37,7 @@ package losspattern
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 	"math/rand/v2"
 	"strings"
@@ -89,10 +90,13 @@ type Verdict struct {
 	Why    string
 	// Flagged is true when the loss sits at positions chance does not explain.
 	Flagged bool
-	// P is the estimated p-value. When AtLeast is set the test stopped as soon
-	// as the outcome was settled and P is a lower bound.
+	// P is the p-value: counted exactly for a small window, estimated for a
+	// large one. When AtLeast is set the test stopped as soon as the window
+	// could no longer be flagged and P is a lower bound. When AtMost is set the
+	// window was flagged without counting and P is an upper bound.
 	P       float64
 	AtLeast bool
+	AtMost  bool
 
 	Probes    int   // probes per interval in the window
 	Spread    bool  // the window's probe mode
@@ -112,9 +116,10 @@ type Verdict struct {
 // starts a new regime, and positions in one do not mean what they mean in the
 // other.
 //
-// full estimates the p-value to the end. Without it the test stops once the
-// window can no longer be flagged, which for ordinary loss is after a handful
-// of rounds.
+// full works the p-value out to the end. Without it the test stops as soon as
+// the verdict is settled: for ordinary loss after a handful of rounds, and for
+// a strong pattern before the first one, on a bound that needs no counting.
+// The verdict is the same either way; only how exactly P is known differs.
 //
 // The same history always gives the same verdict: the random mirrorings are
 // the same ones every time.
@@ -186,6 +191,16 @@ func Test(history []Interval, full bool) Verdict {
 	}
 	observed := lopsidedness(sum)
 
+	// A strong pattern is settled by arithmetic. This is what keeps the test
+	// affordable where it runs on every lossy interval written: counting to the
+	// end costs milliseconds, and a series that is rate-limited all day would
+	// pay that on each of them, inside the write.
+	bound := chanceBound(tilts, observed)
+	if bound < PMax && !full {
+		v.P, v.AtMost, v.Flagged = bound, true, true
+		return v
+	}
+
 	var asExtreme, of int
 	var complete bool
 	if m := len(tilts); m <= 20 && (1<<m)*half <= exactWork {
@@ -195,8 +210,53 @@ func Test(history []Interval, full bool) Verdict {
 	}
 	v.P = float64(asExtreme) / float64(of)
 	v.AtLeast = !complete
-	v.Flagged = v.P < PMax
+	// The bound decides here too, so that a window is flagged or not whichever
+	// way it was asked. An estimate can land above PMax for a window whose true
+	// p the bound has already shown to be below it.
+	v.Flagged = v.P < PMax || bound < PMax
 	return v
+}
+
+// chanceBound is an upper bound on the p-value that needs no counting.
+//
+// The statistic is a sum, over mirrored pairs of positions, of the square of
+// the pair's summed tilt. If chance makes it at least as large as observed,
+// then for at least one of the k pairs that tilt at all, the square is at
+// least observed/k. A pair's sum is a sum of independent random signs, one for
+// each of the n intervals that tilt there, so by Hoeffding's inequality it
+// reaches a in size with probability at most 2·exp(−a²/2n). The pairs' chances
+// add up.
+//
+// It is loose, by a wide margin for a weak pattern, and that costs nothing: a
+// window it cannot settle is counted.
+func chanceBound(tilts [][]int8, observed int) float64 {
+	if len(tilts) == 0 {
+		return 1
+	}
+	n := make([]int, len(tilts[0]))
+	for _, row := range tilts {
+		for i, t := range row {
+			if t != 0 {
+				n[i]++
+			}
+		}
+	}
+	k := 0
+	for _, c := range n {
+		if c > 0 {
+			k++
+		}
+	}
+	if k == 0 {
+		return 1
+	}
+	bound := 0.0
+	for _, c := range n {
+		if c > 0 {
+			bound += 2 * math.Exp(-float64(observed)/float64(k)/(2*float64(c)))
+		}
+	}
+	return min(bound, 1)
 }
 
 // settled reports whether a count may stop early. The mirrorings not yet tried
