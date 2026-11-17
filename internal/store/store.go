@@ -182,10 +182,11 @@ type Store interface {
 	// prober recording what it measured.
 	WriteMeasurements(ctx context.Context, ms []Measurement) error
 	// IngestMeasurements writes what a remote agent submitted and never
-	// overwrites: a row at an existing key is kept and counted as a duplicate.
-	// A replayed or retried batch is a no-op, and an agent cannot rewrite an
-	// interval it has already reported (DESIGN.md §9).
-	IngestMeasurements(ctx context.Context, ms []Measurement) (duplicates int, err error)
+	// overwrites: a row at an existing key is kept, and left out of the rows it
+	// returns, which are the ones it stored. A replayed or retried batch is a
+	// no-op, and an agent cannot rewrite an interval it has already reported
+	// (DESIGN.md §9).
+	IngestMeasurements(ctx context.Context, ms []Measurement) (stored []Measurement, err error)
 	// QueryRange returns one series over [from, to), ordered by ts.
 	QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error)
 	// QueryColumns returns one series over [from, to) for a plot n columns

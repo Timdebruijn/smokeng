@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/ingest"
 	"github.com/timdebruijn/smokeng/internal/store"
 	"github.com/timdebruijn/smokeng/internal/tree"
@@ -123,11 +125,13 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	// First write wins (see IngestMeasurements), so a replayed batch is a true
 	// no-op and an agent cannot rewrite an interval it has already reported.
 	// That, not the nonce cache, is the replay defense.
-	dup, err := s.st.IngestMeasurements(r.Context(), measurements)
+	stored, err := s.st.IngestMeasurements(r.Context(), measurements)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
+	s.evaluate(r.Context(), stored)
+	dup := len(measurements) - len(stored)
 	if dup > 0 {
 		log.Printf("ingest: agent %q resubmitted %d measurement(s) already stored; kept as they were",
 			agent.Name, dup)
@@ -138,7 +142,33 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		agentVersion(r)); err != nil {
 		log.Printf("ingest: recording last_seen for %q: %v", agent.Name, err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"accepted": len(measurements) - dup, "duplicates": dup})
+	writeJSON(w, http.StatusOK, map[string]any{"accepted": len(stored), "duplicates": dup})
+}
+
+// evaluate runs the alert rules over what an agent's batch added, as the prober
+// does for its own measurements once they are written.
+//
+// Only the rows that were stored: a retried batch is all duplicates, and
+// counting those again would walk a rule past its for_intervals on one bad
+// interval. Oldest first, because a rule counts consecutive intervals and
+// notices a gap by the step from the previous one; the manager skips a row
+// older than what a series has already had evaluated, so sorting is what keeps
+// a batch listed newest first from losing all but its last row.
+//
+// Detached from the request: an agent that hangs up after the rows are stored
+// must not leave a transition that happened out of the log.
+func (s *server) evaluate(ctx context.Context, stored []store.Measurement) {
+	if len(stored) == 0 {
+		return
+	}
+	slices.SortStableFunc(stored, func(a, b store.Measurement) int { return cmp.Compare(a.TS, b.TS) })
+	inputs := make([]alert.Input, len(stored))
+	for i := range stored {
+		inputs[i] = stored[i].AlertInput()
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	s.alerts.Observe(ctx, inputs)
 }
 
 // handleAgentTargets hands an agent its assignments: resolved settings and

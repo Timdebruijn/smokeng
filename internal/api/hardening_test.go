@@ -193,7 +193,7 @@ type slotProbe struct {
 	inUse int
 }
 
-func (p *slotProbe) IngestMeasurements(ctx context.Context, ms []store.Measurement) (int, error) {
+func (p *slotProbe) IngestMeasurements(ctx context.Context, ms []store.Measurement) ([]store.Measurement, error) {
 	p.inUse = len((*p.srv).decodeSlots)
 	return p.SQLite.IngestMeasurements(ctx, ms)
 }
