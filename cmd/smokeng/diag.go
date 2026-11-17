@@ -77,6 +77,11 @@ func parseLossPatternArgs(args []string, now time.Time) (lossPatternArgs, error)
 	if a.from, a.to, err = parseWindow(*since, *from, *to, now); err != nil {
 		return fail("%v", err)
 	}
+	// The window is walked a day at a time whether or not it holds anything,
+	// so one given in centuries by mistake would take that many reads to say so.
+	if a.to-a.from > maxLossPatternDays*86400 {
+		return fail("the window is at most %d days", maxLossPatternDays)
+	}
 	if a.format != "text" && a.format != "json" {
 		return fail("--format is text or json, not %q", a.format)
 	}
@@ -94,22 +99,24 @@ type lossPatternReport struct {
 }
 
 type lossPatternSeries struct {
-	Vantage    string                 `json:"vantage"`
-	AgentID    int64                  `json:"agent_id"`
-	Intervals  int                    `json:"intervals"`
-	WithLoss   int                    `json:"with_loss"`
-	Recorded   int                    `json:"recorded"`
-	Verdict    lossPatternVerdict     `json:"verdict"`
-	Recent     []lossPatternRecent    `json:"recent"`
-	Conclusion string                 `json:"conclusion"`
-	history    []losspattern.Interval // not part of the schema; the text form draws from it
+	Vantage    string              `json:"vantage"`
+	AgentID    int64               `json:"agent_id"`
+	Intervals  int                 `json:"intervals"`
+	WithLoss   int                 `json:"with_loss"`
+	Recorded   int                 `json:"recorded"`
+	Verdict    lossPatternVerdict  `json:"verdict"`
+	Recent     []lossPatternRecent `json:"recent"`
+	Conclusion string              `json:"conclusion"`
+	// history is the newest recorded intervals, as many as the detector can
+	// use; everything older has been counted and let go.
+	history []losspattern.Interval
 }
 
 type lossPatternVerdict struct {
 	Tested          bool       `json:"tested"`
 	Why             string     `json:"why"`
 	Flagged         bool       `json:"flagged"`
-	P               float64    `json:"p"`
+	P               *float64   `json:"p"` // null when the window was not tested
 	PAtLeast        bool       `json:"p_at_least"`
 	Probes          int        `json:"probes"`
 	Mode            string     `json:"mode"`
@@ -126,7 +133,10 @@ type lossPatternRecent struct {
 	Pattern string    `json:"pattern"`
 }
 
-const recentShown = 20
+const (
+	recentShown        = 20
+	maxLossPatternDays = 400
+)
 
 func diagLossPattern(args []string, now time.Time, stdout io.Writer) error {
 	a, err := parseLossPatternArgs(args, now)
@@ -190,14 +200,15 @@ func diagLossPattern(args []string, now time.Time, stdout io.Writer) error {
 	rep := lossPatternReport{Schema: 1, Target: p,
 		From: time.Unix(a.from, 0).UTC(), To: time.Unix(a.to, 0).UTC(), Series: []lossPatternSeries{}}
 	for _, id := range agents {
-		rows, err := readWindow(ctx, st, leaf.ID, id, a.from, a.to)
-		if err != nil {
+		acc := lossPatternSeries{Vantage: names[id], AgentID: id}
+		if err := eachRow(ctx, st, leaf.ID, id, a.from, a.to, acc.add); err != nil {
 			return err
 		}
-		if len(rows) == 0 {
+		if acc.Intervals == 0 {
 			continue
 		}
-		rep.Series = append(rep.Series, lossPatternOf(names[id], id, rows))
+		acc.judge()
+		rep.Series = append(rep.Series, acc)
 	}
 
 	if a.format == "json" {
@@ -211,49 +222,75 @@ func diagLossPattern(args []string, now time.Time, stdout io.Writer) error {
 	return writeLossPatternText(stdout, rep)
 }
 
-// readWindow reads a series a day at a time, so that a long window is not one
-// read that crosses the store's limit; a day that still does is halved.
-func readWindow(ctx context.Context, st *store.SQLite, target, agent, from, to int64) ([]store.Measurement, error) {
-	var out []store.Measurement
+// eachRow hands fn the series' rows oldest first, a day at a time, so that a
+// long window is neither one read that crosses the store's limit nor a window
+// held in memory; a day that still crosses the limit is halved.
+func eachRow(ctx context.Context, st *store.SQLite, target, agent, from, to int64, fn func(*store.Measurement)) error {
 	var read func(from, to int64) error
 	read = func(from, to int64) error {
 		ms, err := st.QueryRange(ctx, target, agent, from, to)
 		if errors.Is(err, store.ErrRangeTooLarge) && to-from > 1 {
 			mid := from + (to-from)/2
-			return errors.Join(read(from, mid), read(mid, to))
+			if err := read(from, mid); err != nil {
+				return err
+			}
+			return read(mid, to)
 		}
-		out = append(out, ms...)
+		for i := range ms {
+			fn(&ms[i])
+		}
 		return err
 	}
 	for d := from; d < to; d += 86400 {
 		if err := read(d, min(d+86400, to)); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return out, nil
+	return nil
 }
 
-func lossPatternOf(vantage string, agent int64, rows []store.Measurement) lossPatternSeries {
-	s := lossPatternSeries{Vantage: vantage, AgentID: agent, Intervals: len(rows), Recent: []lossPatternRecent{}}
-	for _, m := range rows {
-		if m.Received >= m.Sent {
-			continue
-		}
-		s.WithLoss++
-		// A mask that does not decode is one that was not recorded: the
-		// counts are the row's own, and nothing here may fail on one bad row.
-		spread, lost, err := store.DecodeLossMask(m.LossMask, m.Sent, m.Received)
-		if m.LossMask == nil || err != nil {
-			continue
-		}
-		s.Recorded++
-		s.history = append(s.history, losspattern.Interval{TS: m.TS, Spread: spread, Lost: lost})
+// add counts one interval and, if it recorded which probes it lost, keeps it
+// for the verdict.
+func (s *lossPatternSeries) add(m *store.Measurement) {
+	s.Intervals++
+	if m.Received >= m.Sent {
+		return
 	}
+	s.WithLoss++
+	// A mask that does not decode is one that was not recorded: the counts are
+	// the row's own, and nothing here may fail on one bad row. One on an
+	// interval that may not carry a mask is treated the same, so that every
+	// interval kept is one the detector counts.
+	if m.LossMask == nil || !store.LossMaskRecordable(m.Flags, m.Sent, m.Received) {
+		return
+	}
+	spread, lost, err := store.DecodeLossMask(m.LossMask, m.Sent, m.Received)
+	if err != nil {
+		return
+	}
+	s.Recorded++
+	// The detector looks at no more than its window, so nothing older is kept.
+	if len(s.history) == losspattern.Window {
+		s.history = append(s.history[:0], s.history[1:]...)
+	}
+	s.history = append(s.history, losspattern.Interval{TS: m.TS, Spread: spread, Lost: lost})
+}
+
+// judge runs the detector over what add kept and words the result.
+func (s *lossPatternSeries) judge() {
 	v := losspattern.Test(s.history, true)
 	s.Verdict = lossPatternVerdict{
-		Tested: v.Tested, Why: v.Why, Flagged: v.Flagged, P: v.P, PAtLeast: v.AtLeast,
+		Tested: v.Tested, Why: v.Why, Flagged: v.Flagged, PAtLeast: v.AtLeast,
 		Probes: v.Probes, Mode: "burst", WindowIntervals: v.Intervals, Lost: v.Lost,
-		Counts: v.Counts, Where: v.Where(),
+		Counts: v.Counts,
+	}
+	if v.Tested {
+		s.Verdict.P = &v.P
+	}
+	// Named only for a flagged window: on any other, the positions that lost
+	// most are not a finding.
+	if v.Flagged {
+		s.Verdict.Where = v.Where()
 	}
 	if v.Spread {
 		s.Verdict.Mode = "spread"
@@ -265,6 +302,7 @@ func lossPatternOf(vantage string, agent int64, rows []store.Measurement) lossPa
 		f, t := time.Unix(v.From, 0).UTC(), time.Unix(v.To, 0).UTC()
 		s.Verdict.WindowFrom, s.Verdict.WindowTo = &f, &t
 	}
+	s.Recent = []lossPatternRecent{}
 	for _, iv := range s.history[max(0, len(s.history)-recentShown):] {
 		var b strings.Builder
 		for _, l := range iv.Lost {
@@ -273,25 +311,26 @@ func lossPatternOf(vantage string, agent int64, rows []store.Measurement) lossPa
 		s.Recent = append(s.Recent, lossPatternRecent{TS: time.Unix(iv.TS, 0).UTC(), Pattern: b.String()})
 	}
 	s.Conclusion = lossPatternConclusion(s.Verdict)
-	return s
 }
 
+// pText words the p-value of a tested window.
 func pText(v lossPatternVerdict) string {
 	if v.PAtLeast {
-		return fmt.Sprintf("p ≥ %.4g", v.P)
+		return fmt.Sprintf("p ≥ %.4g", *v.P)
 	}
-	return fmt.Sprintf("p = %.4g", v.P)
+	return fmt.Sprintf("p = %.4g", *v.P)
 }
 
 // lossPatternConclusion says no more than the detector does: a flag means the
-// loss does not fit chance, which rate limiting explains but does not prove.
+// loss does not fit chance, which rate limiting explains but does not prove,
+// and no flag means only that chance was not ruled out.
 func lossPatternConclusion(v lossPatternVerdict) string {
 	const fits = "That does not fit loss that falls where it happens to; it is consistent with rate limiting by the target, and is not proof of it."
 	switch {
 	case !v.Tested:
 		return "Not enough to judge: " + v.Why + "."
 	case !v.Flagged:
-		return "No positional pattern: the loss is spread over the send order the way network loss is (" + pText(v) + ")."
+		return "No positional pattern found (" + pText(v) + "): the loss is not lopsided enough to rule chance out."
 	case v.Where != "":
 		return "Loss is concentrated at probes " + v.Where + ". " + fits
 	}

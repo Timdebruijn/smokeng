@@ -12,7 +12,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/timdebruijn/smokeng/internal/losspattern"
 	"github.com/timdebruijn/smokeng/internal/store"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
@@ -154,7 +156,7 @@ func TestLossPatternScatteredLossIsNotFlagged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "No positional pattern: the loss is spread over the send order the way network loss is (p = ") || !strings.Contains(out, "\np = ") {
+	if !strings.Contains(out, "No positional pattern found (p = ") || !strings.Contains(out, "not lopsided enough to rule chance out") || !strings.Contains(out, "\np = ") {
 		t.Errorf("want a tested, unflagged verdict:\n%s", out)
 	}
 	if strings.Contains(out, "concentrated") || strings.Contains(out, "leans") {
@@ -169,7 +171,7 @@ func TestLossPatternTooLittleToJudge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "Not enough to judge: 5 intervals with lopsided loss in the window, fewer than 11.") {
+	if !strings.Contains(out, "Not enough to judge: 5 intervals with lopsided loss in the window, fewer than 12.") {
 		t.Errorf("no refusal:\n%s", out)
 	}
 	if strings.Contains(out, "p = ") || strings.Contains(out, "p ≥ ") || strings.Contains(out, "concentrated") {
@@ -358,5 +360,66 @@ func TestLossPatternLongSeriesAreTruncated(t *testing.T) {
 	}
 	if got := len(rep.Series[0].Recent[0].Pattern); got != 100 {
 		t.Errorf("json pattern is %d long, want the full 100", got)
+	}
+}
+
+// lossPatternOf gathers rows into a judged series, the way the command does
+// for a series it reads.
+func lossPatternOf(vantage string, agent int64, rows []store.Measurement) lossPatternSeries {
+	s := lossPatternSeries{Vantage: vantage, AgentID: agent}
+	for i := range rows {
+		s.add(&rows[i])
+	}
+	s.judge()
+	return s
+}
+
+// Protects the memory bound: however long the window, only as many recorded
+// intervals are kept as the detector can use, and the verdict is the one the
+// whole history would have given, since it is about the newest of them.
+func TestLossPatternKeepsOnlyWhatTheDetectorUses(t *testing.T) {
+	rows := tailSeries(500)
+	s := lossPatternOf("local", 0, rows)
+	if s.Recorded != 500 || len(s.history) != losspattern.Window {
+		t.Fatalf("recorded %d, kept %d; want 500 counted and %d kept", s.Recorded, len(s.history), losspattern.Window)
+	}
+	var all []losspattern.Interval
+	for _, m := range rows {
+		spread, lost, err := store.DecodeLossMask(m.LossMask, m.Sent, m.Received)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, losspattern.Interval{TS: m.TS, Spread: spread, Lost: lost})
+	}
+	want := losspattern.Test(all, true)
+	if s.Verdict.Flagged != want.Flagged || *s.Verdict.P != want.P || s.Verdict.WindowIntervals != want.Intervals ||
+		!s.Verdict.WindowFrom.Equal(time.Unix(want.From, 0)) {
+		t.Errorf("verdict from the kept intervals %+v differs from the whole history's %+v", s.Verdict, want)
+	}
+}
+
+// Protects two things a script reading the json depends on: an untested window
+// has no p at all, rather than a p of zero, and positions are named only for a
+// window that was flagged.
+func TestLossPatternJSONDoesNotInventAPValue(t *testing.T) {
+	few := lossPatternOf("local", 0, tailSeries(5))
+	b, err := json.Marshal(few.Verdict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if few.Verdict.Tested || !strings.Contains(string(b), `"p":null`) || few.Verdict.Where != "" {
+		t.Errorf("an untested verdict carries a p-value or positions: %s", b)
+	}
+}
+
+// Protects against a window given in centuries by mistake, which would be read
+// a day at a time for as long as that takes.
+func TestLossPatternRefusesAnEndlessWindow(t *testing.T) {
+	_, err := parseLossPatternArgs(strings.Fields("--target /t --from 0001-01-01T00:00:00Z --to 9999-12-31T00:00:00Z"), replayNow)
+	if err == nil || !strings.Contains(err.Error(), "at most 400 days") {
+		t.Errorf("an endless window was accepted: %v", err)
+	}
+	if _, err := parseLossPatternArgs(strings.Fields("--target /t --since 400d"), replayNow); err != nil {
+		t.Errorf("400 days refused: %v", err)
 	}
 }

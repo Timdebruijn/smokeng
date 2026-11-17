@@ -304,7 +304,7 @@ Losses per send position:
    9  ████████████████████████████████████████  20
   10  ████████████████████████████████████████  20
 
-p = 0.0005
+p = 0.0001
 
 Last 20 intervals with recorded loss, newest last (. answered, x lost, in send order):
   2026-11-16 21:00Z  .......xxx
@@ -322,13 +322,15 @@ How to read it: the histogram counts, per send position, how many of the judged 
 that probe. Loss from the network falls where it happens to and gives a flat histogram; here
 all the loss is at positions 8 to 10 and positions 1 to 7 lose nothing. The p-value is how
 often chance alone, on loss with the same shape, made the profile this lopsided. The command
-flags a window below p = 0.001. The conclusion line says which of the three cases it is.
+flags a window below p = 0.0005. The conclusion line says which of the three cases it is.
 
 What it can and cannot tell you:
 
 - **A flag means "does not fit random loss", not "is rate limiting".** Anything else that
   drops the same probes at the same positions looks the same.
-- It needs at least eleven intervals with lopsided recorded loss, and ten lost probes, in the
+- **No flag is not a clean bill.** It says the loss was not lopsided enough to rule chance
+  out, which is also what a short or weak pattern looks like.
+- It needs at least twelve intervals with lopsided recorded loss, and ten lost probes, in the
   window. Less is reported as `Not enough to judge`, with the reason.
 - It only sees intervals measured since loss positions were recorded. Older intervals, total
   loss, intervals flagged as partly smokeng's own doing (`not sent`, `cut short`, `dropped

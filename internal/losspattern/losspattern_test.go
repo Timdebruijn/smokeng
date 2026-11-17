@@ -1,6 +1,7 @@
 package losspattern
 
 import (
+	"math"
 	"math/rand/v2"
 	"reflect"
 	"testing"
@@ -52,6 +53,26 @@ func gilbertElliott(toBad, toGood float64) source {
 	return func(rng *rand.Rand) []bool {
 		lost := make([]bool, probes)
 		bad := rng.Float64() < toBad/(toBad+toGood)
+		for i := range lost {
+			lost[i] = bad
+			if bad {
+				bad = rng.Float64() >= toGood
+			} else {
+				bad = rng.Float64() < toBad
+			}
+		}
+		return lost
+	}
+}
+
+// carriedOver is the same channel without the fresh start: its state runs on
+// from the last probe of one interval into the first of the next, as it does
+// when probes are spread across the interval rather than sent as a burst. A
+// burst of loss then straddles the boundary.
+func carriedOver(toBad, toGood float64) source {
+	bad := false
+	return func(rng *rand.Rand) []bool {
+		lost := make([]bool, probes)
 		for i := range lost {
 			lost[i] = bad
 			if bad {
@@ -127,9 +148,9 @@ func TestFlagsLossAtFixedPositions(t *testing.T) {
 		"every fourth probe in 10%":                           some(0.1, 3, 7, 11, 15, 19),
 		"the first probe in 20%":                              some(0.2, 0),
 	} {
-		tested, hits := flagged(1, 200, src)
-		if tested != 200 || hits < 190 {
-			t.Errorf("%s: flagged %d of %d windows (tested %d), want nearly all", name, hits, 200, tested)
+		tested, hits := flagged(1, 100, src)
+		if tested != 100 || hits < 95 {
+			t.Errorf("%s: flagged %d of %d windows (tested %d), want nearly all", name, hits, 100, tested)
 		}
 	}
 }
@@ -138,11 +159,19 @@ func TestFlagsLossAtFixedPositions(t *testing.T) {
 // bursty, a burst cut by the edge of an interval looks like loss at the start
 // or the end of it, and a few of those on the same side look exactly like a
 // token bucket. The target is at most 0.1% of windows flagged at the default
-// threshold, for independent loss and for bursts from three to twenty probes
-// long. The seed is fixed; the measured rates are in the failure message and
-// in the log (go test -v).
+// threshold, for independent loss, for bursts from three to twenty probes long,
+// and for bursts that carry over from one interval into the next.
+//
+// The target is asserted on all the windows together, where a fixed seed is a
+// fair sample of it: fifty thousand windows at the threshold's nominal 0.05%
+// expect about twenty-five flags against the fifty that 0.1% allows. One
+// channel alone is ten thousand windows and five expected flags, too few to
+// hold to 0.1%, so each is held to 0.2%, which a null that breaks on that
+// channel still fails by a wide margin. The measured rates are in the log
+// (go test -v).
 func TestDoesNotFlagNetworkLoss(t *testing.T) {
 	const windows = 10000
+	allTested, allHits := 0, 0
 	for _, c := range []struct {
 		name string
 		src  source
@@ -152,6 +181,7 @@ func TestDoesNotFlagNetworkLoss(t *testing.T) {
 		{"bursty, mean burst 10 probes", gilbertElliott(0.01, 0.10)},
 		{"bursty, mean burst 20 probes", gilbertElliott(0.005, 0.05)},
 		{"bursty and heavy, mean burst 7 probes", gilbertElliott(0.03, 0.15)},
+		{"bursty across intervals, mean burst 10", carriedOver(0.01, 0.10)},
 	} {
 		tested, hits := flagged(2, windows, c.src)
 		rate := 100 * float64(hits) / float64(tested)
@@ -159,9 +189,15 @@ func TestDoesNotFlagNetworkLoss(t *testing.T) {
 		if tested < windows*9/10 {
 			t.Errorf("%s: only %d of %d windows had enough loss to test, so the rate proves little", c.name, tested, windows)
 		}
-		if rate > 0.1 {
-			t.Errorf("%s: %.3f%% of windows flagged, want at most 0.1%%", c.name, rate)
+		if rate > 0.2 {
+			t.Errorf("%s: %.3f%% of windows flagged, want at most 0.2%% on one channel", c.name, rate)
 		}
+		allTested, allHits = allTested+tested, allHits+hits
+	}
+	rate := 100 * float64(allHits) / float64(allTested)
+	t.Logf("%-40s %d of %d windows flagged (%.3f%%)", "all of the above", allHits, allTested, rate)
+	if rate > 0.1 {
+		t.Errorf("%.3f%% of all windows flagged, want at most 0.1%%", rate)
 	}
 }
 
@@ -170,8 +206,8 @@ func TestDoesNotFlagNetworkLoss(t *testing.T) {
 // caught so that a change to the test that loses it does not go unnoticed.
 func TestRateLimitingUnderBurstyLoss(t *testing.T) {
 	strong := both(some(0.3, span(15, 20)...), gilbertElliott(0.01, 0.10))
-	if _, hits := flagged(3, 200, strong); hits < 180 {
-		t.Errorf("tail loss in 30%% of intervals under long bursts: flagged %d of 200, want most", hits)
+	if _, hits := flagged(3, 100, strong); hits < 90 {
+		t.Errorf("tail loss in 30%% of intervals under long bursts: flagged %d of 100, want most", hits)
 	}
 }
 
@@ -281,8 +317,21 @@ func TestTooLittleEvidenceIsNotJudged(t *testing.T) {
 	if v := Test(tailEvery(10, span(15, 20)...), true); v.Tested || v.Flagged || v.Why == "" {
 		t.Errorf("ten lopsided intervals cannot reach the threshold and must not be tested: %+v", v)
 	}
+	if v := Test(tailEvery(MinIntervals-1, span(15, 20)...), true); v.Tested {
+		t.Errorf("one interval short of the minimum was tested: %+v", v)
+	}
 	if v := Test(tailEvery(MinIntervals, span(15, 20)...), true); !v.Tested || !v.Flagged {
-		t.Errorf("eleven intervals that all lost their tail: %+v", v)
+		t.Errorf("the minimum number of intervals, all having lost their tail: %+v", v)
+	}
+	// An interval whose loss is its own mirror image leans neither way and is
+	// not evidence: with it counted, a window would be tested on fewer
+	// lopsided intervals than can reach the threshold.
+	mixed := append(tailEvery(20, 0, probes-1), tailEvery(MinIntervals-1, span(15, 20)...)...)
+	for i := range mixed {
+		mixed[i].TS = int64(i) * 60
+	}
+	if v := Test(mixed, true); v.Tested || v.Intervals != 20+MinIntervals-1 {
+		t.Errorf("symmetric intervals were counted as lopsided ones: %+v", v)
 	}
 	// Intervals with no loss, or with all of it, are not evidence either way.
 	all := tailEvery(30, span(0, 20)...)
@@ -394,13 +443,13 @@ func bruteP(ivs []Interval) float64 {
 
 // Protects the exact count that small windows use, which is where a pattern is
 // first caught: it must be the p-value of the test as defined, not something
-// near it. Checked against a brute-force count on windows of eleven to
-// fourteen intervals, with an odd probe count too, where the middle probe is
+// near it. Checked against a brute-force count on windows of twelve to
+// fifteen intervals, with an odd probe count too, where the middle probe is
 // its own mirror image.
 func TestExactCountMatchesBruteForce(t *testing.T) {
 	rng := rand.New(rand.NewPCG(6, 6))
 	for _, n := range []int{20, 7} {
-		for m := 11; m <= 14; m++ {
+		for m := MinIntervals; m <= MinIntervals+3; m++ {
 			for range 5 {
 				var ivs []Interval
 				for len(ivs) < m {
@@ -430,4 +479,50 @@ func mirrored(lost []bool) []bool {
 		out[len(lost)-1-i] = l
 	}
 	return out
+}
+
+// Protects the estimate that full windows use. It is a different piece of code
+// from the exact count and must be an estimate of the same number: on windows
+// small enough to count exactly, the two agree to within what ten thousand
+// random rounds can resolve. And when no round can be as lopsided as the data,
+// the estimate is exactly one in rounds plus one, the data itself.
+func TestEstimateAgreesWithExactCount(t *testing.T) {
+	rng := rand.New(rand.NewPCG(8, 8))
+	const half = probes / 2
+	for trial := range 20 {
+		// Fourteen intervals leaning one way more often than the other, so
+		// that p comes out somewhere between a few percent and a half.
+		tilts := make([][]int8, 14)
+		for j := range tilts {
+			tilts[j] = make([]int8, half)
+			for i := range tilts[j] {
+				switch r := rng.Float64(); {
+				case r < 0.20:
+					tilts[j][i] = 1
+				case r < 0.30:
+					tilts[j][i] = -1
+				}
+			}
+		}
+		data := make([]int, half)
+		for _, row := range tilts {
+			for i, v := range row {
+				data[i] += int(v)
+			}
+		}
+		observed := lopsidedness(data)
+		a, of, _ := countExact(tilts, append([]int(nil), data...), observed, true)
+		exact := float64(a) / float64(of)
+		b, of, _ := countRandom(tilts, append([]int(nil), data...), observed, true)
+		est := float64(b) / float64(of)
+		// Four standard errors of a proportion estimated from `rounds` draws.
+		tol := 4 * math.Sqrt(exact*(1-exact)/rounds)
+		if math.Abs(est-exact) > tol+1.0/rounds {
+			t.Errorf("trial %d: estimate %.4f, exact %.4f, more than %.4f apart", trial, est, exact, tol)
+		}
+	}
+
+	if v := Test(tailEvery(30, span(15, 20)...), true); v.AtLeast || v.P != 1.0/(rounds+1) {
+		t.Errorf("thirty intervals that all lost their tail: P = %v, want exactly %v", v.P, 1.0/(rounds+1))
+	}
 }

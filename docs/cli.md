@@ -268,8 +268,8 @@ Looks at stored measurements for a cause. Only `loss-pattern` exists.
 ### diag loss-pattern
 
 For one target, shows after the fact whether its loss sits at particular places in the send
-order, which is what ICMP rate limiting at the target looks like, or is spread the way network
-loss is. It reads stored measurements and sends nothing. What the output means and what it
+order, which is what ICMP rate limiting at the target looks like. It reads stored measurements
+and sends nothing. What the output means and what it
 cannot see: [Loss on a graph that might be rate limiting](troubleshooting.md#loss-on-a-graph-that-might-be-rate-limiting).
 
 It opens the database **read-only**, like `alerts replay`: it writes nothing, does not migrate
@@ -291,6 +291,9 @@ smokeng diag loss-pattern --db smokeng.db --target Production/web --vantage ams-
 | `--from`, `--to` | empty | Window `[from, to)` as RFC 3339 times. Give `--since`, or both of these, not a mix. |
 | `--format` | `text` | `text` or `json`. |
 
+The window is at most 400 days. The counts cover all of it; the verdict is about its newest
+intervals with recorded loss, at most 60 of them.
+
 Output goes to stdout; `-h` prints the flags. A target with no measurements in the window is
 reported as such and is not an error.
 
@@ -305,7 +308,8 @@ Timestamps are RFC 3339 UTC. Each series carries `vantage`, `agent_id`, `interva
 `with_loss`, `recorded`, `verdict`, `recent` and `conclusion` (the sentence the text form
 ends with). `verdict` has `tested`, `why`, `flagged`, `p`, `p_at_least`, `probes`, `mode`
 (`burst` or `spread`), `window_intervals`, `lost`, `counts` (per position), `window_from`,
-`window_to` (null when no interval was judged) and `where`. `recent` is a list of `ts` and the
+`window_to` (null when no interval was judged) and `where`. `p` is null when the window was
+not tested, and `where` is empty unless it was flagged. `recent` is a list of `ts` and the
 full `pattern`, not cut at 80.
 
 ## version

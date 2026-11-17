@@ -15,6 +15,15 @@
 // the question is how often chance alone makes the loss profile as lopsided as
 // the one observed.
 //
+// The mirroring is an exact symmetry when one interval's loss says nothing
+// about the next one's, which is the case for a burst of probes followed by
+// most of a minute of silence. When loss carries over from one interval into
+// the next, as it can with probes spread across the interval, a burst that
+// straddles the boundary puts loss at the end of one interval and the start of
+// the next. Those two lean opposite ways; mirrored independently they often
+// lean the same way, so chance looks more lopsided than the data and the test
+// errs towards not flagging.
+//
 // Two weaker nulls were measured first and rejected. Shuffling the positions
 // within an interval treats losses as independent, and real loss is bursty:
 // under a Gilbert-Elliott channel it flagged 1.3% to 4.3% of windows at a
@@ -22,7 +31,8 @@
 // where interval edges cut it, and still flagged up to 0.6%.
 //
 // What the mirror cannot see is a pattern that is its own mirror image, such
-// as the first and the last probe lost equally often.
+// as the first and the last probe lost equally often. And not flagging is not
+// a finding: it says the loss is not lopsided enough to rule chance out.
 package losspattern
 
 import (
@@ -33,8 +43,9 @@ import (
 )
 
 const (
-	// Window is how many intervals the test looks back over, counting only
-	// those that recorded which probes were lost.
+	// Window is how many intervals the test looks back over. Only intervals
+	// that lost some of their probes and not all count towards it; the others
+	// say nothing about position and are passed over.
 	Window = 60
 	// MaxAgeS bounds how far back those intervals may lie. Rate limiting that
 	// hits one interval in ten takes hours to fill a window; a day is long
@@ -44,15 +55,20 @@ const (
 	MinLost = 10
 	// MinIntervals is the least number of lopsided intervals that can reach
 	// PMax at all: if every one of them leans the same way, chance does that
-	// with probability 2/2^n, which first drops below PMax at eleven.
-	MinIntervals = 11
-	// PMax is the p-value below which a window is flagged.
-	PMax = 0.001
+	// with probability 2/2^n, which first drops below PMax at twelve.
+	MinIntervals = 12
+	// PMax is the p-value below which a window is flagged. The aim is that at
+	// most one window in a thousand of ordinary network loss is flagged, and a
+	// threshold of 0.001 sits on that line rather than under it: measured on
+	// bursty loss it flagged 0.07% to 0.13% of windows. Half of it leaves room.
+	PMax = 0.0005
 	// rounds is how many random mirrorings estimate the p-value when there are
-	// too many intervals to try every mirroring. With 1999 the smallest p is
-	// 1/2000, so a window is flagged only when not one of them was as lopsided
-	// as what was observed.
-	rounds = 1999
+	// too many intervals to try every mirroring. Five times 1/PMax, so that the
+	// estimate near PMax rests on about five rounds as lopsided as the data
+	// rather than on whether there happened to be one. With 1/PMax rounds a
+	// window is flagged only when there is none, which makes the estimate twice
+	// as strict as the exact count it takes over from.
+	rounds = 9999
 	// exactWork bounds the exact count: ways of mirroring times positions per
 	// way. It is a few times what the estimate costs on a full window.
 	exactWork = 4 << 20
@@ -100,8 +116,8 @@ type Verdict struct {
 // window can no longer be flagged, which for ordinary loss is after a handful
 // of rounds.
 //
-// The same history always gives the same verdict: the random mirroring is
-// seeded from the window, not from the clock.
+// The same history always gives the same verdict: the random mirrorings are
+// the same ones every time.
 func Test(history []Interval, full bool) Verdict {
 	if len(history) == 0 {
 		return Verdict{Why: "no interval recorded which probes were lost"}
@@ -170,49 +186,64 @@ func Test(history []Interval, full bool) Verdict {
 	}
 	observed := lopsidedness(sum)
 
-	// The rounds not yet run can only add to the count, so once p has reached
-	// PMax the window cannot be flagged any more and the rest need not be run.
-	settled := func(asExtreme, of int) bool {
-		return !full && float64(asExtreme)/float64(of) >= PMax
-	}
-
+	var asExtreme, of int
+	var complete bool
 	if m := len(tilts); m <= 20 && (1<<m)*half <= exactWork {
-		// Few enough intervals to try every way of mirroring them, which gives
-		// p exactly. This is the regime where it matters: a pattern is first
-		// caught at eleven intervals, where p is 2/2048, and an estimate from
-		// two thousand random rounds lands on either side of PMax by luck.
-		//
-		// In Gray-code order each way differs from the last in one interval, so
-		// a step costs one row rather than all of them.
-		total, asExtreme := 1<<m, 1 // the data as observed is one of the ways
-		sign := make([]int, m)
-		for j := range sign {
-			sign[j] = 1
-		}
-		g := 1
-		for ; g < total && !settled(asExtreme, total); g++ {
-			j := bits.TrailingZeros(uint(g))
-			sign[j] = -sign[j]
-			for i, t := range tilts[j] {
-				sum[i] += 2 * sign[j] * int(t)
-			}
-			if lopsidedness(sum) >= observed {
-				asExtreme++
-			}
-		}
-		v.P = float64(asExtreme) / float64(total)
-		v.AtLeast = g < total
-		v.Flagged = v.P < PMax
-		return v
+		asExtreme, of, complete = countExact(tilts, sum, observed, full)
+	} else {
+		asExtreme, of, complete = countRandom(tilts, sum, observed, full)
 	}
+	v.P = float64(asExtreme) / float64(of)
+	v.AtLeast = !complete
+	v.Flagged = v.P < PMax
+	return v
+}
 
-	// Too many to try them all: estimate from random mirrorings. Seeded from
-	// the window so a verdict can be reproduced, and so that the same intervals
-	// are not flagged on one evaluation and passed on the next.
-	rng := rand.New(rand.NewPCG(uint64(v.To), uint64(v.From)^uint64(v.Lost)<<32))
-	asExtreme, done := 1, 0 // counting the data as observed, as the exact count does
-	for done < rounds && !settled(asExtreme, rounds+1) {
-		done++
+// settled reports whether a count may stop early. The mirrorings not yet tried
+// can only add to it, so once p has reached PMax the window cannot be flagged
+// any more.
+func settled(asExtreme, of int, full bool) bool {
+	return !full && float64(asExtreme)/float64(of) >= PMax
+}
+
+// countExact tries every way of mirroring the intervals and counts those at
+// least as lopsided as the data, which gives p exactly. It is used when there
+// are few enough intervals, and that is the regime where exactness matters: a
+// pattern is first caught at twelve intervals, where p is 2/4096, and an
+// estimate lands on either side of PMax by luck.
+//
+// In Gray-code order each way differs from the last in one interval, so a step
+// costs one row rather than all of them. sum holds the data's own profile on
+// entry and is used as scratch.
+func countExact(tilts [][]int8, sum []int, observed int, full bool) (asExtreme, of int, complete bool) {
+	of, asExtreme = 1<<len(tilts), 1 // the data as observed is one of the ways
+	sign := make([]int, len(tilts))
+	for j := range sign {
+		sign[j] = 1
+	}
+	g := 1
+	for ; g < of && !settled(asExtreme, of, full); g++ {
+		j := bits.TrailingZeros(uint(g))
+		sign[j] = -sign[j]
+		for i, t := range tilts[j] {
+			sum[i] += 2 * sign[j] * int(t)
+		}
+		if lopsidedness(sum) >= observed {
+			asExtreme++
+		}
+	}
+	return asExtreme, of, g == of
+}
+
+// countRandom estimates the same count from random mirrorings, for a window
+// with too many intervals to try them all. The generator starts from the same
+// state on every call, so a window is not flagged on one evaluation and passed
+// on the next.
+func countRandom(tilts [][]int8, sum []int, observed int, full bool) (asExtreme, of int, complete bool) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	of, asExtreme = rounds+1, 1 // counting the data as observed, as the exact count does
+	done := 0
+	for ; done < rounds && !settled(asExtreme, of, full); done++ {
 		clear(sum)
 		var coin uint64
 		for j, row := range tilts {
@@ -231,10 +262,7 @@ func Test(history []Interval, full bool) Verdict {
 			asExtreme++
 		}
 	}
-	v.P = float64(asExtreme) / (rounds + 1)
-	v.AtLeast = done < rounds
-	v.Flagged = v.P < PMax
-	return v
+	return asExtreme, of, done == rounds
 }
 
 // lopsidedness is how far a loss profile is from its own mirror image: the sum
