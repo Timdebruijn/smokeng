@@ -23,15 +23,19 @@ import (
 // drift from the writer; run it with UPDATE_WEB_FIXTURES=1 to rewrite them.
 
 type fixtureJSON struct {
-	TS       []int64               `json:"ts"`
-	Sent     []int                 `json:"sent"`
-	Received []int                 `json:"received"`
-	Flags    []int                 `json:"flags"`
-	Samples  [][]uint32            `json:"samples"`
-	ICMP     []*uint16             `json:"icmp_error"`
-	SendErr  []*uint8              `json:"send_error"`
-	Series   map[string][]*[]int32 `json:"series"`
-	Batches  int                   `json:"batches"`
+	TS       []int64    `json:"ts"`
+	Sent     []int      `json:"sent"`
+	Received []int      `json:"received"`
+	Flags    []int      `json:"flags"`
+	Samples  [][]uint32 `json:"samples"`
+	ICMP     []*uint16  `json:"icmp_error"`
+	SendErr  []*uint8   `json:"send_error"`
+	// Null where the interval is not flagged; an empty list is a flagged one
+	// whose loss leans to an end without a position standing out.
+	LossPositions []*[]uint16           `json:"loss_positions"`
+	LossWindow    []*uint8              `json:"loss_window"`
+	Series        map[string][]*[]int32 `json:"series"`
+	Batches       int                   `json:"batches"`
 }
 
 func fixtureMeasurements(rows int) []store.Measurement {
@@ -48,6 +52,23 @@ func fixtureMeasurements(rows int) []store.Measurement {
 		}
 		if i%7 == 0 {
 			m.SendErr = send(2)
+		}
+		// Three states, as the reader must tell apart: not flagged, flagged with
+		// the tail (probes 16 to 20) standing out, and flagged with a profile that
+		// is lopsided but has no position above twice its share.
+		switch i % 6 {
+		case 1:
+			counts := make([]int, 20)
+			for k := 15; k < 20; k++ {
+				counts[k] = 8
+			}
+			m.Positional = &store.PositionalLoss{Intervals: 43, Lost: 40, Counts: counts}
+		case 3:
+			counts := make([]int, 20)
+			for k := range counts {
+				counts[k] = 2
+			}
+			m.Positional = &store.PositionalLoss{Intervals: 60, Lost: 40, Counts: counts}
 		}
 		m.Series = map[string][]int32{}
 		for j, name := range store.KnownSeries {
@@ -82,8 +103,10 @@ func nullReceived() []byte {
 		l.ValueBuilder().(*array.Uint32Builder).AppendValues([]uint32{1000, 2000}, nil)
 		rb.Field(5).(*array.Uint16Builder).AppendNull()
 		rb.Field(6).(*array.Uint8Builder).AppendNull()
+		rb.Field(7).(*array.ListBuilder).AppendNull()
+		rb.Field(8).(*array.Uint8Builder).AppendNull()
 		for j := 0; j < len(store.KnownSeries); j++ {
-			rb.Field(7 + j).(*array.ListBuilder).AppendNull()
+			rb.Field(9 + j).(*array.ListBuilder).AppendNull()
 		}
 	}
 	rec := rb.NewRecord()
@@ -201,16 +224,18 @@ func variants() map[string][]byte {
 		"samples-flat.arrow": variant(withType("samples", arrow.PrimitiveTypes.Uint32)),
 		"samples-dictionary-child.arrow": variant(withType("samples", arrow.ListOf(&arrow.DictionaryType{
 			IndexType: arrow.PrimitiveTypes.Uint32, ValueType: arrow.PrimitiveTypes.Uint32}))),
-		"series-flat.arrow":     variant(withType("ipdv_send", arrow.PrimitiveTypes.Int32)),
-		"samples-signed.arrow":  variant(withType("samples", arrow.ListOf(arrow.PrimitiveTypes.Int32))),
-		"series-unsigned.arrow": variant(withType("ipdv_send", arrow.ListOf(arrow.PrimitiveTypes.Uint32))),
-		"sent-u64.arrow":        variant(withType("sent", arrow.PrimitiveTypes.Uint64)),
-		"sent-u8.arrow":         variant(withType("sent", arrow.PrimitiveTypes.Uint8)),
-		"sent-i16.arrow":        variant(withType("sent", arrow.PrimitiveTypes.Int16)),
-		"sent-float.arrow":      variant(withType("sent", arrow.PrimitiveTypes.Float32)),
-		"flags-u16.arrow":       variant(withType("flags", arrow.PrimitiveTypes.Uint16)),
-		"flags-i8.arrow":        variant(withType("flags", arrow.PrimitiveTypes.Int8)),
-		"series-i16.arrow":      variant(withType("ipdv_send", arrow.ListOf(arrow.PrimitiveTypes.Int16))),
+		"loss-positions-u32.arrow": variant(withType("loss_positions", arrow.ListOf(arrow.PrimitiveTypes.Uint32))),
+		"loss-window-u16.arrow":    variant(withType("loss_window", arrow.PrimitiveTypes.Uint16)),
+		"series-flat.arrow":        variant(withType("ipdv_send", arrow.PrimitiveTypes.Int32)),
+		"samples-signed.arrow":     variant(withType("samples", arrow.ListOf(arrow.PrimitiveTypes.Int32))),
+		"series-unsigned.arrow":    variant(withType("ipdv_send", arrow.ListOf(arrow.PrimitiveTypes.Uint32))),
+		"sent-u64.arrow":           variant(withType("sent", arrow.PrimitiveTypes.Uint64)),
+		"sent-u8.arrow":            variant(withType("sent", arrow.PrimitiveTypes.Uint8)),
+		"sent-i16.arrow":           variant(withType("sent", arrow.PrimitiveTypes.Int16)),
+		"sent-float.arrow":         variant(withType("sent", arrow.PrimitiveTypes.Float32)),
+		"flags-u16.arrow":          variant(withType("flags", arrow.PrimitiveTypes.Uint16)),
+		"flags-i8.arrow":           variant(withType("flags", arrow.PrimitiveTypes.Int8)),
+		"series-i16.arrow":         variant(withType("ipdv_send", arrow.ListOf(arrow.PrimitiveTypes.Int16))),
 		"extra-utf8.arrow": variant(func(f []arrow.Field) []arrow.Field {
 			return append(f, arrow.Field{Name: "zz", Type: arrow.BinaryTypes.String})
 		}),
@@ -226,15 +251,16 @@ func variants() map[string][]byte {
 
 // pooledJSON is what a pooled fixture holds.
 type pooledJSON struct {
-	TS        []int64               `json:"ts"`
-	End       []int64               `json:"ts_end"`
-	Rounds    []int                 `json:"rounds"`
-	Sent      []int                 `json:"sent"`
-	Received  []int                 `json:"received"`
-	Flags     []int                 `json:"flags"`
-	Flagged   []int                 `json:"flagged"`
-	Quantiles [][]uint32            `json:"quantiles"`
-	Series    map[string][]*[]int32 `json:"series"`
+	TS         []int64               `json:"ts"`
+	End        []int64               `json:"ts_end"`
+	Rounds     []int                 `json:"rounds"`
+	Sent       []int                 `json:"sent"`
+	Received   []int                 `json:"received"`
+	Flags      []int                 `json:"flags"`
+	Flagged    []int                 `json:"flagged"`
+	Positional []int                 `json:"positional"`
+	Quantiles  [][]uint32            `json:"quantiles"`
+	Series     map[string][]*[]int32 `json:"series"`
 }
 
 func fixtureColumns() []store.Column {
@@ -242,7 +268,7 @@ func fixtureColumns() []store.Column {
 	for i := 0; i < 5; i++ {
 		c := store.Column{
 			From: 1_756_400_000 + int64(i)*600, To: 1_756_400_000 + int64(i+1)*600,
-			Rounds: 10 - i, Sent: 200 + i, Received: 190 - 10*i, Flags: uint8(i % 3), Flagged: i % 3,
+			Rounds: 10 - i, Sent: 200 + i, Received: 190 - 10*i, Flags: uint8(i % 3), Flagged: i % 3, Positional: i,
 			// 70 000 sent fits 16 bits no longer: the sums are why the wire is 64.
 			Quantiles: []uint32{1000 + uint32(i), 2000, 3000}[:i%4],
 		}
@@ -277,6 +303,7 @@ func pooledFixture() (arrowBytes, jsonBytes []byte) {
 		want.Received = append(want.Received, c.Received)
 		want.Flags = append(want.Flags, int(c.Flags))
 		want.Flagged = append(want.Flagged, c.Flagged)
+		want.Positional = append(want.Positional, c.Positional)
 		want.Quantiles = append(want.Quantiles, append([]uint32{}, c.Quantiles...))
 		for _, name := range store.KnownSeries {
 			if v, ok := c.Series[name]; ok {
@@ -338,7 +365,8 @@ func fixtureFiles() map[string][]byte {
 		// JSON, not null.
 		want := fixtureJSON{
 			TS: []int64{}, Sent: []int{}, Received: []int{}, Flags: []int{}, Samples: [][]uint32{},
-			ICMP: []*uint16{}, SendErr: []*uint8{}, Series: map[string][]*[]int32{},
+			ICMP: []*uint16{}, SendErr: []*uint8{},
+			LossPositions: []*[]uint16{}, LossWindow: []*uint8{}, Series: map[string][]*[]int32{},
 		}
 		for _, name := range store.KnownSeries {
 			want.Series[name] = []*[]int32{}
@@ -347,7 +375,20 @@ func fixtureFiles() map[string][]byte {
 		if f.rows == 0 {
 			want.Batches = 1 // the empty batch that carries the schema
 		}
-		for _, m := range ms {
+		for i, m := range ms {
+			// Written out, not computed by the code under test.
+			var pos *[]uint16
+			var win *uint8
+			switch i % 6 {
+			case 1:
+				pos, win = &[]uint16{16, 17, 18, 19, 20}, new(uint8)
+				*win = 43
+			case 3:
+				pos, win = &[]uint16{}, new(uint8)
+				*win = 60
+			}
+			want.LossPositions = append(want.LossPositions, pos)
+			want.LossWindow = append(want.LossWindow, win)
 			want.TS = append(want.TS, m.TS)
 			want.Sent = append(want.Sent, m.Sent)
 			want.Received = append(want.Received, m.Received)

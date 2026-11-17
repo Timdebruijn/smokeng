@@ -24,3 +24,36 @@ export function fmtLoss(pct: number): string {
   if (pct < 0.1) return '<0.1%'
   return `${pct.toFixed(1)}%`
 }
+
+/**
+ * Send positions (1-based, ascending) the way an operator reads them, runs as
+ * ranges: [16, 17, 18, 19, 20] is "16–20", [4, 8, 12] is "4, 8, 12". The same
+ * notation `smokeng diag loss-pattern` prints.
+ */
+export function fmtPositions(at: readonly number[]): string {
+  const parts: string[] = []
+  for (let i = 0; i < at.length; i++) {
+    let j = i
+    while (j + 1 < at.length && at[j + 1] === at[j] + 1) j++
+    parts.push(j > i ? `${at[i]}–${at[j]}` : `${at[i]}`)
+    i = j
+  }
+  return parts.join(', ')
+}
+
+/**
+ * What the positional-loss badge says on hover, for one flagged interval's
+ * finding. Deliberately a statement about the pattern, not its cause: the test
+ * says the loss does not fall where chance would put it, and rate limiting by
+ * the target is one thing that fits that, not something established.
+ */
+export function positionalTitle(positions: readonly number[], window: number): string {
+  const where =
+    positions.length > 0
+      ? `Loss concentrated at probes ${fmtPositions(positions)} of each interval`
+      : 'Loss leans to one end of the send order'
+  return (
+    `${where}, over the last ${window} intervals with loss. That does not fit loss that falls ` +
+    'where it happens to: it is consistent with rate limiting by the target, and not necessarily network loss.'
+  )
+}

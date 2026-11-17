@@ -130,6 +130,7 @@ intervals that start in it:
   intervals are missing reads as low coverage, and one with none is a gap;
 - quality flags are listed without counts, and ICMP errors are named only as "ICMP errors":
   a column knows which flags its intervals carried, not how many of each, nor which error.
+  `positional loss` is listed the same way, without a count and without the positions.
   Zoom in to see the intervals themselves.
 
 The detail view's median, p95, spread and loss are taken over the whole window the same way,
@@ -235,6 +236,7 @@ it beside the target name rather than leaving you to infer it. A badge with a co
 | `cut short` | The interval ended early, after a restart or a settings change. Its loss figure is not comparable with a whole interval. | Leave it out of any loss figure you quote. |
 | `not sent`, with a reason | The probes never went out: no route, a refused write, an irtt session that never opened. They still draw as loss, so an unreachable target is not an empty graph. The reason says whether the cause was local or the far end. | Read the reason first. A local cause is yours to fix; a refusal from the far end is evidence. |
 | ICMP error | The target or a router answered with an ICMP error rather than an echo reply. The specific error (host unreachable, admin prohibited, TTL exceeded) appears in the hover readout. | Quote the exact error. It names who refused the traffic. |
+| `positional loss` | The loss in these intervals sits at fixed places in the send order, which loss that falls where it happens to does not do. Hover for the positions and the number of intervals it rests on. It is consistent with rate limiting by the target, a router or a CPE, and does not show that. The loss itself is drawn and counted as before. | Run `smokeng diag loss-pattern` to see the evidence ([Troubleshooting](troubleshooting.md#loss-on-a-graph-that-might-be-rate-limiting), which also says what the flag cannot see). If it is rate limiting, `probe_mode = "spread"` usually stays under the limit: [Probes](probes.md#rate-limiting-and-burst-or-spread). |
 
 The point of these badges is that a widened band always has an attributable cause. If
 smokeng degraded its own measurement, it says so, on the graph, next to the data it

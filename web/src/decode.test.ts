@@ -20,6 +20,8 @@ interface Expected {
   samples: number[][]
   icmp_error: (number | null)[]
   send_error: (number | null)[]
+  loss_positions: (number[] | null)[]
+  loss_window: (number | null)[]
   series: Record<string, (number[] | null)[]>
   batches: number
 }
@@ -43,6 +45,8 @@ for (const name of NAMES) {
     assert.deepEqual(rows(s), want.samples)
     assert.deepEqual(s.icmpErrors, want.icmp_error)
     assert.deepEqual(s.sendErrors, want.send_error)
+    assert.deepEqual(s.lossPositions, want.loss_positions)
+    assert.deepEqual(s.lossWindows, want.loss_window)
     for (const series of SERIES_NAMES) {
       const perRow = want.series[series]
       const measured = perRow.some((r) => r !== null)
@@ -66,6 +70,16 @@ test('the fixtures cover what the reader has to handle', () => {
   const small = decodeSeries(load('small.arrow'))
   assert.ok(small.icmpErrors.includes(null) && small.icmpErrors.some((v) => v !== null), 'nullable columns, both ways')
   assert.equal(decodeSeries(load('wide.arrow')).ts.length, 20) // validity bitmaps of more than one byte
+})
+
+test('a flagged interval, an unflagged one and a flagged one with no position that stands out stay three things', () => {
+  // Null is "not flagged"; an empty list is flagged, with the loss leaning to
+  // one end and no single position above twice its share. Collapsing them would
+  // show a badge without its reason, or hide a flag.
+  const s = decodeSeries(load('wide.arrow'))
+  assert.deepEqual(s.lossPositions.slice(0, 4), [null, [16, 17, 18, 19, 20], null, []])
+  assert.deepEqual(s.lossWindows.slice(0, 4), [null, 43, null, 60])
+  assert.ok(s.lossPositions.every((p, i) => (p === null) === (s.lossWindows[i] === null)), 'positions and window are set together')
 })
 
 test('the series the reader returns are the series the API names', () => {
@@ -193,9 +207,9 @@ function rename(b: Uint8Array, from: string, to: string) {
 test('the layout walk finds what the writer wrote', () => {
   const small = layout(load('small.arrow'))
   assert.deepEqual(small.map((m) => m.type), [1, 3])
-  assert.equal(small[1].nodes.length, 14)
-  assert.equal(small[1].bufs.length, 28)
-  assert.equal(new DataView(load('small.arrow').buffer).getUint32(small[0].fieldsCountPos!, true), 10)
+  assert.equal(small[1].nodes.length, 17)
+  assert.equal(small[1].bufs.length, 34)
+  assert.equal(new DataView(load('small.arrow').buffer).getUint32(small[0].fieldsCountPos!, true), 12)
   assert.deepEqual(layout(load('multi.arrow')).map((m) => m.type), [1, 3, 3, 3])
 })
 
@@ -209,6 +223,8 @@ function assertCoherent(s: Series, what: string, responseBytes: number) {
   assert.equal(s.flags.length, n, what)
   assert.equal(s.icmpErrors.length, n, what)
   assert.equal(s.sendErrors.length, n, what)
+  assert.equal(s.lossPositions.length, n, what)
+  assert.equal(s.lossWindows.length, n, what)
   assert.equal(s.offsets.length, n + 1, what)
   assert.equal(s.offsets[0], 0, what)
   assert.equal(s.values.length, s.offsets[n], what)
@@ -335,6 +351,11 @@ test('the schema rules', () => {
   // "this target does not measure it".
   refused(rename(small, 'icmp_error', 'icmp_erroX'), /no icmp_error column/, 'icmp_error renamed')
   refused(rename(small, 'send_error', 'send_erroX'), /no send_error column/, 'send_error renamed')
+  // Likewise the columns that say loss sits at fixed send positions: missing,
+  // they would read as "nothing was flagged".
+  refused(rename(small, 'loss_positions', 'loss_positionX'), /no loss_positions column/, 'loss_positions renamed')
+  refused(rename(small, 'loss_window', 'loss_windoX'), /no loss_window column/, 'loss_window renamed')
+  refused(rename(load('pooled.arrow'), 'positional', 'positionaX'), /no positional column/, 'positional renamed')
   refused(rename(small, 'ipdv_send', 'ipdv_seng'), /no ipdv_send column/, 'ipdv_send renamed')
   refused(rename(small, 'ipdv_receive', 'ipdv_receivX'), /no ipdv_receive column/, 'ipdv_receive renamed')
   refused(rename(small, 'server_processing', 'server_processinX'), /no server_processing column/, 'server_processing renamed')
@@ -373,6 +394,8 @@ test('the types the server never writes are refused, where they would change a v
     ['samples-signed', /samples column is not an unsigned 32-bit/],
     ['samples-u16', /samples column is not an unsigned 32-bit/],
     ['samples-flat', /no samples column of the right type/],
+    ['loss-positions-u32', /loss_positions column is not an unsigned 16-bit/],
+    ['loss-window-u16', /loss_window column is not an unsigned 8-bit/],
     ['series-flat', /no ipdv_send column of the right type/],
     ['series-unsigned', /ipdv_send column is not a signed 32-bit/],
     ['sent-u64', /sent column is not an unsigned 16-bit/],
@@ -390,10 +413,10 @@ test('the types the server never writes are refused, where they would change a v
 })
 
 test('a width changed by one byte of the schema is refused, not read as another width', () => {
-  // The bit width of sent, received and icmp_error is 16; setting it to 8 made the
+  // The bit width of sent, received, icmp_error and loss_positions is 16; setting it to 8 made the
   // reader take a column of 16-bit values for 8-bit ones and read every second byte.
   const small = load('small.arrow')
-  for (const at of [472, 652, 672, 728]) {
+  for (const at of [512, 624, 804, 824, 880]) {
     assert.equal(small[at], 16, `byte ${at} is a bit width of 16`)
     refused(patched(small, [[at, 8]]), /column is not an unsigned 16-bit/, `a width of 8 at ${at}`)
     // 32 bits of 16-bit data is refused too, though which rule gets there first depends
@@ -612,9 +635,11 @@ test('a pooled read decodes to its columns, in the shape of a series', () => {
   assert.deepEqual(Array.from(s.received), want.received)
   assert.deepEqual(Array.from(s.flags), want.flags)
   assert.deepEqual(Array.from(s.pooled!.flagged), want.flagged)
+  assert.deepEqual(Array.from(s.pooled!.positional), want.positional)
   assert.deepEqual(rows(s), want.quantiles)
   // Nothing per interval is invented for a column.
   assert.ok(s.icmpErrors.every((v) => v === null) && s.sendErrors.every((v) => v === null))
+  assert.ok(s.lossPositions.every((v) => v === null) && s.lossWindows.every((v) => v === null))
   // The extra series, pooled: values, measured-and-empty, and null, as written.
   for (const series of SERIES_NAMES) {
     const perRow: (number[] | null)[] = want.series[series]
