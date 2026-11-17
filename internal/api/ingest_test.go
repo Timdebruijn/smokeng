@@ -460,3 +460,81 @@ func TestIngestDoesNotEvaluateARowThatArrivesLate(t *testing.T) {
 		t.Errorf("a late interval counted as the next one and fired: %+v", firing)
 	}
 }
+
+// tailBatch is sixty intervals of twenty probes from an agent, lossy in pairs
+// (two in every five), each lossy one having lost its last five probes: the
+// shape a rate limiter leaves, flagged by the master from the twelfth lossy
+// interval on.
+func tailBatch(target int64) []store.Measurement {
+	const t0, n = 1_756_400_000, 20
+	var ms []store.Measurement
+	for i := range 60 {
+		m := store.Measurement{TargetID: target, TS: t0 + int64(i)*60, Sent: n, Received: n}
+		lost := make([]bool, n)
+		if i%5 < 2 {
+			for p := 15; p < n; p++ {
+				lost[p] = true
+			}
+			m.Received = 15
+			m.LossMask = store.EncodeLossMask(false, lost)
+		}
+		for k := range m.Received {
+			m.Samples = append(m.Samples, uint32(1000+k))
+		}
+		ms = append(ms, m)
+	}
+	return ms
+}
+
+// Protects the path a flag travels on a live master, from the write that sets
+// it to the rule that reads it: an agent's intervals are judged by the store as
+// they are stored, and the rows handed to alerting carry the verdict. With
+// loss at fixed positions left out, the rule stops firing once the flags begin;
+// with flag_only on the target it fires on every lossy pair, as it always did.
+func TestIngestCarriesPositionalLossToTheRules(t *testing.T) {
+	fires := func(policy string) int {
+		h, st, mgr, agentID, key, mine, _ := ingestFixtureAlerts(t)
+		st.DetectPositionalLoss()
+		if policy != "" {
+			targets, err := st.ListTargets(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range targets {
+				if targets[i].ID == mine {
+					targets[i].Settings.PositionalLoss = &policy
+					if err := st.UpsertTarget(t.Context(), &targets[i]); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+		}
+		lossRule(t, st, mgr)
+		batch := tailBatch(mine)
+		for i := 0; i < len(batch); i += 10 {
+			if rec := submit(t, h, agentID, key, batch[i:i+10], time.Now()); rec.Code != http.StatusOK {
+				t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
+			}
+		}
+		events, err := st.ListAlertEvents(t.Context(), 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, e := range events {
+			if e.Firing {
+				n++
+			}
+		}
+		return n
+	}
+	// Twenty-four lossy intervals in twelve pairs. Left out from the twelfth
+	// lossy interval on, only the first five pairs can fire.
+	excluded, counted := fires(""), fires("flag_only")
+	if counted != 12 {
+		t.Errorf("with flag_only the rule fired %d times, want once per lossy pair, 12", counted)
+	}
+	if excluded != 5 {
+		t.Errorf("with the default the rule fired %d times, want 5: the pairs before the flags begin", excluded)
+	}
+}

@@ -167,6 +167,16 @@ drawn and counted as loss everywhere else, in the availability figures included.
 Rules on median, p95, spread, shape and bimodality are not affected: the round-trip times of
 a rate-limited interval are real.
 
+Two consequences are worth knowing before you rely on it. The detector needs twelve intervals
+with lopsided loss before it flags anything, so a loss rule can still fire at the start of a
+rate-limited stretch. And an alert that is firing does not clear on flagged intervals: on a
+target whose limiter hits every interval it stays firing, and keeps being repeated to the
+webhook, until an interval without that pattern clears it or you silence it.
+
+On upgrading to the release that adds this, existing loss rules start leaving flagged
+intervals out, since `exclude` is the default. A series with no flagged intervals behaves as
+before.
+
 This is a default, not a certainty. The flag says the pattern does not fit random loss, which
 rate limiting explains and does not prove. To count flagged intervals like any other for a
 subtree, set `positional_loss` there (`[defaults]` or any target table; it inherits like every
