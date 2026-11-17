@@ -52,6 +52,14 @@ type Manager struct {
 	st       Store
 	notifier Notifier
 
+	// observing admits one Observe at a time. The prober's writer was the only
+	// caller; the ingest handler is a second, on its own goroutines. Evaluation
+	// was already under mu, but each call saves its snapshot of the states and
+	// records its transitions after releasing it, and two calls could do that
+	// in the other order: the older snapshot written last, so a restart read
+	// back an alert as firing that had resolved.
+	observing sync.Mutex
+
 	mu         sync.Mutex
 	byTarget   map[int64]applicable
 	states     map[stateKey]*State
@@ -226,6 +234,8 @@ func (m *Manager) Reload(ctx context.Context) error {
 // Notifications are best-effort: a webhook that is down must never stop
 // measurement, so a failure is logged and the state still advances.
 func (m *Manager) Observe(ctx context.Context, ms []Input) {
+	m.observing.Lock()
+	defer m.observing.Unlock()
 	var fired []Alert
 	var dirty []State
 
@@ -242,6 +252,15 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 			if !ok {
 				st = &State{RuleID: r.ID, TargetID: meas.TargetID, AgentID: meas.AgentID}
 				m.states[key] = st
+			}
+			// An interval at or before the last one this rule has seen is
+			// history arriving late: an agent whose clock stepped back, or the
+			// prober rewriting an interval it cut short. The rule counts
+			// consecutive intervals forwards, so a step back would count as the
+			// next one, and would move LastTS, which dates a resolve, into the
+			// past. It is stored and drawn; it is not evaluated.
+			if st.LastTS != 0 && meas.TS <= st.LastTS {
+				continue
 			}
 			var t Transition
 			if r.Metric.IsShape() {

@@ -151,7 +151,9 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 // Only the rows that were stored: a retried batch is all duplicates, and
 // counting those again would walk a rule past its for_intervals on one bad
 // interval. Oldest first, because a rule counts consecutive intervals and
-// notices a gap by the step from the previous one.
+// notices a gap by the step from the previous one; the manager skips a row
+// older than what a series has already had evaluated, so sorting is what keeps
+// a batch listed newest first from losing all but its last row.
 //
 // Detached from the request: an agent that hangs up after the rows are stored
 // must not leave a transition that happened out of the log.

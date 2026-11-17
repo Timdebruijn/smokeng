@@ -418,3 +418,27 @@ func TestIngestEvaluatesABatchInTimeOrder(t *testing.T) {
 		t.Errorf("two lossy intervals with a gap between them fired: %+v", firing)
 	}
 }
+
+// An interval older than what a rule has already evaluated for the series is
+// stored and not evaluated. Stepping back is not a gap, so it would have
+// counted as the next consecutive interval and fired on two that are ten
+// minutes apart.
+func TestIngestDoesNotEvaluateARowThatArrivesLate(t *testing.T) {
+	h, st, mgr, agentID, key, mine, _ := ingestFixtureAlerts(t)
+	lossRule(t, st, mgr)
+	now := time.Now()
+	const t0 = 1_756_400_000
+
+	for _, ts := range []int64{t0 + 600, t0} {
+		if rec := submit(t, h, agentID, key, []store.Measurement{measurement(mine, ts)}, now); rec.Code != http.StatusOK {
+			t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
+		}
+	}
+	got, err := st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("stored %d measurements, %v; the late one must still be kept", len(got), err)
+	}
+	if firing := mgr.Firing(); len(firing) != 0 {
+		t.Errorf("a late interval counted as the next one and fired: %+v", firing)
+	}
+}
