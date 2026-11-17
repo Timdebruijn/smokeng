@@ -394,6 +394,11 @@ func Positions(counts []int, lost int) []int {
 // written as ranges: "16–20", or "4, 8, 12, 16, 20". Empty when no position
 // stands out.
 func (v Verdict) Where() string {
+	// A verdict that judged nothing has nothing to name, and need not have
+	// counts to slice.
+	if v.Lost == 0 || len(v.Counts) < v.Probes {
+		return ""
+	}
 	at := Positions(v.Counts[:v.Probes], v.Lost)
 	var parts []string
 	for i := 0; i < len(at); i++ {

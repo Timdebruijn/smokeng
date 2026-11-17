@@ -395,8 +395,12 @@ func TestWhereNamesThePositions(t *testing.T) {
 			t.Errorf("lost %v: Where() = %q, want %q", lost, got, want)
 		}
 	}
-	if got := (Verdict{}).Where(); got != "" {
-		t.Errorf("empty verdict: Where() = %q", got)
+	// A verdict that judged nothing names nothing, whatever shape it is in:
+	// no counts at all, or probes without counts.
+	for _, v := range []Verdict{{}, {Probes: 5}, {Probes: 5, Counts: []int{1}}} {
+		if got := v.Where(); got != "" {
+			t.Errorf("verdict %+v: Where() = %q", v, got)
+		}
 	}
 }
 
