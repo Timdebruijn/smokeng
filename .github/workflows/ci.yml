@@ -73,6 +73,12 @@ jobs:
 
       - run: go test -race ./...
 
+      # The loss-pattern simulations at full size. Under the race detector
+      # above they run a token number of windows and judge no rates: they are
+      # arithmetic on one goroutine, which it slows tenfold and can find
+      # nothing in. This is where the false-positive rate is actually held.
+      - run: go test ./internal/losspattern
+
   # A stale committed web/dist would ship a frontend that does not match the
   # source, and nothing else would catch it: the binary builds either way.
   frontend:
