@@ -155,6 +155,11 @@ so it can fire a loss alert.
 Alert state is persisted, so an alert that has been firing for an hour does not resolve
 and re-fire every time the service restarts.
 
+An agent's intervals are evaluated when the master stores them, oldest first. An agent that
+was cut off delivers its backlog when the link returns, so a rule can fire and clear after
+the fact. The history and the webhook's `startsAt` and `endsAt` carry the times of the
+intervals themselves, not of their arrival.
+
 ## Inheritance
 
 Alert rules are inherited down the target tree, but they **replace** rather than

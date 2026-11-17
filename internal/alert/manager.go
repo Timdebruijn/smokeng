@@ -607,12 +607,21 @@ func (m *Manager) record(ctx context.Context, alerts []Alert) {
 // Delivering reports whether transitions go anywhere beyond the log.
 func (m *Manager) Delivering() bool { return m.notifier != nil }
 
-// transitionTS is when a transition happened. Since is when the condition
-// started holding and Evaluate clears it on the way out, so a resolved alert
-// carries the zero time — whose Unix() is -62135596800, the year 1.
+// transitionTS is when a transition happened: the interval that fired the
+// rule, or the one that resolved it. Since is when the condition started
+// holding and Evaluate clears it on the way out, so a resolved alert carries
+// the zero time — whose Unix() is -62135596800, the year 1 — and is dated by
+// Ended instead.
+//
+// Not by the clock: an agent that was cut off delivers its intervals hours
+// later, and a resolve stamped on arrival beside a fire stamped by its interval
+// recorded an episode as lasting until the link came back.
 func transitionTS(a Alert, now int64) int64 {
 	if a.Firing && !a.Since.IsZero() {
 		return a.Since.Unix()
+	}
+	if !a.Firing && !a.Ended.IsZero() {
+		return a.Ended.Unix()
 	}
 	return now
 }

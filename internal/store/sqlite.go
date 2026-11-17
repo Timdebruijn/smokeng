@@ -454,7 +454,7 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 
 // IngestMeasurements writes what a remote agent submitted, keeping what is
 // already stored: a row at an existing (target, agent, ts) is left exactly as
-// it is, and counted in the duplicates it returns.
+// it is, and is not among the rows returned, which are the ones stored.
 //
 // WriteMeasurements replaces instead, and for the local prober that is right —
 // it is the writer of its own rows. For an agent it meant that a second signed
@@ -462,21 +462,20 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 // silently rewrote stored history. First write wins, so a stored interval is
 // the interval the agent reported at the time. A replay changes nothing either
 // way, being byte-identical; what this changes is a submission that is not.
-func (s *SQLite) IngestMeasurements(ctx context.Context, ms []Measurement) (duplicates int, err error) {
-	inserted, err := s.writeMeasurements(ctx, ms, false)
-	return len(ms) - inserted, err
+func (s *SQLite) IngestMeasurements(ctx context.Context, ms []Measurement) (stored []Measurement, err error) {
+	return s.writeMeasurements(ctx, ms, false)
 }
 
 // writeMeasurements is the one write path. replace chooses what happens at an
 // existing key: overwrite it (the owner rewriting its own row) or keep it.
-// It returns how many rows were actually written.
-func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replace bool) (inserted int, err error) {
+// It returns the rows that were actually written, in the order given.
+func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replace bool) (written []Measurement, err error) {
 	if len(ms) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer tx.Rollback()
 	verb := "INSERT OR REPLACE INTO"
@@ -487,7 +486,7 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 	stmt, err := tx.PrepareContext(ctx, verb+` measurements (target_id, agent_id, ts, sent, received, flags, samples, icmp_error, send_error)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`+suffix)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer stmt.Close()
 	// A measurement is replaced wholesale, so its old series rows have to go
@@ -497,60 +496,60 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 	delSeries, err := tx.PrepareContext(ctx, `
 		DELETE FROM measurement_series WHERE target_id = ? AND agent_id = ? AND ts = ?`)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer delSeries.Close()
 	putSeries, err := tx.PrepareContext(ctx, `
 		INSERT INTO measurement_series (target_id, agent_id, ts, series, samples)
 		VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer putSeries.Close()
 	for _, m := range ms {
 		if m.Received != len(m.Samples) {
-			return 0, fmt.Errorf("store: measurement (%d,%d,%d): received=%d but %d samples",
+			return nil, fmt.Errorf("store: measurement (%d,%d,%d): received=%d but %d samples",
 				m.TargetID, m.AgentID, m.TS, m.Received, len(m.Samples))
 		}
 		blob, err := enc.Encode(m.Samples)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		res, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.TS, m.Sent, m.Received,
 			m.Flags, blob, m.ICMPErr, m.SendErr)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		// Keeping an existing row means keeping its series too: they belong to
 		// the interval that was stored, not to the one that was offered.
 		if n, err := res.RowsAffected(); err != nil {
-			return 0, err
+			return nil, err
 		} else if n == 0 {
 			continue
 		}
-		inserted++
+		written = append(written, m)
 		if _, err := delSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
-			return 0, err
+			return nil, err
 		}
 		for _, name := range slices.Sorted(maps.Keys(m.Series)) {
 			if !series.Valid(name) {
-				return 0, fmt.Errorf("store: measurement (%d,%d,%d): unknown series %q",
+				return nil, fmt.Errorf("store: measurement (%d,%d,%d): unknown series %q",
 					m.TargetID, m.AgentID, m.TS, name)
 			}
 			sblob, err := enc.EncodeSigned(m.Series[name])
 			if err != nil {
-				return 0, fmt.Errorf("store: measurement (%d,%d,%d) series %q: %w",
+				return nil, fmt.Errorf("store: measurement (%d,%d,%d) series %q: %w",
 					m.TargetID, m.AgentID, m.TS, name, err)
 			}
 			if _, err := putSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS, name, sblob); err != nil {
-				return 0, err
+				return nil, err
 			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return inserted, nil
+	return written, nil
 }
 
 func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error) {

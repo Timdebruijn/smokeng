@@ -21,6 +21,9 @@ import (
 
 // AlertView is what the API needs of the alert manager.
 type AlertView interface {
+	// Observe evaluates finalized measurements: what an agent submitted, as the
+	// prober hands over its own.
+	Observe(ctx context.Context, ms []alert.Input)
 	Firing() []alert.Alert
 	// Delivering reports whether transitions go anywhere beyond the log.
 	// Evaluation no longer depends on it, so the two are separate facts.

@@ -31,14 +31,14 @@ func TestIngestMeasurementsKeepsTheFirstWrite(t *testing.T) {
 	s := openTemp(t)
 	ctx := t.Context()
 	first := rowAt(1000, 5, []uint32{10, 20, 30}, []int32{-3, 0, 4})
-	if dup, err := s.IngestMeasurements(ctx, []Measurement{first}); err != nil || dup != 0 {
-		t.Fatalf("first write: dup=%d err=%v", dup, err)
+	if stored, err := s.IngestMeasurements(ctx, []Measurement{first}); err != nil || len(stored) != 1 {
+		t.Fatalf("first write: stored=%d err=%v", len(stored), err)
 	}
 
 	rewrite := rowAt(1000, 9, []uint32{77}, []int32{99, 100})
-	dup, err := s.IngestMeasurements(ctx, []Measurement{rewrite})
-	if err != nil || dup != 1 {
-		t.Fatalf("resubmission: dup=%d err=%v, want 1 duplicate", dup, err)
+	stored, err := s.IngestMeasurements(ctx, []Measurement{rewrite})
+	if err != nil || len(stored) != 0 {
+		t.Fatalf("resubmission: stored=%d err=%v, want nothing stored", len(stored), err)
 	}
 
 	got, err := s.QueryRange(ctx, 1, 4, 0, 1<<40)
@@ -53,18 +53,18 @@ func TestIngestMeasurementsKeepsTheFirstWrite(t *testing.T) {
 	}
 }
 
-func TestIngestMeasurementsCountsOnlyTheDuplicates(t *testing.T) {
+func TestIngestMeasurementsReturnsOnlyWhatItStored(t *testing.T) {
 	s := openTemp(t)
 	ctx := t.Context()
 	if _, err := s.IngestMeasurements(ctx, []Measurement{rowAt(1000, 1, []uint32{1}, nil), rowAt(1060, 1, []uint32{1}, nil)}); err != nil {
 		t.Fatal(err)
 	}
-	dup, err := s.IngestMeasurements(ctx, []Measurement{
+	stored, err := s.IngestMeasurements(ctx, []Measurement{
 		rowAt(1000, 1, []uint32{1}, nil), rowAt(1060, 1, []uint32{1}, nil),
 		rowAt(1120, 1, []uint32{1}, nil), rowAt(1180, 1, []uint32{1}, nil), rowAt(1240, 1, []uint32{1}, nil),
 	})
-	if err != nil || dup != 2 {
-		t.Fatalf("dup=%d err=%v, want 2 duplicates among 5 rows", dup, err)
+	if err != nil || len(stored) != 3 || stored[0].TS != 1120 || stored[2].TS != 1240 {
+		t.Fatalf("stored=%+v err=%v, want the 3 new rows among 5", stored, err)
 	}
 	got, err := s.QueryRange(ctx, 1, 4, 0, 1<<40)
 	if err != nil || len(got) != 5 {

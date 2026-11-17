@@ -26,6 +26,14 @@ func p[T any](v T) *T { return &v }
 // assigned to that agent, one not.
 func ingestFixture(t *testing.T) (http.Handler, *store.SQLite, int64, ed25519.PrivateKey, int64, int64) {
 	t.Helper()
+	h, st, _, agentID, key, mine, theirs := ingestFixtureAlerts(t)
+	return h, st, agentID, key, mine, theirs
+}
+
+// ingestFixtureAlerts is ingestFixture with the alert manager the master
+// evaluates on, for tests that define a rule and read what fired.
+func ingestFixtureAlerts(t *testing.T) (http.Handler, *store.SQLite, *alert.Manager, int64, ed25519.PrivateKey, int64, int64) {
+	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "master.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +61,8 @@ func ingestFixture(t *testing.T) (http.Handler, *store.SQLite, int64, ed25519.Pr
 			t.Fatal(err)
 		}
 	}
-	return New(st, Options{Alerts: alert.NewManager(st, nil)}, fstest.MapFS{}), st, rec.ID, priv, mine.ID, theirs.ID
+	mgr := alert.NewManager(st, nil)
+	return New(st, Options{Alerts: mgr}, fstest.MapFS{}), st, mgr, rec.ID, priv, mine.ID, theirs.ID
 }
 
 func submit(t *testing.T, h http.Handler, id int64, key ed25519.PrivateKey,
@@ -312,5 +321,100 @@ func TestIngestDropsFutureRowsButKeepsTheRest(t *testing.T) {
 	if len(have) != 2 || have[0] != 1_756_400_000 || have[1] != inSkew {
 		t.Errorf("stored timestamps %v, want the past row and the one inside the skew (%d), not %d",
 			have, inSkew, future)
+	}
+}
+
+// lossRule defines a loss rule on the root that fires after two lossy
+// intervals in a row, and loads it into the manager.
+func lossRule(t *testing.T, st *store.SQLite, mgr *alert.Manager) {
+	t.Helper()
+	rule := alert.Rule{TargetID: 1, Name: "loss", Metric: alert.MetricLoss, Op: alert.OpGreater,
+		Threshold: 20, For: 2, ClearFor: 2, Enabled: true, Severity: alert.SeverityWarning}
+	if err := st.UpsertAlertRule(t.Context(), &rule); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An agent's intervals are evaluated like the local prober's, against that
+// agent's own series, and a batch delivered twice counts once: the retry an
+// agent makes when the answer to its first attempt was lost must not push a
+// rule over its for_intervals.
+func TestIngestEvaluatesAlertRules(t *testing.T) {
+	h, st, mgr, agentID, key, mine, _ := ingestFixtureAlerts(t)
+	lossRule(t, st, mgr)
+	now := time.Now()
+	const t0 = 1_756_400_000
+
+	// measurement() is 3 of 5 answered: 40% loss, over the rule's 20%.
+	first := []store.Measurement{measurement(mine, t0)}
+	for range 2 {
+		if rec := submit(t, h, agentID, key, first, now); rec.Code != http.StatusOK {
+			t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
+		}
+	}
+	if firing := mgr.Firing(); len(firing) != 0 {
+		t.Fatalf("one lossy interval, delivered twice, fired a rule that needs two: %+v", firing)
+	}
+
+	if rec := submit(t, h, agentID, key, []store.Measurement{measurement(mine, t0+60)}, now); rec.Code != http.StatusOK {
+		t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
+	}
+	firing := mgr.Firing()
+	if len(firing) != 1 {
+		t.Fatalf("two lossy intervals from an agent left %d alert(s) firing, want 1", len(firing))
+	}
+	if firing[0].AgentID != agentID || firing[0].TargetID != mine {
+		t.Errorf("fired for target %d agent %d, want target %d agent %d",
+			firing[0].TargetID, firing[0].AgentID, mine, agentID)
+	}
+	events, err := st.ListAlertEvents(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || !events[0].Firing || events[0].AgentID != agentID {
+		t.Errorf("transition log = %+v, want one fire for agent %d", events, agentID)
+	}
+
+	// Two clean intervals resolve it. The log dates the resolve by the interval
+	// that cleared the rule, as it dates the fire: these intervals are months
+	// old by the time this batch arrives, as an agent's backlog is hours old.
+	clean := func(ts int64) store.Measurement {
+		return store.Measurement{TargetID: mine, TS: ts, Sent: 5, Received: 5,
+			Samples: []uint32{1000, 1000, 2000, 2000, 3000}}
+	}
+	if rec := submit(t, h, agentID, key, []store.Measurement{clean(t0 + 120), clean(t0 + 180)}, now); rec.Code != http.StatusOK {
+		t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
+	}
+	if firing := mgr.Firing(); len(firing) != 0 {
+		t.Fatalf("two clean intervals left it firing: %+v", firing)
+	}
+	if events, err = st.ListAlertEvents(t.Context(), 10); err != nil {
+		t.Fatal(err)
+	}
+	// Newest first.
+	if len(events) != 2 || events[0].Firing || events[0].TS != t0+180 || events[1].TS != t0+60 {
+		t.Errorf("transition log = %+v, want a resolve at %d after the fire at %d", events, t0+180, t0+60)
+	}
+}
+
+// Rows are evaluated oldest first whatever order the batch lists them in. A
+// rule counts consecutive intervals and a gap resets the count; read newest
+// first, two lossy intervals ten minutes apart looked consecutive and fired.
+func TestIngestEvaluatesABatchInTimeOrder(t *testing.T) {
+	h, st, mgr, agentID, key, mine, _ := ingestFixtureAlerts(t)
+	lossRule(t, st, mgr)
+	const t0 = 1_756_400_000
+
+	rec := submit(t, h, agentID, key, []store.Measurement{
+		measurement(mine, t0+600), measurement(mine, t0),
+	}, time.Now())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
+	}
+	if firing := mgr.Firing(); len(firing) != 0 {
+		t.Errorf("two lossy intervals with a gap between them fired: %+v", firing)
 	}
 }
