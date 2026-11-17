@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -615,5 +616,27 @@ func TestBoundIsNeverBelowTheExactCount(t *testing.T) {
 	}
 	if !counted.Flagged || counted.AtMost {
 		t.Errorf("counted to the end: %+v", counted)
+	}
+}
+
+// The numbers the browser gets and the words the CLI prints are one rule.
+func TestPositionsAreTheOnesAboveTwiceAnEvenShare(t *testing.T) {
+	counts := make([]int, 20)
+	for i := 15; i < 20; i++ {
+		counts[i] = 8
+	}
+	if got := Positions(counts, 40); !slices.Equal(got, []int{16, 17, 18, 19, 20}) {
+		t.Errorf("tail: %v", got)
+	}
+	// Twice the share is 4: a count of 3 is under it, 4 is on it.
+	if got := Positions([]int{3, 4, 0, 0, 0}, 10); !slices.Equal(got, []int{2}) {
+		t.Errorf("boundary: %v", got)
+	}
+	flat := slices.Repeat([]int{2}, 20)
+	if got := Positions(flat, 40); len(got) != 0 {
+		t.Errorf("an even profile has no standout position, got %v", got)
+	}
+	if got := Positions(nil, 0); got != nil {
+		t.Errorf("nothing lost: %v", got)
 	}
 }

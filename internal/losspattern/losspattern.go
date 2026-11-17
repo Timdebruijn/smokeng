@@ -371,29 +371,40 @@ func lopsidedness(sum []int) int {
 	return s
 }
 
-// Where names the send positions that lost clearly more than their share, the
-// way an operator counts them (from 1), with runs written as ranges: "16–20",
-// or "4, 8, 12, 16, 20". Empty when no position stands out.
-func (v Verdict) Where() string {
-	if v.Probes == 0 || v.Lost == 0 {
-		return ""
+// Positions are the send positions, from 1 and ascending, that lost clearly more
+// than their share: counts is per position how many intervals lost it, lost the
+// total of lost probes. Empty when no position stands out.
+func Positions(counts []int, lost int) []int {
+	if len(counts) == 0 || lost == 0 {
+		return nil
 	}
 	// Twice an even share is where "concentrated" stops being a judgement call
 	// on a profile the test has already found lopsided.
-	bar := 2 * float64(v.Lost) / float64(v.Probes)
-	var parts []string
-	for i := 0; i < v.Probes; i++ {
-		if float64(v.Counts[i]) < bar {
-			continue
+	bar := 2 * float64(lost) / float64(len(counts))
+	var at []int
+	for i, c := range counts {
+		if float64(c) >= bar {
+			at = append(at, i+1)
 		}
+	}
+	return at
+}
+
+// Where names those positions the way an operator counts them, with runs
+// written as ranges: "16–20", or "4, 8, 12, 16, 20". Empty when no position
+// stands out.
+func (v Verdict) Where() string {
+	at := Positions(v.Counts[:v.Probes], v.Lost)
+	var parts []string
+	for i := 0; i < len(at); i++ {
 		j := i
-		for j+1 < v.Probes && float64(v.Counts[j+1]) >= bar {
+		for j+1 < len(at) && at[j+1] == at[j]+1 {
 			j++
 		}
 		if j > i {
-			parts = append(parts, fmt.Sprintf("%d–%d", i+1, j+1))
+			parts = append(parts, fmt.Sprintf("%d–%d", at[i], at[j]))
 		} else {
-			parts = append(parts, fmt.Sprint(i+1))
+			parts = append(parts, fmt.Sprint(at[i]))
 		}
 		i = j
 	}
