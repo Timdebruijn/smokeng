@@ -117,6 +117,17 @@ CREATE TABLE measurements (
   PRIMARY KEY (target_id, agent_id, ts)
 ) WITHOUT ROWID;
 
+CREATE TABLE positional_loss (            -- schema v26; see §3.4, one row per flagged interval
+  target_id INTEGER NOT NULL,
+  agent_id  INTEGER NOT NULL,
+  ts        INTEGER NOT NULL,
+  p         REAL    NOT NULL,
+  intervals INTEGER NOT NULL,
+  lost      INTEGER NOT NULL,
+  counts    BLOB    NOT NULL,
+  PRIMARY KEY (target_id, agent_id, ts)
+) WITHOUT ROWID;
+
 CREATE TABLE agents (                     -- reserved now, used from v0.4
   id        INTEGER PRIMARY KEY,          -- row 0 = 'local'
   name      TEXT NOT NULL UNIQUE,
@@ -346,6 +357,23 @@ be the send order); an interval where not every configured probe was attempted a
 counted; one flagged send-failed, truncated, socket-overflow or clock-step (some of the
 loss is ours, at an unknown position); and one with no loss or total loss (the mask would
 be all zeros or all ones, and the counts already say so). It is not served to the browser.
+
+**Positional loss.** `positional_loss` (schema v26) has one row per interval that the
+master found to lose probes at fixed places in the send order, keyed like `measurements`:
+the test's p-value for the window ending at that interval, how many intervals and lost
+probes the window held, and per send position how many of them lost it (one uvarint each).
+No row means not flagged. The test itself is `internal/losspattern`; it is not restated here.
+
+The master runs it at write time, for each interval it stores that carries a mask, inside
+the write's transaction: over that series' latest sixty masked intervals no older than a
+day, read through the partial index `measurements_masked`. That holds for its own prober
+and for what agents push (an interval an agent resubmits is kept as it was and is not
+judged again). An agent's local buffer does not run it. The rows are derived data the
+master computes: an agent cannot submit one, and the protocol has no field for it. It is a
+table and not a quality-flag bit because all eight bits of `flags` are taken and its width
+is fixed in the agent protocol and in the browser reader, and because a bit could not say
+which positions. Pruning deletes a measurement's row with it, in the same transaction;
+nothing is flagged retroactively for intervals stored before v26.
 
 ### 3.5 Storage size, honestly
 
