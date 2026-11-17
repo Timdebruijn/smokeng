@@ -342,6 +342,11 @@ export interface TargetSettings {
    * graph on shows its history rather than starting it from that moment.
    */
   graph_series: SettingValue<string>
+  /**
+   * Whether alert rules on loss count intervals flagged as losing at fixed send
+   * positions: "exclude" (the default) or "flag_only".
+   */
+  positional_loss: SettingValue<string>
 }
 
 export type SettingKey = keyof TargetSettings
