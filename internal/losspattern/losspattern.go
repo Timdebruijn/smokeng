@@ -212,8 +212,13 @@ func Test(history []Interval, full bool) Verdict {
 	v.AtLeast = !complete
 	// The bound decides here too, so that a window is flagged or not whichever
 	// way it was asked. An estimate can land above PMax for a window whose true
-	// p the bound has already shown to be below it.
-	v.Flagged = v.P < PMax || bound < PMax
+	// p the bound has already shown to be below it; the bound is then the
+	// better figure, and reporting it keeps a flagged window from being shown
+	// beside a p-value that would not flag it.
+	if bound < PMax && v.P >= PMax {
+		v.P, v.AtLeast = bound, false
+	}
+	v.Flagged = v.P < PMax
 	return v
 }
 
@@ -299,26 +304,57 @@ func countExact(tilts [][]int8, sum []int, observed int, full bool) (asExtreme, 
 // with too many intervals to try them all. The generator starts from the same
 // state on every call, so a window is not flagged on one evaluation and passed
 // on the next.
+//
+// A round is one random word, bit j saying whether interval j is mirrored. For
+// each pair of positions the intervals that tilt one way and those that tilt
+// the other are kept as two bit sets, so the pair's sum under a mirroring is
+// its plain sum minus twice (the mirrored ones that tilt one way less the
+// mirrored ones that tilt the other): two ANDs and two bit counts, whatever
+// the number of intervals. Adding the rows up one by one cost fifteen times as
+// much, and this runs on every lossy interval the master writes for as long as
+// a series stays flagged.
 func countRandom(tilts [][]int8, sum []int, observed int, full bool) (asExtreme, of int, complete bool) {
+	// One word of mirrorings: the window never holds more intervals than that.
+	if len(tilts) > 64 {
+		panic("losspattern: a window of more than 64 intervals")
+	}
+	up, down := make([]uint64, len(sum)), make([]uint64, len(sum))
+	for j, row := range tilts {
+		for i, t := range row {
+			switch t {
+			case 1:
+				up[i] |= 1 << j
+			case -1:
+				down[i] |= 1 << j
+			}
+		}
+	}
+	// Only the pairs that tilt in some interval: the others are zero under
+	// every mirroring, and with a thousand probes they are nearly all of them.
+	n := 0
+	for i := range up {
+		if up[i]|down[i] != 0 {
+			up[n], down[n] = up[i], down[i]
+			n++
+		}
+	}
+	up, down = up[:n], down[:n]
+	plain := make([]int, n)
+	for i := range plain {
+		plain[i] = bits.OnesCount64(up[i]) - bits.OnesCount64(down[i])
+	}
+
 	rng := rand.New(rand.NewPCG(1, 2))
 	of, asExtreme = rounds+1, 1 // counting the data as observed, as the exact count does
 	done := 0
 	for ; done < rounds && !settled(asExtreme, of, full); done++ {
-		clear(sum)
-		var coin uint64
-		for j, row := range tilts {
-			if j%64 == 0 {
-				coin = rng.Uint64()
-			}
-			sign := 1
-			if coin>>(j%64)&1 == 1 {
-				sign = -1
-			}
-			for i, t := range row {
-				sum[i] += sign * int(t)
-			}
+		mirrored := rng.Uint64()
+		s := 0
+		for i := range plain {
+			d := plain[i] - 2*(bits.OnesCount64(up[i]&mirrored)-bits.OnesCount64(down[i]&mirrored))
+			s += d * d
 		}
-		if lopsidedness(sum) >= observed {
+		if s >= observed {
 			asExtreme++
 		}
 	}

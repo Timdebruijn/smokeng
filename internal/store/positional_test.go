@@ -354,8 +354,75 @@ func TestHistoryQueryUsesTheMaskedIndex(t *testing.T) {
 		}
 		plan = append(plan, detail)
 	}
-	if p := strings.Join(plan, "; "); !strings.Contains(p, "measurements_masked") {
+	// The name alone proves nothing: INDEXED BY puts it in the plan whatever
+	// the index looks like. What matters is that the series is sought, not
+	// scanned for, and that the order comes from the index.
+	p := strings.Join(plan, "; ")
+	if !strings.Contains(p, "SEARCH measurements USING INDEX measurements_masked (target_id=? AND agent_id=? AND ts>? AND ts<?)") ||
+		strings.Contains(p, "TEMP B-TREE") || strings.Contains(p, "SCAN") {
 		t.Errorf("plan = %s", p)
+	}
+}
+
+// Protects the rule that a verdict is filed under the interval it is about. A
+// mask that does not decode is not in the history, so the newest interval
+// there is the one before; judging that and storing it under this timestamp
+// would flag an interval on another one's evidence.
+func TestAnIntervalWhoseOwnMaskIsUnreadableIsNotJudged(t *testing.T) {
+	s := detecting(t)
+	ctx := t.Context()
+	for i := range 20 {
+		if err := s.WriteMeasurements(ctx, []Measurement{tail(1, 0, int64(1000+i*60))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := positionalRows(t, s)
+	bad := tail(1, 0, 1000+20*60)
+	bad.LossMask = append(bad.LossMask, 0) // one byte too long for its counts
+	ms := []Measurement{bad}
+	if err := s.WriteMeasurements(ctx, ms); err != nil {
+		t.Fatal(err)
+	}
+	if ms[0].Positional != nil || positionalRows(t, s) != before {
+		t.Errorf("an interval with an unreadable mask was flagged: %+v, %d rows before, %d after",
+			ms[0].Positional, before, positionalRows(t, s))
+	}
+}
+
+// Protects two things about what a caller and a reader are told. A batch that
+// comes in already carrying a flag does not keep it unless this write earned
+// it. And a stored flag whose counts cannot be read leaves the interval
+// readable and unflagged, as a damaged optional series does, rather than
+// failing the whole range.
+func TestStaleAndDamagedFlagsAreNotServed(t *testing.T) {
+	s := detecting(t)
+	ctx := t.Context()
+	stale := lossy(1, 0, 1000, 3)
+	stale.Positional = &PositionalLoss{P: 0.0001, Intervals: 60, Lost: 60, Counts: make([]int, probes)}
+	ms := []Measurement{stale}
+	if err := s.WriteMeasurements(ctx, ms); err != nil {
+		t.Fatal(err)
+	}
+	if ms[0].Positional != nil {
+		t.Errorf("a first interval kept the flag it came in with: %+v", ms[0].Positional)
+	}
+
+	for i := 1; i <= 20; i++ {
+		if err := s.WriteMeasurements(ctx, []Measurement{tail(1, 0, int64(1000+i*60))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	last := int64(1000 + 20*60)
+	if _, err := s.db.Exec("UPDATE positional_loss SET counts = x'01' WHERE ts = ?", last); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.QueryRange(ctx, 1, 0, 0, 1<<40)
+	if err != nil {
+		t.Fatalf("a damaged flag made the range unreadable: %v", err)
+	}
+	if n := len(got); n != 21 || got[n-1].Positional != nil || got[n-2].Positional == nil {
+		t.Errorf("want the damaged flag dropped and its neighbour kept: last %+v, the one before %+v",
+			got[n-1].Positional, got[n-2].Positional)
 	}
 }
 
@@ -398,12 +465,13 @@ func TestAnIntervalIsJudgedByItsPastOnly(t *testing.T) {
 	}
 }
 
-// What a lossy interval costs to write, every row carrying a mask. "tail" is
-// a rate-limited series, flagged on every row once warm, and the worst case for
-// the detector: a flagged window is estimated to the end. "scattered" is
-// ordinary loss, which the detector gives up on after a few rounds.
+// What detection adds to a write, per lossy interval. "tail" is a pattern so
+// strong that the detector settles it on its bound; "partly" loses the last
+// three probes one time in five, three and two, which is flagged by counting
+// every round and is what a partly rate-limited target costs; "scattered" is
+// never flagged and stops counting early.
 func BenchmarkWriteLossyMeasurements(b *testing.B) {
-	for _, kind := range []string{"tail", "scattered"} {
+	for _, kind := range []string{"tail", "partly", "scattered"} {
 		for _, detect := range []bool{false, true} {
 			name := kind + "/detect=off"
 			if detect {
@@ -422,8 +490,21 @@ func BenchmarkWriteLossyMeasurements(b *testing.B) {
 				ts := int64(1000)
 				next := func() Measurement {
 					ts += 60
-					if kind == "tail" {
+					switch kind {
+					case "tail":
 						return tail(1, 0, ts)
+					case "partly":
+						for {
+							var at []int
+							for k, p := range []float64{0.2, 0.35, 0.5} {
+								if rng.Float64() < p {
+									at = append(at, probes-3+k)
+								}
+							}
+							if len(at) > 0 {
+								return lossy(1, 0, ts, at...)
+							}
+						}
 					}
 					a := rng.IntN(probes)
 					return lossy(1, 0, ts, a, (a+1+rng.IntN(probes-1))%probes)

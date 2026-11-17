@@ -717,6 +717,12 @@ func detectPositional(ctx context.Context, history *sql.Stmt, m *Measurement) (*
 		return nil, err
 	}
 	rows.Close()
+	// The window has to end at m. If m's own mask did not decode it is not in
+	// the list, and judging what is there would be judging the interval before
+	// it and filing the verdict under this one.
+	if len(newestFirst) == 0 || newestFirst[0].TS != m.TS {
+		return nil, nil
+	}
 	slices.Reverse(newestFirst)
 	v := losspattern.Test(newestFirst, false)
 	if !v.Flagged {

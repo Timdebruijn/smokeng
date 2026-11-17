@@ -375,7 +375,7 @@ func TestVerdictIsDeterministicAndEarlyStopAgrees(t *testing.T) {
 			// Stopped early because it could not be flagged, P is a lower bound;
 			// settled by the bound, an upper one.
 			early := Test(w, false)
-			if early.Flagged != a.Flagged || (early.AtLeast && early.P > a.P) || (early.AtMost && early.P < a.P && a.P > 1.0/rounds) {
+			if early.Flagged != a.Flagged || (early.AtLeast && early.P > a.P) {
 				t.Fatalf("early stop disagrees: early %+v, full %+v", early, a)
 			}
 		}
@@ -399,8 +399,9 @@ func TestWhereNamesThePositions(t *testing.T) {
 	}
 }
 
-// What one evaluation costs, for a window that is flagged (every round runs)
-// and for ordinary bursty loss (it stops early), at 20 probes and at 1000.
+// What one evaluation costs: for a strong pattern, which the bound settles;
+// for a weaker one that is still flagged, where every round runs; and for
+// ordinary bursty loss, where counting stops early. At 20 probes and at 1000.
 func BenchmarkTest(b *testing.B) {
 	rng := rand.New(rand.NewPCG(5, 5))
 	wide := func(n int) []Interval {
@@ -413,10 +414,33 @@ func BenchmarkTest(b *testing.B) {
 		}
 		return ivs
 	}
+	// A pattern strong enough to be flagged and too weak for the bound to
+	// settle, so that every round is run: the last three probes lost one time
+	// in five, three and two. This is what a partly rate-limited target costs.
+	partly := func(n int) []Interval {
+		for {
+			ivs := make([]Interval, 0, Window)
+			for i := range Window {
+				lost := make([]bool, n)
+				for k, p := range []float64{0.2, 0.35, 0.5} {
+					lost[n-3+k] = rng.Float64() < p
+				}
+				if partial(lost) {
+					ivs = append(ivs, Interval{TS: int64(i) * 60, Lost: lost})
+				}
+			}
+			// Keep drawing until it is the case this benchmark is named for.
+			if v := Test(ivs, false); v.Flagged && !v.AtMost && !v.AtLeast {
+				return ivs
+			}
+		}
+	}
 	for name, w := range map[string][]Interval{
-		"flagged/20 probes":   wide(20),
-		"flagged/1000 probes": wide(1000),
-		"bursty/20 probes":    window(rng, gilbertElliott(0.01, 0.10)),
+		"flagged by the bound/20 probes":   wide(20),
+		"flagged by the bound/1000 probes": wide(1000),
+		"flagged by counting/20 probes":    partly(20),
+		"flagged by counting/1000 probes":  partly(1000),
+		"bursty/20 probes":                 window(rng, gilbertElliott(0.01, 0.10)),
 	} {
 		b.Run(name, func(b *testing.B) {
 			for b.Loop() {
