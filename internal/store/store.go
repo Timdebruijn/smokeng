@@ -60,7 +60,9 @@ type Measurement struct {
 
 // PositionalLoss is the detector's finding for the window that ends at an
 // interval: its p-value, how many intervals and lost probes the window held,
-// and per send position how many of those intervals lost that probe.
+// and per send position how many of those intervals lost that probe. For a
+// strong pattern, which the detector settles without counting, P is an upper
+// bound on the p-value rather than an estimate of it.
 type PositionalLoss struct {
 	P         float64
 	Intervals int

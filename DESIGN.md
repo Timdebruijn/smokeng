@@ -360,7 +360,8 @@ be all zeros or all ones, and the counts already say so). It is not served to th
 
 **Positional loss.** `positional_loss` (schema v26) has one row per interval that the
 master found to lose probes at fixed places in the send order, keyed like `measurements`:
-the test's p-value for the window ending at that interval, how many intervals and lost
+the test's p-value for the window ending at that interval (an upper bound on it for a
+strong pattern, which is settled without counting), how many intervals and lost
 probes the window held, and per send position how many of them lost it (one uvarint each).
 No row means not flagged. The test itself is `internal/losspattern`; it is not restated here.
 
