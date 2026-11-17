@@ -213,6 +213,8 @@ const EXPECTED_INTS: readonly (readonly [string, 'int' | 'list', 1 | 2 | 4, bool
   ['samples', 'list', 4, false],
   ['icmp_error', 'int', 2, false],
   ['send_error', 'int', 1, false],
+  ['loss_positions', 'list', 2, false],
+  ['loss_window', 'int', 1, false],
   ['ipdv_send', 'list', 4, true],
   ['ipdv_receive', 'list', 4, true],
   ['server_processing', 'list', 4, true],
@@ -251,7 +253,11 @@ function readInt(body: Uint8Array, view: DataView, off: number, len: number, row
  * with the width the server writes it in (EXPECTED_INTS): one that is missing,
  * renamed, of another kind or of another width would otherwise read as "nothing
  * was refused" or "this target does not measure it", or as other values. The
- * per-packet series are null on a row the server has no measurement for. A column
+ * per-packet series are null on a row the server has no measurement for, and so
+ * are loss_positions and loss_window on an interval that is not flagged. A column
+ * missing from the response is a refusal, as for every other pinned column: the
+ * page is embedded in the binary that serves it, so the two are one version, and
+ * a missing column would read as "nothing was flagged". A column
  * in the stream that is none of those is skipped, but its type has to be one the
  * server writes.
  */
@@ -406,6 +412,7 @@ const POOLED_INTS: readonly (readonly [string, 'int' | 'list', 1 | 2 | 4 | 8, bo
   ['received', 'int', 8, false],
   ['flags', 'int', 1, false],
   ['flagged', 'int', 4, false],
+  ['positional', 'int', 4, false],
   ['quantiles', 'list', 4, false],
   ['ipdv_send', 'list', 4, true],
   ['ipdv_receive', 'list', 4, true],
@@ -413,7 +420,7 @@ const POOLED_INTS: readonly (readonly [string, 'int' | 'list', 1 | 2 | 4 | 8, bo
 ]
 
 /** The columns of a pooled read that every row has; the extra series may be null. */
-const POOLED_REQUIRED = ['rounds', 'sent', 'received', 'flags', 'flagged', 'quantiles']
+const POOLED_REQUIRED = ['rounds', 'sent', 'received', 'flags', 'flagged', 'positional', 'quantiles']
 
 /**
  * The column index of each expected integer column, checked for width and
@@ -484,6 +491,7 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
   const iSamples = at.samples
   const iIcmp = at.icmp_error
   const iSend = at.send_error
+  const iWindow = at.loss_window
 
   const ts = new Float64Array(rows)
   const sent = new Float64Array(rows)
@@ -491,6 +499,7 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
   const flags = new Uint8Array(rows)
   const icmpErrors: (number | null)[] = new Array(rows)
   const sendErrors: (number | null)[] = new Array(rows)
+  const lossWindows: (number | null)[] = new Array(rows)
 
   // A null in a column every interval has is not a value: read as the zero
   // sitting in its slot, a null `received` would be a hundred percent loss.
@@ -505,23 +514,31 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
       flags[r] = ch[iFlags].int!(i)
       icmpErrors[r] = ch[iIcmp].valid(i) ? ch[iIcmp].int!(i) : null
       sendErrors[r] = ch[iSend].valid(i) ? ch[iSend].int!(i) : null
+      lossWindows[r] = ch[iWindow].valid(i) ? ch[iWindow].int!(i) : null
     }
   }
 
   const samples = lists(cols, chunks, rows, iSamples)
+  // Null is "not flagged", and an empty list is flagged with no single position
+  // standing out: the two must not collapse, so this is not left to the extra
+  // series' rule of dropping a column that is null throughout.
+  const lp = lists(cols, chunks, rows, at.loss_positions)
+  const lossPositions: (number[] | null)[] = Array.from({ length: rows }, (_, i) =>
+    lp.measured[i] ? Array.from(lp.values.subarray(lp.offsets[i], lp.offsets[i + 1])) : null,
+  )
   // A series that is null on every row means the target measures nothing of the
   // sort; it is left out, since an empty graph would invite the reader to
   // conclude the jitter was zero.
   const extra: Record<string, ExtraSeries> = {}
   for (const [name, kind] of EXPECTED_INTS) {
-    if (kind !== 'list' || name === 'samples') continue
+    if (kind !== 'list' || name === 'samples' || name === 'loss_positions') continue
     const e = lists(cols, chunks, rows, at[name])
     if (e.measured.some((m) => m === 1)) extra[name] = { offsets: e.offsets, values: e.values as Int32Array, measured: e.measured }
   }
   return {
     ts, sent, received, flags,
     offsets: samples.offsets, values: samples.values as Uint32Array,
-    icmpErrors, sendErrors, extra,
+    icmpErrors, sendErrors, lossPositions, lossWindows, extra,
   }
 }
 
@@ -545,6 +562,7 @@ function assemblePooled(cols: ColSpec[], chunks: Chunk[][], rows: number): Serie
   const received = new Float64Array(rows)
   const flags = new Uint8Array(rows)
   const flagged = new Float64Array(rows)
+  const positional = new Float64Array(rows)
   let r = 0
   for (const ch of chunks) {
     for (let i = 0; i < ch[iTs].rows; i++, r++) {
@@ -556,6 +574,7 @@ function assemblePooled(cols: ColSpec[], chunks: Chunk[][], rows: number): Serie
       received[r] = ch[at.received].int!(i)
       flags[r] = ch[at.flags].int!(i)
       flagged[r] = ch[at.flagged].int!(i)
+      positional[r] = ch[at.positional].int!(i)
     }
   }
   const q = lists(cols, chunks, rows, at.quantiles)
@@ -571,7 +590,9 @@ function assemblePooled(cols: ColSpec[], chunks: Chunk[][], rows: number): Serie
     offsets: q.offsets, values: q.values as Uint32Array,
     icmpErrors: new Array(rows).fill(null),
     sendErrors: new Array(rows).fill(null),
+    lossPositions: new Array(rows).fill(null),
+    lossWindows: new Array(rows).fill(null),
     extra,
-    pooled: { ends, rounds, flagged },
+    pooled: { ends, rounds, flagged, positional },
   }
 }

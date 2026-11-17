@@ -249,6 +249,23 @@ The two modes spend that load differently:
 - A burst must fit in its interval: `pings_per_interval x burst_gap_ms` must be less than
   `interval_s x 1000`.
 
+## Rate limiting, and burst or spread
+
+A target, its CPE or a router's control plane may rate-limit the ICMP it answers: it replies to
+the first probes of a burst and drops the rest. On a graph that reads as loss. DNS resolvers with
+response rate limiting behave the same way.
+
+`probe_mode = "burst"`, the default, is what exposes this and also what triggers it: 20 probes
+10 ms apart arrive faster than a limiter lets through. `spread` sends the same probes across the
+interval and usually stays under the limit. The price is that the interval no longer measures the
+path at one instant. smokeng does not change the mode by itself; you do, per target.
+
+smokeng marks intervals whose loss sits at fixed send positions with the `positional loss` badge,
+and `smokeng diag loss-pattern` shows the evidence. The badge says the loss does not fit loss that
+falls where it happens to, not what causes it, and it does not touch the loss figures or the alert
+rules. What the detection needs and cannot see:
+[Troubleshooting](troubleshooting.md#loss-on-a-graph-that-might-be-rate-limiting).
+
 ## Internal certificates
 
 Most `https` targets worth watching are internal, and an internal certificate is signed by a CA

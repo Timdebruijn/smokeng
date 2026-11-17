@@ -20,6 +20,12 @@
  "send_error": [
   2
  ],
+ "loss_positions": [
+  null
+ ],
+ "loss_window": [
+  null
+ ],
  "series": {
   "ipdv_receive": [
    null

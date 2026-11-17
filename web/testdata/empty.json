@@ -6,6 +6,8 @@
  "samples": [],
  "icmp_error": [],
  "send_error": [],
+ "loss_positions": [],
+ "loss_window": [],
  "series": {
   "ipdv_receive": [],
   "ipdv_send": [],

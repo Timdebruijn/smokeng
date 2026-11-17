@@ -465,6 +465,15 @@ export interface Series {
    */
   sendErrors: (number | null)[]
   /**
+   * Per row: null unless the master found this series to lose its probes at
+   * fixed places in the send order, as of this interval. Then the send positions
+   * (from 1) that lost clearly more than their share, which is an empty list
+   * when the loss leans to one end without a position standing out.
+   */
+  lossPositions: (number[] | null)[]
+  /** Per row, with lossPositions: how many intervals the finding rests on. */
+  lossWindows: (number | null)[]
+  /**
    * The extra per-packet distributions measured beside the round trip, keyed
    * by series name. Absent from the map when no interval in the window carried
    * one, which is how "this target does not measure it" reads.
@@ -485,6 +494,8 @@ export interface PooledColumns {
   rounds: Float64Array
   /** Intervals in the column that carried any quality flag. */
   flagged: Float64Array
+  /** Intervals in the column flagged as losing probes at fixed send positions. */
+  positional: Float64Array
 }
 
 /**

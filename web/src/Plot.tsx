@@ -8,7 +8,7 @@ import {
   type Target,
 } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
-import { fmtLoss, fmtUs } from './format'
+import { fmtLoss, fmtUs, positionalTitle } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt } from './layout'
 import { useRenderWorker, useWidth, ErrorText } from './shared'
 
@@ -81,6 +81,13 @@ const FLAGS: { bit: number; label: string; title: string }[] = [
     title: 'These probes never went out. The reason beside this says which — and whether the cause was here or at the far end.',
   },
 ]
+/**
+ * One badge beside a plot. Most say how a measurement was weakened. One with
+ * aboutTarget says something the measurement found out about the target
+ * instead, and so does not count against how cleanly it was measured.
+ */
+type Badge = { label: string; title: string; count: number; aboutTarget?: boolean }
+
 const FLAG_ICMP_ERROR = 1 << 4
 const FLAG_SEND_FAILED = 1 << 6
 
@@ -101,15 +108,26 @@ function tally(flags: Uint8Array, codes: (number | null)[], bit: number): [numbe
  * was: so the labels are shown without counts, and the per-interval detail is
  * what zooming in is for.
  */
-function pooledFlags(flags: Uint8Array): { label: string; title: string; count: number }[] {
+function pooledFlags(flags: Uint8Array, positional: Float64Array): Badge[] {
   let any = 0
   for (let i = 0; i < flags.length; i++) any |= flags[i]
-  const out = FLAGS.filter((f) => any & f.bit).map((f) => ({ label: f.label, title: f.title, count: 0 }))
+  const out: Badge[] = FLAGS.filter((f) => any & f.bit).map((f) => ({ label: f.label, title: f.title, count: 0 }))
   if (any & FLAG_ICMP_ERROR) {
     out.push({
       label: 'ICMP errors',
       title: 'Probes were refused with an ICMP error rather than going unanswered. Zoom in to see which.',
       count: 0,
+    })
+  }
+  // Not one of the flag bits: the master derives it from the order probes were
+  // sent in, so it has its own column and is added here by hand.
+  if (positional.some((n) => n > 0)) {
+    out.push({
+      label: 'positional loss',
+      title:
+        'Some intervals here lost their probes at fixed places in the send order, which is consistent with rate limiting by the target. Zoom in to see which positions.',
+      count: 0,
+      aboutTarget: true,
     })
   }
   return out
@@ -119,8 +137,10 @@ function flagCounts(
   flags: Uint8Array,
   icmpErrors: (number | null)[],
   sendErrors: (number | null)[],
-): { label: string; title: string; count: number }[] {
-  const out = FLAGS.map((f) => {
+  lossPositions: (number[] | null)[],
+  lossWindows: (number | null)[],
+): Badge[] {
+  const out: Badge[] = FLAGS.map((f) => {
     let count = 0
     for (let i = 0; i < flags.length; i++) if (flags[i] & f.bit) count++
     return { label: f.label, title: f.title, count }
@@ -145,6 +165,26 @@ function flagCounts(
       label: sendReasonName(reason),
       title: 'Why probes could not be put on the wire, as opposed to going unanswered.',
       count,
+    })
+  }
+
+  // Loss at fixed send positions, which is not a bit of the flags either. The
+  // tooltip describes the most recent finding: the window it rests on slides, so
+  // the newest is the one that still describes the series.
+  let count = 0
+  let last = -1
+  for (let i = 0; i < lossPositions.length; i++) {
+    if (lossPositions[i] !== null) {
+      count++
+      last = i
+    }
+  }
+  if (count > 0) {
+    out.push({
+      label: 'positional loss',
+      title: positionalTitle(lossPositions[last]!, lossWindows[last] ?? 0),
+      count,
+      aboutTarget: true,
     })
   }
   return out
@@ -176,7 +216,7 @@ export default function Plot({
   const draggingRef = useRef(false)
   const rangeRef = useRef({ from, to })
   rangeRef.current = { from, to }
-  const [quality, setQuality] = useState<{ label: string; title: string; count: number }[]>([])
+  const [quality, setQuality] = useState<Badge[]>([])
   const [rowCount, setRowCount] = useState(0)
   // Set only when the measurements fetch itself failed — not when it
   // succeeded with zero rows, which is a legitimate (and different) thing to
@@ -346,7 +386,11 @@ export default function Plot({
           rows.loss[i] = series.sent[i] > 0 ? 1 - series.received[i] / series.sent[i] : NaN
         }
         rowsRef.current = rows
-        setQuality(series.pooled ? pooledFlags(series.flags) : flagCounts(series.flags, series.icmpErrors, series.sendErrors))
+        setQuality(
+          series.pooled
+            ? pooledFlags(series.flags, series.pooled.positional)
+            : flagCounts(series.flags, series.icmpErrors, series.sendErrors, series.lossPositions, series.lossWindows),
+        )
         // Counts are per interval; a pooled read has columns, so none are shown.
         setRowCount(series.pooled ? 0 : n)
         workerRef.current.postMessage(
@@ -438,7 +482,7 @@ export default function Plot({
   return (
     <section className="card plot">
       <div className="plot-head">
-        <span className="dot" style={{ background: dotColour(quality.length) }} />
+        <span className="dot" style={{ background: dotColour(quality.filter((q) => !q.aboutTarget).length) }} />
         {onOpenDetail ? (
           <button className="plot-title link-title" onClick={onOpenDetail}>
             {target.title ?? target.path}
@@ -484,7 +528,8 @@ export default function Plot({
 
 // The status dot beside a plot's name. It reports whether smokeng could measure
 // cleanly, not whether the network is fast: a widened band with a flag on it
-// has an attributable cause, and that is what the colour is for.
+// has an attributable cause, and that is what the colour is for. A badge about
+// the target (aboutTarget) is not counted: the measurement it sits on was clean.
 function dotColour(flagged: number): string {
   return flagged === 0 ? 'var(--good)' : 'var(--warn)'
 }

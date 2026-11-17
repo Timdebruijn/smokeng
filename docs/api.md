@@ -125,6 +125,8 @@ An Arrow IPC stream (`application/vnd.apache.arrow.stream`), not JSON.
 | `samples` | list of uint32 | Round-trip times in microseconds, sorted ascending. |
 | `icmp_error` | uint16, nullable | ICMP type and code (`type<<8 \| code`) behind the failures. |
 | `send_error` | uint8, nullable | Why the local side could not send. |
+| `loss_positions` | list of uint16, nullable | Set when the master found the series to lose its probes at fixed places in the send order. The send positions, counted from 1, that lost clearly more than their share; an empty list when the loss leans to one end without a single position standing out. Null when the interval is not flagged. |
+| `loss_window` | uint8, nullable | With `loss_positions`: how many intervals the finding rests on, at most 60. |
 | `ipdv_send`, `ipdv_receive`, `server_processing` | list of int32, nullable | irtt series. Null means not measured, not zero. |
 
 ```bash
@@ -149,11 +151,12 @@ none is absent, not an empty row. Tell the two shapes apart by the fields: only 
 | `sent`, `received` | uint64 | Packets sent and answered, summed over the column. Loss is `1 - received/sent`. |
 | `flags` | uint8 | Every quality bit any interval in the column carried. |
 | `flagged` | uint32 | How many intervals carried one. |
+| `positional` | uint32 | How many intervals were flagged as losing probes at fixed send positions (`loss_positions` in a raw read). Not a quality bit, so not counted in `flagged`. |
 | `quantiles` | list of uint32 | The pooled round-trip times in microseconds, sorted ascending: all of them when there are at most 256, otherwise 256 order statistics at evenly spaced ranks, each standing for an equal share of the replies. Every value is a measured sample. |
 | `ipdv_send`, `ipdv_receive`, `server_processing` | list of int32, nullable | The irtt series, pooled the same way. Null where no interval in the column measured the series; empty where intervals measured it with nothing to give. |
 
 Nothing is averaged and nothing is stored: the column is pooled from the stored intervals when
-it is read. Per-interval details (`icmp_error`, `send_error`) are not in a pooled read. A read is
+it is read. Per-interval details (`icmp_error`, `send_error`, `loss_positions`) are not in a pooled read. A read is
 refused with `400` when it would walk more than 10 million rows — intervals plus their irtt series
 rows; thirty days of a one-second series — or one column would pool more than 20 million samples;
 ask for a shorter window, or more columns.

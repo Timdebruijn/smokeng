@@ -13,6 +13,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 
+	"github.com/timdebruijn/smokeng/internal/losspattern"
 	"github.com/timdebruijn/smokeng/internal/store"
 )
 
@@ -35,6 +36,13 @@ var measurementsSchema = arrow.NewSchema([]arrow.Field{
 	// difference between a far end refusing the traffic and this prober never
 	// getting it out.
 	{Name: "send_error", Type: arrow.PrimitiveTypes.Uint8, Nullable: true},
+	// Set when the master found this series to lose its probes at fixed places
+	// in the send order (internal/losspattern), null otherwise. loss_positions
+	// are the send positions, from 1, that lost clearly more than their share:
+	// empty for a lopsided profile no single position explains, which is not the
+	// same as null. loss_window is how many intervals the finding rests on.
+	{Name: "loss_positions", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint16), Nullable: true},
+	{Name: "loss_window", Type: arrow.PrimitiveTypes.Uint8, Nullable: true},
 	// The extra per-packet series, one nullable column each, in the same units
 	// and the same sorted order as samples. Null is not zero: it means this
 	// interval has no such measurement — the probe does not produce one, or the
@@ -58,6 +66,10 @@ var pooledSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "received", Type: arrow.PrimitiveTypes.Uint64},
 	{Name: "flags", Type: arrow.PrimitiveTypes.Uint8},
 	{Name: "flagged", Type: arrow.PrimitiveTypes.Uint32},
+	// How many of the column's intervals lost their probes at fixed send
+	// positions (the loss_positions column of a raw read says which). It is not
+	// a quality flag, so these are counted here and not in flagged.
+	{Name: "positional", Type: arrow.PrimitiveTypes.Uint32},
 	{Name: "quantiles", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint32)},
 	// The extra series pooled the same way, null where no interval in the
 	// column measured them.
@@ -151,12 +163,13 @@ func writePooledArrow(w io.Writer, cols []store.Column, batchRows int) {
 	recvB := rb.Field(4).(*array.Uint64Builder)
 	flagsB := rb.Field(5).(*array.Uint8Builder)
 	flaggedB := rb.Field(6).(*array.Uint32Builder)
-	listB := rb.Field(7).(*array.ListBuilder)
+	positionalB := rb.Field(7).(*array.Uint32Builder)
+	listB := rb.Field(8).(*array.ListBuilder)
 	valB := listB.ValueBuilder().(*array.Uint32Builder)
 	seriesB := make([]*array.ListBuilder, len(store.KnownSeries))
 	seriesV := make([]*array.Int32Builder, len(store.KnownSeries))
 	for i := range store.KnownSeries {
-		seriesB[i] = rb.Field(8 + i).(*array.ListBuilder)
+		seriesB[i] = rb.Field(9 + i).(*array.ListBuilder)
 		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
 	}
 
@@ -173,6 +186,7 @@ func writePooledArrow(w io.Writer, cols []store.Column, batchRows int) {
 		recvB.Append(uint64(c.Received))
 		flagsB.Append(c.Flags)
 		flaggedB.Append(uint32(c.Flagged))
+		positionalB.Append(uint32(c.Positional))
 		listB.Append(true)
 		valB.AppendValues(c.Quantiles, nil)
 		for j, name := range store.KnownSeries {
@@ -212,10 +226,13 @@ func writeMeasurementsArrow(w io.Writer, ms []store.Measurement, batchRows int) 
 	valB := listB.ValueBuilder().(*array.Uint32Builder)
 	icmpB := rb.Field(5).(*array.Uint16Builder)
 	sendErrB := rb.Field(6).(*array.Uint8Builder)
+	posB := rb.Field(7).(*array.ListBuilder)
+	posV := posB.ValueBuilder().(*array.Uint16Builder)
+	windowB := rb.Field(8).(*array.Uint8Builder)
 	seriesB := make([]*array.ListBuilder, len(store.KnownSeries))
 	seriesV := make([]*array.Int32Builder, len(store.KnownSeries))
 	for i := range store.KnownSeries {
-		seriesB[i] = rb.Field(7 + i).(*array.ListBuilder)
+		seriesB[i] = rb.Field(9 + i).(*array.ListBuilder)
 		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
 	}
 
@@ -240,6 +257,16 @@ func writeMeasurementsArrow(w io.Writer, ms []store.Measurement, batchRows int) 
 			sendErrB.Append(*m.SendErr)
 		} else {
 			sendErrB.AppendNull()
+		}
+		if p := m.Positional; p != nil {
+			posB.Append(true)
+			for _, at := range losspattern.Positions(p.Counts, p.Lost) {
+				posV.Append(uint16(at))
+			}
+			windowB.Append(uint8(p.Intervals))
+		} else {
+			posB.AppendNull()
+			windowB.AppendNull()
 		}
 		for j, name := range store.KnownSeries {
 			vals, ok := m.Series[name]
