@@ -24,6 +24,20 @@ import (
 
 const lossMaskSpread = 1
 
+// LossMaskRecordable reports whether an interval with these flags and counts
+// may carry a mask at all. It is the one statement of the rule, for the prober
+// that builds a mask and for the master that is handed one by an agent, so a
+// stored mask always means the same thing: partial loss, at positions nothing
+// of this program's own doing disturbed.
+//
+// The four flags each mean some of the loss is smokeng's, at a position that
+// is not known. With no loss or all of it the mask is all zeros or all ones
+// and follows from the counts.
+func LossMaskRecordable(flags uint8, sent, received int) bool {
+	const untrusted = FlagSendFailed | FlagTruncated | FlagSocketOverflow | FlagClockStep
+	return flags&untrusted == 0 && received > 0 && received < sent
+}
+
 // EncodeLossMask builds the mask for probes in send order, lost[i] being true
 // when probe i got no valid reply.
 func EncodeLossMask(spread bool, lost []bool) []byte {

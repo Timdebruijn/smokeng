@@ -887,8 +887,9 @@ to a target assigned to this agent and not be timestamped later than the skew al
 A row that fails those last two, or that claims more replies than probes, is dropped and
 the rest accepted — a 400 makes the agent discard its whole batch, so one bad row must not
 cost the rest. The batch carries `loss_mask` (§3.4) as an optional nullable `Binary` column
-beside `send_error`; the master checks each mask against its row's `sent` and `received`
-and drops one that does not fit, keeping the row and logging one line per batch.
+beside `send_error`; the master checks each mask against its row's `sent` and `received`,
+and against the same rule the prober applies for which intervals may carry one, and drops a
+mask that fails either, keeping the row and logging one line per batch.
 
 **Replay is harmless because ingest keeps what is stored.** The nonce cache is in-memory
 and empties on master restart; the timestamp window alone would then admit a captured

@@ -331,9 +331,15 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 			// own counts. A bad one is dropped and the row kept: refusing the
 			// batch is a 400, the agent discards a batch it was refused, and
 			// that would lose the measurements for the sake of an annotation.
+			//
+			// Fitting the counts is not enough. An honest agent sends a mask only
+			// for an interval that may carry one, and holding every agent to that
+			// is what lets a reader take a stored mask to mean partial loss at
+			// trusted positions, whoever measured it.
 			if masks != nil && !masks.IsNull(i) {
 				mask := masks.Value(i)
-				if _, _, err := store.DecodeLossMask(mask, m.Sent, m.Received); err != nil {
+				_, _, err := store.DecodeLossMask(mask, m.Sent, m.Received)
+				if err != nil || !store.LossMaskRecordable(m.Flags, m.Sent, m.Received) {
 					badMasks++
 				} else {
 					m.LossMask = slices.Clone(mask)

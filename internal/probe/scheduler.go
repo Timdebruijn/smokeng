@@ -431,18 +431,15 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 // Positions are only trusted when every configured one was attempted and
 // counted, so lost[i] is the i-th probe sent. An unsent or truncated-away
 // position would shift what the bits mean. irtt is left out because its result
-// order is assumed, not verified, to be the send order. The four flags each
-// mean some of the loss is this process's doing, at a position that is not
-// known. With no loss or all of it the mask is all zeros or all ones and
-// follows from the counts, so it is not stored.
+// order is assumed, not verified, to be the send order. The rest of the rule,
+// which flags and which counts rule a mask out, is store.LossMaskRecordable.
 func lossMask(spec TargetSpec, m store.Measurement, lost []bool) []byte {
 	switch spec.ProbeType {
 	case "", "icmp", "dns", "tcp", "http", "https":
 	default:
 		return nil
 	}
-	const untrusted = store.FlagSendFailed | store.FlagTruncated | store.FlagSocketOverflow | store.FlagClockStep
-	if m.Sent != len(lost) || m.Flags&untrusted != 0 || m.Received == 0 || m.Received == m.Sent {
+	if m.Sent != len(lost) || !store.LossMaskRecordable(m.Flags, m.Sent, m.Received) {
 		return nil
 	}
 	return store.EncodeLossMask(spec.Mode == "spread", lost)

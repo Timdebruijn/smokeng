@@ -105,7 +105,13 @@ func TestDecodeBatchDropsInvalidLossMask(t *testing.T) {
 		return store.Measurement{TargetID: id, TS: 100, Sent: 4, Received: 3,
 			Samples: []uint32{1, 2, 3}, LossMask: mask}
 	}
-	in := []store.Measurement{row(1, good), row(2, badCount), row(3, badLen), row(4, badHeader)}
+	// Well formed, but on an interval that may not carry a mask: one with no
+	// loss, and one whose loss is partly the agent's own dropped replies.
+	noLoss := store.Measurement{TargetID: 5, TS: 100, Sent: 4, Received: 4,
+		Samples: []uint32{1, 2, 3, 4}, LossMask: store.EncodeLossMask(false, make([]bool, 4))}
+	overflowed := row(6, good)
+	overflowed.Flags = store.FlagSocketOverflow
+	in := []store.Measurement{row(1, good), row(2, badCount), row(3, badLen), row(4, badHeader), noLoss, overflowed}
 
 	var logged bytes.Buffer
 	log.SetOutput(&logged)
@@ -115,8 +121,8 @@ func TestDecodeBatchDropsInvalidLossMask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a bad mask refused the batch: %v", err)
 	}
-	if len(out) != 4 {
-		t.Fatalf("got %d rows, want all 4 kept", len(out))
+	if len(out) != 6 {
+		t.Fatalf("got %d rows, want all 6 kept", len(out))
 	}
 	if !reflect.DeepEqual(out[0].LossMask, good) {
 		t.Errorf("the valid mask was lost: %v", out[0].LossMask)
@@ -126,7 +132,7 @@ func TestDecodeBatchDropsInvalidLossMask(t *testing.T) {
 			t.Errorf("target %d kept an invalid mask %v", m.TargetID, m.LossMask)
 		}
 	}
-	if n := strings.Count(logged.String(), "loss mask"); n != 1 || !strings.Contains(logged.String(), "3 loss mask") {
-		t.Errorf("want one log line counting 3 dropped masks, got:\n%s", logged.String())
+	if n := strings.Count(logged.String(), "loss mask"); n != 1 || !strings.Contains(logged.String(), "5 loss mask") {
+		t.Errorf("want one log line counting 5 dropped masks, got:\n%s", logged.String())
 	}
 }
