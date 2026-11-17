@@ -60,6 +60,10 @@ func main() {
 		if err := alertsCmd(os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}
+	case "diag":
+		if err := diagCmd(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 	case "version":
 		fmt.Printf("smokeng %s %s/%s (%s)\n",
 			version, runtime.GOOS, runtime.GOARCH, runtime.Version())
@@ -83,6 +87,7 @@ commands:
   agent key [--key PATH]                 create the agent's key if absent, print its public half
   agent run --master URL --agent-id ID   run as a remote measurement node
   alerts replay --rule N --since 30d     show when a rule would have fired over stored history
+  diag loss-pattern --target P --since 24h   show whether a target's loss sits at fixed places in the send order
   version                                print version`)
 }
 
