@@ -122,6 +122,7 @@ var notes = []string{
 	"The live engine re-warms shape baselines after every restart; the replay does not know about restarts.",
 	"Gap detection uses each target's current interval_s, which may differ from what it was when the data was measured.",
 	"Silences that were deleted are not known.",
+	"An interval that reached the master after a later one of its series was not evaluated live; the replay evaluates it in its place.",
 }
 
 // ruleRun is one rule's progress through one series.

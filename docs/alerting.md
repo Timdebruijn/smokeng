@@ -217,7 +217,7 @@ rule slow-p95 on /Production: p95 > 80ms for 5 intervals
 
 Notes:
   - These are rule transitions, not notifications: Alertmanager grouping, repeats and routing are not simulated.
-  (four more notes follow)
+  (five more notes follow)
 ```
 
 Each line under a series is one firing period: when the rule fired (the interval that
@@ -239,6 +239,9 @@ with notes, which say what the output is not:
 - **Gap detection uses each target's current `interval_s`**, which may differ from what it was
   when the data was measured.
 - **Deleted silences are not known.**
+- **Late intervals are replayed in order.** The live engine does not evaluate an interval that
+  arrives after a later one of the same series (an agent whose clock stepped back); the replay
+  reads history in time order and evaluates it where it belongs.
 
 How the rule applies is decided as after an import. A rule from the file replaces the stored
 rule of the same name on the same node, keeping its captured golden baseline and its
