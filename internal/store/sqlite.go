@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 
@@ -90,16 +91,10 @@ var _ Store = (*SQLite)(nil)
 
 // Open opens (creating and migrating if needed) the database at path.
 func Open(path string) (*SQLite, error) {
-	// modernc.org/sqlite takes a URI DSN; percent-encode the characters that
-	// would otherwise break URI parsing of a filesystem path.
-	// "?" and "#" as well: a path with either was cut there as a URI, so
-	// "a?b.db" opened a database called "a" with none of the pragmas, and
-	// "a#b.db" the same, silently, in rollback-journal mode.
 	if err := secureDatabase(path); err != nil {
 		return nil, err
 	}
-	esc := strings.NewReplacer("%", "%25", " ", "%20", "?", "%3F", "#", "%23").Replace(path)
-	dsn := "file:" + esc +
+	dsn := "file:" + escapePath(path) +
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=synchronous(NORMAL)" +
 		"&_pragma=foreign_keys(1)" +
@@ -135,6 +130,48 @@ func Open(path string) (*SQLite, error) {
 		return nil, err
 	}
 	secureSidecars(path)
+	return s, nil
+}
+
+// escapePath makes a filesystem path safe inside a URI DSN, which is what
+// modernc.org/sqlite takes: the characters that would otherwise break URI
+// parsing are percent-encoded.
+// "?" and "#" as well: a path with either was cut there as a URI, so
+// "a?b.db" opened a database called "a" with none of the pragmas, and
+// "a#b.db" the same, silently, in rollback-journal mode.
+func escapePath(path string) string {
+	return strings.NewReplacer("%", "%25", " ", "%20", "?", "%3F", "#", "%23").Replace(path)
+}
+
+// OpenReadOnly opens an existing database for reading only, for a command that
+// runs next to a live server. It does not migrate, create the file or touch its
+// permissions: a second process doing any of that to a database the server owns
+// is how a read-only tool ends up changing things, so a schema that is not the
+// one this binary knows is refused instead of upgraded.
+func OpenReadOnly(path string) (*SQLite, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("store: open %s read-only: %w", path, err)
+	}
+	// No journal_mode pragma: setting WAL is a write, and the server has
+	// already put the file in it.
+	dsn := "file:" + escapePath(path) +
+		"?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(10000)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(4)
+	s := &SQLite{db: db, treeWrites: make(chan struct{}, 1)}
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: read schema version of %s: %w", path, err)
+	}
+	if version != len(migrations) {
+		db.Close()
+		return nil, fmt.Errorf("store: %s is at schema v%d, this binary expects v%d: "+
+			"run this command with the same smokeng version as the server", path, version, len(migrations))
+	}
 	return s, nil
 }
 
