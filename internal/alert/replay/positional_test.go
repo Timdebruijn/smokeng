@@ -83,21 +83,7 @@ func TestReplayFollowsThePositionalLossPolicy(t *testing.T) {
 	}
 
 	e.save(e.rule(e.prod, "loss", alert.MetricLoss, alert.OpGreater, limit, 2, 2))
-	setPolicy := func(v string) {
-		ts, err := e.st.ListTargets(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Only the group is changed; the root keeps its default.
-		for _, x := range ts {
-			if x.ID == e.prod {
-				x.Settings.PositionalLoss = &v
-				if err := e.st.UpsertTarget(ctx, &x); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-	}
+	setPolicy := func(v string) { setPositionalPolicy(t, e, v) }
 	type result struct{ episodes, seconds int }
 	replayOf := func(target string) result {
 		rep := run(t, e.st, replay.Options{RuleName: "loss", From: at(0), To: at(n), Target: target})
@@ -124,5 +110,72 @@ func TestReplayFollowsThePositionalLossPolicy(t *testing.T) {
 	}
 	if scatExcl != scatFlag || scatExcl.episodes < 50 {
 		t.Errorf("the scattered series changed with the policy (or never fired): %+v vs %+v", scatExcl, scatFlag)
+	}
+}
+
+// setPositionalPolicy sets positional_loss on the Production group; the root
+// keeps its default.
+func setPositionalPolicy(t *testing.T, e *env, v string) {
+	t.Helper()
+	ctx := context.Background()
+	ts, err := e.st.ListTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range ts {
+		if x.ID == e.prod {
+			x.Settings.PositionalLoss = &v
+			if err := e.st.UpsertTarget(ctx, &x); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+// The case the default exists for, end to end: a limiter that drops the tail of
+// every interval. The rule fires in the first minutes, before the detector has
+// its twelve intervals, and must resolve once the flags begin rather than stay
+// firing for as long as the limiter is there. Under flag_only it fires once and
+// never stops.
+func TestReplayResolvesOnceTheLimiterIsRecognised(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.st.DetectPositionalLoss()
+
+	const n, sent = 120, 20
+	var ms []store.Measurement
+	for i := range n {
+		mask := make([]bool, sent)
+		mask[17], mask[18], mask[19] = true, true, true
+		sm := make([]uint32, sent-3)
+		for k := range sm {
+			sm[k] = 5000
+		}
+		ms = append(ms, store.Measurement{TargetID: e.web, TS: at(i), Sent: sent, Received: sent - 3,
+			Samples: sm, LossMask: store.EncodeLossMask(false, mask)})
+	}
+	if err := e.st.WriteMeasurements(ctx, ms); err != nil {
+		t.Fatal(err)
+	}
+	e.save(e.rule(e.prod, "loss", alert.MetricLoss, alert.OpGreater, 10, 2, 2))
+
+	firing := func() (episodes, seconds int) {
+		rep := run(t, e.st, replay.Options{RuleName: "loss", From: at(0), To: at(n), Target: "/Production/web"})
+		for _, s := range rep.Series {
+			episodes += s.Fired
+			seconds += int(s.FiringSeconds)
+		}
+		return
+	}
+	setPositionalPolicy(t, e, "exclude")
+	episodes, seconds := firing()
+	// Fired at the second interval; flagged from the twelfth; two flagged
+	// intervals clear it. Anything near the whole two hours is the old fault.
+	if episodes != 1 || seconds > 15*60 {
+		t.Errorf("exclude: %d episodes firing %d s, want one that ends within a quarter of an hour", episodes, seconds)
+	}
+	setPositionalPolicy(t, e, "flag_only")
+	if episodes, seconds := firing(); episodes != 1 || seconds < (n-5)*60 {
+		t.Errorf("flag_only: %d episodes firing %d s, want one that lasts the whole window", episodes, seconds)
 	}
 }

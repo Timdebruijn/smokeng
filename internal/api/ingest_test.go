@@ -489,8 +489,9 @@ func tailBatch(target int64) []store.Measurement {
 // Protects the path a flag travels on a live master, from the write that sets
 // it to the rule that reads it: an agent's intervals are judged by the store as
 // they are stored, and the rows handed to alerting carry the verdict. With
-// loss at fixed positions left out, the rule stops firing once the flags begin;
-// with flag_only on the target it fires on every lossy pair, as it always did.
+// loss at fixed positions read as no loss, the rule stops firing once the flags
+// begin; with flag_only on the target it fires on every lossy pair, as it
+// always did.
 func TestIngestCarriesPositionalLossToTheRules(t *testing.T) {
 	fires := func(policy string) int {
 		h, st, mgr, agentID, key, mine, _ := ingestFixtureAlerts(t)
@@ -528,8 +529,8 @@ func TestIngestCarriesPositionalLossToTheRules(t *testing.T) {
 		}
 		return n
 	}
-	// Twenty-four lossy intervals in twelve pairs. Left out from the twelfth
-	// lossy interval on, only the first five pairs can fire.
+	// Twenty-four lossy intervals in twelve pairs. Read as no loss from the
+	// twelfth lossy interval on, only the first five pairs can fire.
 	excluded, counted := fires(""), fires("flag_only")
 	if counted != 12 {
 		t.Errorf("with flag_only the rule fired %d times, want once per lossy pair, 12", counted)

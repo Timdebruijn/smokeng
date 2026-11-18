@@ -34,9 +34,9 @@ type Input struct {
 	LossTrusted, RTTTrusted bool
 	// PositionalLoss is true when the master found this interval's loss to sit
 	// at fixed places in the send order, which a target's own ICMP rate limiter
-	// produces and loss on the path does not. Whether a loss rule leaves such an
-	// interval out is the target's setting, applied in step, so that the live
-	// manager and a replay cannot disagree about it.
+	// produces and loss on the path does not. Whether a loss rule reads such an
+	// interval as one without loss is the target's setting, applied in step, so
+	// that the live manager and a replay cannot disagree about it.
 	PositionalLoss bool
 }
 

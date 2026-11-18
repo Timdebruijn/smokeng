@@ -57,7 +57,8 @@ type Values struct {
 	// later shows its history rather than starting it from that moment.
 	GraphSeries *string `toml:"graph_series,omitempty"`
 	// PositionalLoss is "exclude" (the default) or "flag_only": whether an alert
-	// rule on loss leaves out intervals whose loss sits at fixed send positions.
+	// rule on loss reads intervals whose loss sits at fixed send positions as
+	// having no loss.
 	PositionalLoss *string `toml:"positional_loss,omitempty"`
 	// What the probes of an interval are, and the settings the chosen type
 	// reads (DESIGN.md §3.2b). A setting belonging to another type is stored

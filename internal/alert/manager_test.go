@@ -637,7 +637,7 @@ func TestAResolvedAlertEndsAtTheIntervalThatResolvedIt(t *testing.T) {
 	}
 }
 
-// Whether a loss rule leaves out positional loss is the target's own
+// Whether a loss rule discounts positional loss is the target's own
 // resolved setting, read through the tree: a leaf under the root's default
 // (exclude) stays quiet on a flagged interval while a leaf under a subtree set
 // to flag_only fires on the same input. Protects Resolve filling the policy per

@@ -24,13 +24,15 @@ func step(r *Rule, st *State, ss *shapeState, m *Input, golden []uint32, app *Ap
 	if r.Metric == MetricLoss && app.ExcludePositionalLoss && m.PositionalLoss {
 		// Loss that the target's own rate limiter produces is not loss on the
 		// network, and a rule that pages on it pages about the target's
-		// configuration. The same treatment as loss that is smokeng's own: the
-		// interval counts neither towards firing nor towards clearing, and
-		// resets the streak. The round-trip times of such an interval are real,
-		// so every other metric reads it as usual. A copy, because the caller's
-		// Input is shared with the other rules on this series.
+		// configuration. So the rule reads the interval as having lost nothing.
+		// Skipping it instead, as an interval with dropped replies is skipped,
+		// leaves an alert that fired before the detector had seen enough firing
+		// for as long as the limiter keeps hitting: nothing would ever count
+		// towards clearing it. The round-trip times of such an interval are
+		// real, so every other metric reads it as usual. A copy, because the
+		// caller's Input is shared with the other rules on this series.
 		c := *m
-		c.LossTrusted = false
+		c.Received = c.Sent
 		m = &c
 	}
 	return Evaluate(r, st, m, intervalS)
@@ -78,7 +80,8 @@ type Applicable struct {
 	Path      string
 	Host      string
 	// ExcludePositionalLoss is the target's positional_loss setting: true when a
-	// rule on loss leaves out intervals flagged as losing at fixed send positions.
+	// rule on loss reads an interval flagged as losing at fixed send positions
+	// as one without loss.
 	ExcludePositionalLoss bool
 }
 
