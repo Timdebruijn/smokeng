@@ -138,11 +138,13 @@ func TestV28GivesEveryRowItsFamilyAndKeepsTheRest(t *testing.T) {
 		{"resolutions", "target_id||'/'||ts", "quote(address)"},
 	}
 	before := map[string]map[string]string{}
+	columnsBefore := map[string][]string{}
 	for _, tb := range tables {
 		before[tb.name] = dumpTable(t, db, tb.name, tb.key, tb.rest)
 		if len(before[tb.name]) == 0 {
 			t.Fatalf("%s: nothing to migrate", tb.name)
 		}
+		columnsBefore[tb.name] = columnsOf(t, db, tb.name)
 	}
 	db.Close()
 
@@ -151,6 +153,15 @@ func TestV28GivesEveryRowItsFamilyAndKeepsTheRest(t *testing.T) {
 		t.Fatalf("migrating a v27 database: %v", err)
 	}
 	defer s.Close()
+
+	// The rebuild writes each table's definition out again by hand. A column
+	// that lost its type, its NOT NULL or its default there would pass every
+	// check on the rows above and bite on the next insert that relies on it.
+	for _, tb := range tables {
+		if got := columnsOf(t, s.db, tb.name); !slices.Equal(got, columnsBefore[tb.name]) {
+			t.Errorf("%s: columns besides family changed:\nbefore %v\nafter  %v", tb.name, columnsBefore[tb.name], got)
+		}
+	}
 
 	for _, tb := range tables {
 		after := dumpTable(t, s.db, tb.name, tb.key, tb.rest)
@@ -212,6 +223,31 @@ func TestV28GivesEveryRowItsFamilyAndKeepsTheRest(t *testing.T) {
 	if err != nil || len(got) != 2 || got[0].TS != 2000 || got[1].TS != 2500 {
 		t.Errorf("flipped target, local, v6: %d rows, %v", len(got), err)
 	}
+}
+
+// columnsOf lists a table's columns other than family, each with its type,
+// nullability and default, sorted by name: the rebuild may place them
+// differently, and nothing reads them by position.
+func columnsOf(t *testing.T, db *sql.DB, table string) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT name||' '||type||' notnull='||"notnull"||' default='||quote(dflt_value)
+		FROM pragma_table_info(?) WHERE name <> 'family' ORDER BY name`, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, c)
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s: no columns", table)
+	}
+	return out
 }
 
 func dumpFamilies(t *testing.T, db *sql.DB, table, key string) map[string]tree.Family {

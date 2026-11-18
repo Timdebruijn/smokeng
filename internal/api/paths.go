@@ -56,13 +56,9 @@ func (s *server) seriesQuery(w http.ResponseWriter, r *http.Request) (targetID, 
 		badRequestMsg(w, err.Error())
 		return
 	}
-	sc, _, ok := s.withScope(w, r)
+	sc, ok := s.requireVisible(w, r, targetID)
 	if !ok {
 		return
-	}
-	if !sc.Visible(targetID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such target"})
-		return 0, 0, 0, 0, 0, false
 	}
 	family = sc.tr.FamilyOf(targetID)
 	return

@@ -273,14 +273,14 @@ func (s *server) requireWrite(w http.ResponseWriter, r *http.Request, id int64) 
 // requireVisible resolves the scope and checks the caller may know the node
 // exists. A node outside their scope is answered as absent, never as
 // forbidden: "you may not read that" confirms there is something to read.
-func (s *server) requireVisible(w http.ResponseWriter, r *http.Request, id int64) bool {
+func (s *server) requireVisible(w http.ResponseWriter, r *http.Request, id int64) (*Scope, bool) {
 	sc, _, ok := s.withScope(w, r)
 	if !ok {
-		return false
+		return nil, false
 	}
 	if !sc.Visible(id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such target"})
-		return false
+		return nil, false
 	}
-	return true
+	return sc, true
 }
