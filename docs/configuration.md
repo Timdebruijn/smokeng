@@ -94,7 +94,8 @@ remain possible and mean the same.
 `both` is measured by the master's own prober. A remote agent measures a `both` target over
 IPv4 only (see [Agents](agents.md#versions)). On a host with no route for one family, or a name
 with no record of it, that family's series is no data, which is the expected result and not an
-error (see [What loss means](probes.md#what-loss-means)).
+error (see [What loss means](probes.md#what-loss-means)). A `both` target is probed twice, once
+per family, and counts twice against the [limits](#limits).
 
 For now the web UI's graphs show the IPv4 series of a `both` target. The IPv6 series is read
 through the API (`family=v6`, see [api.md](api.md)) or the CLI (`--family v6`).

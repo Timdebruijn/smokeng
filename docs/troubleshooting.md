@@ -67,8 +67,11 @@ Check in this order:
    enrolled agent is measured by nobody. The `smokeng_targets_unmeasured` metric counts them.
    Fix the `agents` value, or enrol the agent: [Agents](agents.md).
 4. **Is the target disabled?** Disabled targets are skipped.
-5. **Does the name resolve?** `probe: target … ("…"): resolve: …` means no measurement for that
-   interval, which the graph shows as a gap. `smokeng_dns_failures_total` counts them.
+5. **Does the name resolve?** `probe: target … ("…"): resolve: …; intervals are stored as no data
+   until this changes` means no measurement from then on, which the graph shows as a gap with
+   the `not sent` badge. The line is logged when it starts and when the reason changes, not at
+   every interval, and `measuring again` says when it ends. `smokeng_dns_failures_total` counts
+   every failed lookup. For one family of a `both` target this is often the normal state.
 6. **Is the time window right?** The range buttons go back 30 days, and `custom` takes any
    window; see [Reading graphs](reading-graphs.md#long-windows). The raw intervals are in the
    API (Arrow): [API](api.md). There is no CSV export of measurements.

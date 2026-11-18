@@ -290,17 +290,20 @@ func CheckTreeLimits(before, after []Target) error {
 		if err != nil {
 			return err
 		}
-		rateAfter += probeRate(res)
+		// A target measured over both families is probed twice over: each family
+		// has its own loop sending the full count, at the same host.
+		series := len(n.Families())
+		rateAfter += probeRate(res, series)
 		if beforeT != nil {
 			// A target that was not running (a group, or disabled) is started by
 			// this write, whatever its values did, so it is checked as new.
 			if old, existed := prior[n.ID]; existed && old.Host != nil && (old.Enabled || !n.Enabled) {
-				if rb, err := beforeT.Resolve(old.ID); err == nil && notWorse(rb, res) {
+				if rb, err := beforeT.Resolve(old.ID); err == nil && notWorse(rb, len(old.Families()), res, series) {
 					continue
 				}
 			}
 		}
-		if err := resolvedLimits(res); err != nil {
+		if err := resolvedLimits(res, series); err != nil {
 			return fmt.Errorf("target %d (%s): %w", n.ID, n.Name, err)
 		}
 	}
@@ -311,7 +314,7 @@ func CheckTreeLimits(before, after []Target) error {
 				continue
 			}
 			if rb, err := beforeT.Resolve(n.ID); err == nil {
-				rateBefore += probeRate(rb)
+				rateBefore += probeRate(rb, len(n.Families()))
 			}
 		}
 	}
@@ -322,8 +325,10 @@ func CheckTreeLimits(before, after []Target) error {
 	return nil
 }
 
-func probeRate(r Resolved) float64 {
-	return float64(r.PingsPerInterval.Effective) / float64(r.IntervalS.Effective)
+// probeRate is the probes a second a target is sent, over all the series it is
+// measured as: one per address family.
+func probeRate(r Resolved, series int) float64 {
+	return float64(series) * float64(r.PingsPerInterval.Effective) / float64(r.IntervalS.Effective)
 }
 
 // notWorse reports whether a target's load after a change is no greater than
@@ -331,15 +336,16 @@ func probeRate(r Resolved) float64 {
 // share of its interval spent waiting on a timeout. A target over a limit can
 // then be brought down in steps, or left alone while something else about it
 // changes, without being refused for what it already was.
-func notWorse(before, after Resolved) bool {
+func notWorse(before Resolved, seriesBefore int, after Resolved, seriesAfter int) bool {
 	waiting := func(r Resolved) float64 { return float64(r.TimeoutMS.Effective) / float64(r.IntervalS.Effective*1000) }
-	bytes := func(r Resolved) float64 { return probeRate(r) * float64(r.PacketSize.Effective) }
-	return probeRate(after) <= probeRate(before) && bytes(after) <= bytes(before) && waiting(after) <= waiting(before)
+	bytes := func(r Resolved, series int) float64 { return probeRate(r, series) * float64(r.PacketSize.Effective) }
+	return probeRate(after, seriesAfter) <= probeRate(before, seriesBefore) &&
+		bytes(after, seriesAfter) <= bytes(before, seriesBefore) && waiting(after) <= waiting(before)
 }
 
 // resolvedLimits checks the load one target puts on what it probes, from its
 // effective values after inheritance.
-func resolvedLimits(r Resolved) error {
+func resolvedLimits(r Resolved, series int) error {
 	interval, pings := r.IntervalS.Effective, r.PingsPerInterval.Effective
 	// A probe that waits longer than the interval is still waiting when the next
 	// interval's probes go out, so the sockets held open grow with pings times
@@ -347,14 +353,18 @@ func resolvedLimits(r Resolved) error {
 	if r.TimeoutMS.Effective > interval*1000 {
 		return fmt.Errorf("tree: timeout_ms %d is longer than the %ds interval", r.TimeoutMS.Effective, interval)
 	}
-	rate := probeRate(r)
+	over := ""
+	if series > 1 {
+		over = fmt.Sprintf(" over %d address families", series)
+	}
+	rate := probeRate(r, series)
 	if rate > MaxProbeRate {
-		return fmt.Errorf("tree: %d pings in %ds is %.0f a second, more than the %d allowed for one target",
-			pings, interval, rate, MaxProbeRate)
+		return fmt.Errorf("tree: %d pings in %ds%s is %.0f a second, more than the %d allowed for one target",
+			pings, interval, over, rate, MaxProbeRate)
 	}
 	if bps := rate * float64(r.PacketSize.Effective); bps > MaxProbeBytesPerSec {
-		return fmt.Errorf("tree: %d pings of %d bytes in %ds is %.0f bytes a second, more than the %d allowed for one target",
-			pings, r.PacketSize.Effective, interval, bps, MaxProbeBytesPerSec)
+		return fmt.Errorf("tree: %d pings of %d bytes in %ds%s is %.0f bytes a second, more than the %d allowed for one target",
+			pings, r.PacketSize.Effective, interval, over, bps, MaxProbeBytesPerSec)
 	}
 	return nil
 }

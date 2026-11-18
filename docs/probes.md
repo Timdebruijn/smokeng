@@ -250,7 +250,9 @@ namespace, or use a policy rule (`ip rule`) on the prober's UID.
 
 ## Politeness: how much load a target gets
 
-The load on one target is `pings_per_interval / interval_s` probes per second. The defaults, 20
+The load on one target is `pings_per_interval / interval_s` probes per second, and twice that for
+a target with `address_family = "both"`: each family is probed on its own, at the same host, and
+the limits below count both. The defaults, 20
 per 60 s, are one probe every three seconds. smokeng refuses configuration above 100 probes per
 second or 500 000 bytes per second for one target, and above 5000 probes per second in total
 ([Limits](configuration.md#limits)).

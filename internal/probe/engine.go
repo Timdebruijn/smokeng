@@ -343,6 +343,12 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 	}
 	interval := time.Duration(spec.IntervalS) * time.Second
 	timeout := time.Duration(spec.TimeoutMS) * time.Millisecond
+	// noData is why the last interval could not be asked, empty when it could.
+	// The reason is logged when it starts and when it changes, not at every
+	// interval: one family of a target measured over both is often without an
+	// address or a route for good, and that is not news each time. The rows
+	// carry the reason for every interval either way.
+	noData := ""
 
 	for {
 		// Pick the next bucket whose first send is still in the future.
@@ -368,7 +374,10 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			// which says nothing about the target. The interval is stored as no
 			// data with that reason, through the same path as a finalized one so
 			// alerting and an agent's outbox see it (DESIGN.md §8.2).
-			log.Printf("probe: %s (%q): resolve: %v", spec.label(), spec.Host, err)
+			if why := "resolve: " + err.Error(); why != noData {
+				log.Printf("probe: %s (%q): %s; intervals are stored as no data until this changes", spec.label(), spec.Host, why)
+				noData = why
+			}
 			e.dnsErrs.Add(1)
 			e.emit(noDataRow(spec, bucket, store.SendReasonNoAddress))
 			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
@@ -392,13 +401,19 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 		// and that is loss on the path. Only the host's own table says the host
 		// could not send, and then nothing is, so the interval is no data.
 		if e.noRoute(addr, spec.Family) {
-			log.Printf("probe: %s (%s): no route to %s on this host for %s; interval stored as no data",
-				spec.label(), spec.Host, addr, spec.Family)
+			if why := fmt.Sprintf("no route to %s on this host for %s", addr, spec.Family); why != noData {
+				log.Printf("probe: %s (%s): %s; intervals are stored as no data until this changes", spec.label(), spec.Host, why)
+				noData = why
+			}
 			e.emit(noDataRow(spec, bucket, store.SendReasonUnreachable))
 			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
 				return
 			}
 			continue
+		}
+		if noData != "" {
+			log.Printf("probe: %s (%s): measuring again", spec.label(), spec.Host)
+			noData = ""
 		}
 
 		// Only ICMP needs a shared socket; the other types open their own
