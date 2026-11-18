@@ -127,9 +127,9 @@ func TestIngestFilesRowsUnderTheFamilyTheAgentSays(t *testing.T) {
 }
 
 // Protects the same for path changes: the family an agent states is the one the
-// change is stored under, absent means the target's current one, and a family
-// that is not "v4" or "v6" (a misspelling, "unknown", a number) drops that change
-// and only that one, counted with the others that are dropped.
+// change is stored under, and absent means the target's current one. So does a
+// family that is not "v4" or "v6" (a misspelling, "unknown", a number): the
+// change is kept and filed as if it stated none, not dropped for its label.
 func TestAgentPathsAreFiledUnderTheFamilyTheAgentSays(t *testing.T) {
 	h, st, agentID, key, mine, _ := ingestFixture(t)
 	now := time.Now().Unix()
@@ -145,8 +145,8 @@ func TestAgentPathsAreFiledUnderTheFamilyTheAgentSays(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("paths = %d: %s", rec.Code, rec.Body)
 	}
-	if !strings.Contains(rec.Body.String(), `"accepted":3`) {
-		t.Errorf("response %s, want 3 accepted: the three bad families are dropped, nothing else", rec.Body)
+	if !strings.Contains(rec.Body.String(), `"accepted":6`) {
+		t.Errorf("response %s, want all 6 accepted: a family that cannot be read does not drop the change", rec.Body)
 	}
 	hopsOf := func(fam tree.Family) (out []string) {
 		got, err := st.PathChanges(t.Context(), mine, agentID, fam, 0, now+60)
@@ -158,8 +158,9 @@ func TestAgentPathsAreFiledUnderTheFamilyTheAgentSays(t *testing.T) {
 		}
 		return out
 	}
-	if got := strings.Join(hopsOf(tree.FamilyV4), " "); got != "10.0.0.1,192.0.2.9 10.0.0.2,192.0.2.9" {
-		t.Errorf("v4 holds %q, want the change without a family and the one stating v4", got)
+	want := "10.0.0.1,192.0.2.9 10.0.0.2,192.0.2.9 10.0.0.4,192.0.2.9 10.0.0.5,192.0.2.9 10.0.0.6,192.0.2.9"
+	if got := strings.Join(hopsOf(tree.FamilyV4), " "); got != want {
+		t.Errorf("v4, the target's own, holds %q, want every change but the one stating v6", got)
 	}
 	if got := strings.Join(hopsOf(tree.FamilyV6), " "); got != "10.0.0.3,192.0.2.9" {
 		t.Errorf("v6 holds %q, want only the change stating v6", got)

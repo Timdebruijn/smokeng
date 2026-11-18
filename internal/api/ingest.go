@@ -397,8 +397,8 @@ func (s *server) handleAgentPaths(w http.ResponseWriter, r *http.Request) {
 			TargetID int64    `json:"target_id"`
 			TS       int64    `json:"ts"`
 			Hops     []string `json:"hops"`
-			// Optional "v4" or "v6". Raw, so that a value of the wrong type drops
-			// this change as any other bad value does, not the whole submission.
+			// Optional "v4" or "v6". Raw, so that a value of the wrong type is read
+			// as none stated rather than failing the whole submission.
 			Family json.RawMessage `json:"family"`
 		} `json:"paths"`
 	}
@@ -417,19 +417,18 @@ func (s *server) handleAgentPaths(w http.ResponseWriter, r *http.Request) {
 	var dropped int
 	for _, p := range sub.Paths {
 		family, ok := assigned[p.TargetID]
-		stated, valid := pathFamily(p.Family)
-		if !ok || p.TS > horizon || !validHops(p.Hops) || !valid {
+		if !ok || p.TS > horizon || !validHops(p.Hops) {
 			dropped++
 			continue
 		}
-		if stated != tree.FamilyUnknown {
+		if stated := pathFamily(p.Family); stated != tree.FamilyUnknown {
 			family = stated
 		}
 		kept = append(kept, store.PathChange{TargetID: p.TargetID, Family: family, TS: p.TS, Hops: strings.Join(p.Hops, ",")})
 	}
 	if dropped > 0 {
 		log.Printf("ingest: agent %q submitted %d path change(s) for a target not assigned to it, "+
-			"timestamped in the future, or with a malformed hop list or family; those were discarded and the rest accepted",
+			"timestamped in the future, or with a malformed hop list; those were discarded and the rest accepted",
 			agent.Name, dropped)
 	}
 	dup, err := s.st.IngestPaths(r.Context(), agent.ID, kept)
@@ -440,22 +439,19 @@ func (s *server) handleAgentPaths(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": len(kept) - dup, "duplicates": dup})
 }
 
-// pathFamily reads a path change's optional family: absent or null is unknown
-// (the master decides), "v4" and "v6" are themselves, and anything else, "unknown"
-// included, is not valid.
-func pathFamily(raw json.RawMessage) (tree.Family, bool) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return tree.FamilyUnknown, true
-	}
+// pathFamily reads a path change's optional family: "v4" and "v6" are
+// themselves, and anything else (absent, null, a misspelling, a number) is
+// none stated, so the master decides, as it does for a measurement whose
+// family column it cannot read. The change is kept either way.
+func pathFamily(raw json.RawMessage) tree.Family {
 	var s string
 	if json.Unmarshal(raw, &s) != nil {
-		return tree.FamilyUnknown, false
+		return tree.FamilyUnknown
 	}
-	switch f, _ := tree.ParseFamily(s); f {
-	case tree.FamilyV4, tree.FamilyV6:
-		return f, true
+	if f, _ := tree.ParseFamily(s); f == tree.FamilyV4 || f == tree.FamilyV6 {
+		return f
 	}
-	return tree.FamilyUnknown, false
+	return tree.FamilyUnknown
 }
 
 // validHops is a hop list as trace.Path.String writes one: at least one hop,

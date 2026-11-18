@@ -35,8 +35,9 @@ var BatchSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "loss_mask", Type: arrow.BinaryTypes.Binary, Nullable: true},
 	// The address family the row was measured over: 4 or 6, null when the agent's
 	// store cannot say (history its v28 migration could not place). Optional on
-	// the wire like the two above; absent or null leaves the choice to the master,
-	// which then files the row under the target's current family.
+	// the wire like the two above; absent, null or any other value leaves the
+	// choice to the master, which then files the row under the target's current
+	// family.
 	{Name: "family", Type: arrow.PrimitiveTypes.Uint8, Nullable: true},
 	// The extra per-packet series, one nullable column each. Null means the
 	// probe did not measure it — an irtt peer that returns no timestamps, or
@@ -351,16 +352,14 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 			if sendErrs != nil && !sendErrs.IsNull(i) {
 				m.SendErr = new(sendErrs.Value(i))
 			}
-			// Only 4 and 6 are families. Anything else is not a row to guess at: the
-			// batch is refused, as for any column that is not what the schema says,
-			// and the column and value are named.
+			// Only 4 and 6 are families. Any other value is read as none stated,
+			// and the row kept, for the reason a mask that does not fit is dropped
+			// below: refusing the batch is a 400, the agent discards a batch it was
+			// refused, and that would lose the measurements for the sake of a
+			// label. The master then files the row as it files an older agent's.
 			if families != nil && !families.IsNull(i) {
-				switch f := tree.Family(families.Value(i)); f {
-				case tree.FamilyV4, tree.FamilyV6:
+				if f := tree.Family(families.Value(i)); f == tree.FamilyV4 || f == tree.FamilyV6 {
 					m.Family = f
-				default:
-					return nil, fmt.Errorf("ingest: target %d at %d: column \"family\" is %d, want 4 or 6",
-						m.TargetID, m.TS, families.Value(i))
 				}
 			}
 			// A mask comes from another machine and is checked against this row's

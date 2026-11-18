@@ -2,8 +2,6 @@ package ingest
 
 import (
 	"bytes"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -53,10 +51,11 @@ func TestDecodeBatchAcceptsAgentWithoutFamily(t *testing.T) {
 	}
 }
 
-// Protects the refusal of a family that is neither 4 nor 6. A row filed under a
-// family nothing can read would be stored and then invisible; the batch is
-// refused, naming the column and the value, like the other validated columns.
-func TestDecodeBatchRefusesAnImpossibleFamily(t *testing.T) {
+// Protects the measurements of a batch whose family column holds something
+// that is not a family. The agent discards a batch the master refuses, so
+// refusing it for a label would lose every row in it; the value is read as none
+// stated and the row is kept, for the master to file as an older agent's.
+func TestDecodeBatchKeepsARowWhoseFamilyItCannotRead(t *testing.T) {
 	for _, bad := range []uint8{0, 5, 255} {
 		var buf bytes.Buffer
 		w := ipc.NewWriter(&buf, ipc.WithSchema(BatchSchema))
@@ -84,12 +83,12 @@ func TestDecodeBatchRefusesAnImpossibleFamily(t *testing.T) {
 		rec.Release()
 		rb.Release()
 
-		_, err := DecodeBatch(buf.Bytes(), 7)
-		if err == nil {
-			t.Fatalf("family %d was accepted", bad)
+		out, err := DecodeBatch(buf.Bytes(), 7)
+		if err != nil {
+			t.Fatalf("family %d: the batch was refused: %v", bad, err)
 		}
-		if !strings.Contains(err.Error(), `"family"`) || !strings.Contains(err.Error(), "is "+strconv.Itoa(int(bad))+",") {
-			t.Errorf("family %d: error does not name the column and the value: %v", bad, err)
+		if len(out) != 1 || out[0].Family != tree.FamilyUnknown || out[0].TargetID != 1 || out[0].Sent != 1 {
+			t.Fatalf("family %d: decoded %+v, want the row kept with no family stated", bad, out)
 		}
 	}
 }
