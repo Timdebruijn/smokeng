@@ -227,9 +227,13 @@ sync.
 An agent of this version or later therefore measures a `both` target over both families, as two
 series whose rows and path changes state their family. An older agent measures it over IPv4 only,
 and the v6 series of that target has data from the master's own prober only. An agent on a host
-without a route for one family stores and submits that family as no data (the reason is `no route`), and
-the master shows that agent's series of that family as no data.
-Downgrades are not supported.
+without a route for one family stores and submits that family as intervals without data, with
+the send reason the master shows as `no route to the target`; they are drawn as a gap and count
+as neither loss nor a clean interval ([Probes](probes.md#what-loss-means)).
+
+Downgrades are not supported. An agent put back to an older version while its local store holds
+a `both` target measures nothing until its first successful pull, which replaces the target by
+what the master sends that version: `v4`.
 
 ## How the protocol works
 

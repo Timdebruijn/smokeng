@@ -81,6 +81,14 @@ func assignedFamilies(t *testing.T, h http.Handler, id int64, key ed25519.Privat
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
+	// The answer depends on a request header, so nothing between the master and
+	// an agent may keep it and hand it to another agent: an agent that cannot
+	// measure both and gets "both" loses its whole target sync. The
+	// response was already marked no-store; this pins it now that a kept copy
+	// would break something.
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("assignments response: Cache-Control %q, want no-store", cc)
+	}
 	var body struct {
 		Targets []struct {
 			ID     int64  `json:"target_id"`
