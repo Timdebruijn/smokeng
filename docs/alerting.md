@@ -248,8 +248,8 @@ smokeng alerts replay --db /var/lib/smokeng/smokeng.db \
 Replay 2026-10-18 12:00Z to 2026-11-17 12:00Z (silences: report)
 
 rule slow-p95 on /Production: p95 > 80ms for 5 intervals
-  /Production/db from local: no episodes (43198 intervals)
-  /Production/web from local: 3 episodes, firing 1h25m, longest 1h0m (43198 intervals)
+  /Production/db (v4) from local: no episodes (43198 intervals)
+  /Production/web (v4) from local: 3 episodes, firing 1h25m, longest 1h0m (43198 intervals)
     2026-10-24 02:10Z -> 2026-10-24 02:25Z  15m  crossed at 91.4, peak 133
     2026-11-02 14:00Z -> 2026-11-02 15:00Z  1h0m  crossed at 84.2, peak 212  [fire silenced]
     2026-11-09 08:30Z -> 2026-11-09 08:40Z  10m  crossed at 88, peak 97.5
@@ -321,6 +321,13 @@ ntfy shims, a small script — takes it unmodified.
 Resolved alerts are sent as well, so receivers that track state stay in sync, and firing
 alerts are repeated — once a minute by default, `--alert-repeat` sets the interval —
 because Alertmanager expires an alert it stops hearing about.
+
+**The `family` label.** Every alert carries `family`, `v4` or `v6` (`unknown` for a series whose
+family could not be established): an alert is about one series, and a series is a target, an
+agent and an address family. The other labels are unchanged, so routes that match on them keep
+matching. Adding a label makes Alertmanager see every alert as a new one once: an alert that is
+firing across the upgrade shows up a second time, and the old one expires after Alertmanager's
+resolve timeout.
 
 **Where the URL lives.** A webhook URL is often the credential: a token in the path, a key
 in the query, a user and password before the host. `--alert-webhook` puts it in the
@@ -401,8 +408,8 @@ log. Only the notification and the UI's alarm are held back; when the window clo
 whatever is still firing is re-announced.
 
 A silence is scoped like everything else on the tree. Leave it global, or narrow it to a
-node — which covers that node and its whole subtree — and optionally to one agent or one
-rule. It comes in two shapes: a duration from now (the quick "silence this for two hours"
+node — which covers that node and its whole subtree — and optionally to one agent, one
+rule or one address family (`"family": "v6"`; without it a silence covers every family). It comes in two shapes: a duration from now (the quick "silence this for two hours"
 on a firing alert), or an explicit `[from, until)` window booked ahead of time, which is a
 maintenance window. Both are managed under **Alerts → Silences & maintenance windows**, or
 over the API. Silences are not part of the TOML file and `smokeng config export` does not

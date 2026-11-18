@@ -224,7 +224,7 @@ window that had data. Read the two together.
     {
       "rule": "loss", "metric": "loss", "target": "/Home/gateway", "host": "192.168.1.1",
       "agent": "local", "value": 35, "describes": "loss > 20% for 3 intervals",
-      "rule_id": 2, "target_id": 7, "agent_id": 0,
+      "rule_id": 2, "target_id": 7, "agent_id": 0, "family": "v4",
       "acked": false, "silenced": false, "since": 1793040000
     }
   ],
@@ -235,7 +235,9 @@ window that had data. Read the two together.
 
 `acked_by`, `acked_at` and `silenced_until` appear when they apply. `delivering` says a webhook
 is configured, not that deliveries succeed. To acknowledge, `POST /api/v1/alerts/ack` with
-`{"rule_id": 2, "target_id": 7, "agent_id": 0}`; add `"ack": false` to clear it.
+`{"rule_id": 2, "target_id": 7, "agent_id": 0}`; add `"ack": false` to clear it. An alert is
+per (rule, target, agent, family): `"family"` (`v4`, `v6` or `unknown`) picks the series and
+defaults to the target's current family. Any other value is a 400.
 
 ### Alert events
 
@@ -246,7 +248,7 @@ is configured, not that deliveries succeed. To acknowledge, `POST /api/v1/alerts
   "events": [
     {"id": 311, "ts": 1793040000, "firing": true, "rule": "loss",
      "describes": "loss > 20% for 3 intervals", "value": 35,
-     "target": "/Home/gateway", "agent_id": 0}
+     "target": "/Home/gateway", "agent_id": 0, "family": "v4"}
   ]
 }
 ```
@@ -257,9 +259,16 @@ A rule's JSON uses the TOML keys: `name`, `metric`, `op`, `threshold`, `for_inte
 `clear_intervals`, `mode`, `baseline` and `severity`, plus `target_id`. On the wire an on/off switch is
 `enabled`, where TOML has `disabled`. See [alerting.md](alerting.md).
 
-A silence takes `target_id`, `agent_id` and `rule_id` (all optional; null means all), a
+A silence takes `target_id`, `agent_id`, `rule_id` and `family` (`v4`, `v6` or `unknown`; all
+optional, null or absent means all, any other family is a 400; the list returns `family` only
+when one is set), a
 `reason`, and either `duration_s` or `starts_at` and `ends_at` (Unix seconds). It returns
 `{"id": N}`.
+
+Golden references carry the family they were captured from: `alert-baselines` lists it as `family`.
+Capturing (`POST /api/v1/alert-rules/{id}/baseline`) takes an optional `"family"` and reads that
+series, by default the target's current family, and returns the family it read. `shape-reference`
+takes `family=` the same way and returns it. A family that is not `v4`, `v6` or `unknown` is a 400.
 
 ## Webhook payload
 
@@ -276,6 +285,7 @@ Each element of the array:
 | `labels.target` | The full target path, such as `/Home/gateway`. |
 | `labels.host` | The target's host. |
 | `labels.agent` | The vantage point that saw it. `local` is the master's own prober. |
+| `labels.family` | The address family of the series: `v4` or `v6` (`unknown` when it could not be established). |
 | `labels.metric` | The rule's metric: `loss`, `median`, `p95`, `spread`, `shape` or `bimodality`. |
 | `labels.severity` | The rule's `severity`: `critical`, `warning` (the default) or `info`. |
 | `annotations.summary` | `<rule> on <target>: <metric> is <value><unit>`. The unit is `%` for loss and `ms` for every other metric. |
@@ -292,7 +302,7 @@ sent once.
   {
     "labels": {
       "alertname": "loss", "target": "/Home/gateway", "host": "192.168.1.1",
-      "agent": "local", "metric": "loss", "severity": "warning"
+      "agent": "local", "family": "v4", "metric": "loss", "severity": "warning"
     },
     "annotations": {
       "summary": "loss on /Home/gateway: loss is 35%",
