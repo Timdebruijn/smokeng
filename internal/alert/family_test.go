@@ -11,8 +11,7 @@ import (
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
-// inputOf is input() for a series of the given family. No target can have two
-// families through configuration yet, so the tests feed them directly.
+// inputOf is input() for a series of the given family.
 func inputOf(targetID int64, fam tree.Family, step, sent, received int) alert.Input {
 	in := input(targetID, step, sent, received)
 	in.Family = fam
@@ -25,6 +24,7 @@ func familyManager(t *testing.T, notifier alert.Notifier) (*store.SQLite, *alert
 	t.Helper()
 	ctx := context.Background()
 	st, groupID, leafID := setup(t)
+	setFamily(t, st, leafID, "gw.example.net", "both")
 	rule := alert.Rule{
 		TargetID: groupID, Name: "loss", Metric: alert.MetricLoss, Op: alert.OpGreater,
 		Threshold: 20, For: 2, ClearFor: 2, Enabled: true, Severity: alert.SeverityWarning,
@@ -194,7 +194,7 @@ func TestWebhookCarriesTheFamilyAndKeepsEveryOtherLabel(t *testing.T) {
 		labels[k] = v.(string)
 	}
 	want := map[string]string{
-		"alertname": "loss", "target": "/Production/gw", "host": "10.0.0.1", "agent": "local",
+		"alertname": "loss", "target": "/Production/gw", "host": "gw.example.net", "agent": "local",
 		"metric": "loss", "severity": "warning",
 		"family": "v6",
 	}
@@ -231,6 +231,7 @@ func TestEventsAndBaselinesCarryTheFamily(t *testing.T) {
 func TestShapeMemoryIsPerFamily(t *testing.T) {
 	ctx := context.Background()
 	st, groupID, leaf := setup(t)
+	setFamily(t, st, leaf, "gw.example.net", "both")
 	rule := alert.Rule{
 		TargetID: groupID, Name: "shape", Metric: alert.MetricShape, Op: alert.OpGreater,
 		Threshold: 5, For: 2, ClearFor: 2, Enabled: true, Mode: alert.ModeTunable,
@@ -254,52 +255,91 @@ func TestShapeMemoryIsPerFamily(t *testing.T) {
 	}
 }
 
-// Protects against an alert that can never clear. A target's family is changed
-// while a rule is firing on it: the old family gets no more intervals, and
-// keyed on the family nothing would ever advance that state again, so it would
-// fire, and be repeated to the webhook, until the rule was deleted. The reload
-// that sees the change ends it, in memory and in the store, so that a restart
-// does not bring it back; the new family then starts clean.
-func TestChangingATargetsFamilyEndsWhatWasFiringOnTheOldOne(t *testing.T) {
+// setFamily gives the leaf a host and an address_family, as an edit would.
+func setFamily(t *testing.T, st *store.SQLite, leaf int64, host, family string) {
+	t.Helper()
 	ctx := context.Background()
-	st, m, leaf, rule := familyManager(t, nil)
-	for step := range 2 {
-		m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV4, step, 10, 0)})
-	}
-	if got := firingBy(m); len(got) != 1 {
-		t.Fatalf("setup: %d alerts firing on v4, want 1", len(got))
-	}
-
 	targets, err := st.ListTargets(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := range targets {
 		if targets[i].ID == leaf {
-			targets[i].Host, targets[i].AddressFamily = ptr("2001:db8::1"), ptr("v6")
+			targets[i].Host, targets[i].AddressFamily = ptr(host), ptr(family)
 			if err := st.UpsertTarget(ctx, &targets[i]); err != nil {
 				t.Fatal(err)
 			}
+			return
 		}
 	}
+	t.Fatalf("no target %d", leaf)
+}
+
+// Protects against evaluating a series the target is not measured over. A v4
+// target has no v6 series: an interval of v6 that reaches the manager (a late
+// one after a change, a row an agent states) would start a state nothing could
+// clear. The same intervals on a target measured over both are evaluated.
+func TestAnIntervalOfAFamilyTheTargetIsNotMeasuredOverIsNotEvaluated(t *testing.T) {
+	ctx := context.Background()
+	st, m, leaf, _ := familyManager(t, nil)
+	setFamily(t, st, leaf, "gw.example.net", "v4")
 	if err := m.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.Firing(); len(got) != 0 {
-		t.Errorf("after the family changed, still firing: %+v", got)
+	for step := range 2 {
+		m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, step, 10, 0)})
 	}
-	// The prober's old loop is stopped only after the reload and can still
-	// deliver an interval of the old family. It must not start a state that
-	// nothing could clear: two of them would fire this rule.
+	if got := m.Firing(); len(got) != 0 {
+		t.Errorf("v6 intervals of a v4 target fired: %+v", got)
+	}
+	setFamily(t, st, leaf, "gw.example.net", "both")
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
 	for step := 2; step < 4; step++ {
-		m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV4, step, 10, 0)})
+		m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, step, 10, 0)})
 	}
-	if got := m.Firing(); len(got) != 0 {
-		t.Errorf("late intervals of the old family fired: %+v", got)
+	if got := firingBy(m); len(got) != 1 || got[tree.FamilyV6].Family != tree.FamilyV6 {
+		t.Errorf("the same intervals on a target measured over both: firing %+v, want v6", got)
+	}
+}
+
+// Protects against an alert that can never clear. A target measured over both
+// is changed to v4 while a rule is firing on its v6 series: v6 gets no more
+// intervals, and keyed on the family nothing would ever advance that state
+// again, so it would fire, and be repeated to the webhook, until the rule was
+// deleted. The reload that sees the change ends it, in memory and in the store,
+// so that a restart does not bring it back, and the v4 series, which is still
+// measured, is left firing.
+func TestChangingBothToV4EndsWhatWasFiringOnV6(t *testing.T) {
+	ctx := context.Background()
+	st, m, leaf, rule := familyManager(t, nil)
+	for step := range 2 {
+		m.Observe(ctx, []alert.Input{
+			inputOf(leaf, tree.FamilyV4, step, 10, 0),
+			inputOf(leaf, tree.FamilyV6, step, 10, 0),
+		})
+	}
+	if got := firingBy(m); len(got) != 2 {
+		t.Fatalf("setup: %d alerts firing, want v4 and v6", len(got))
+	}
+
+	setFamily(t, st, leaf, "gw.example.net", "v4")
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := firingBy(m); len(got) != 1 || got[tree.FamilyV4].Family != tree.FamilyV4 {
+		t.Errorf("after both -> v4, firing %+v, want the v4 alert alone", got)
+	}
+	// The prober's v6 loop is stopped only after the reload and can still
+	// deliver an interval. It must not start a state nothing could clear.
+	m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, 2, 10, 0), inputOf(leaf, tree.FamilyV6, 3, 10, 0)})
+	if got := firingBy(m); len(got) != 1 {
+		t.Errorf("late v6 intervals changed what is firing: %+v", got)
 	}
 	// An Observe that took its snapshot before the reload saves it afterwards,
 	// which puts the firing row back in the store. The next reload ends it again.
-	stale := alert.State{RuleID: rule.ID, TargetID: leaf, AgentID: store.LocalAgentID, Family: tree.FamilyV4,
+	stale := alert.State{RuleID: rule.ID, TargetID: leaf, AgentID: store.LocalAgentID, Family: tree.FamilyV6,
 		Firing: true, Since: 1_756_400_060, LastTS: 1_756_400_060, Value: 100}
 	if err := st.SaveAlertStates(ctx, []alert.State{stale}); err != nil {
 		t.Fatal(err)
@@ -307,8 +347,50 @@ func TestChangingATargetsFamilyEndsWhatWasFiringOnTheOldOne(t *testing.T) {
 	if err := m.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.Firing(); len(got) != 0 {
-		t.Errorf("a firing row put back in the store came back to life: %+v", got)
+	if got := firingBy(m); len(got) != 1 {
+		t.Errorf("a firing v6 row put back in the store came back to life: %+v", got)
+	}
+	// A restart reads the store, and must find neither the v6 state firing.
+	m2 := alert.NewManager(st, nil)
+	if err := m2.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := firingBy(m2); len(got) != 1 || got[tree.FamilyV4].Family != tree.FamilyV4 {
+		t.Errorf("after a restart firing %+v, want the v4 alert alone", got)
+	}
+	states, err := st.ListAlertStates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range states {
+		if s.Firing && s.Family == tree.FamilyV6 {
+			t.Errorf("the store still holds a firing v6 state: %+v", s)
+		}
+	}
+}
+
+// Protects the case the earlier rule could not see: the change is made while no
+// manager is running (the master is stopped, or the edit is made straight to
+// the database), so there is no previous reload to compare with. The first
+// reload of a fresh manager ends the state of the family the target no longer
+// has, and that alert does not fire until its rule is removed.
+func TestAFamilyDroppedWhileTheMasterWasStoppedIsEndedAtTheFirstReload(t *testing.T) {
+	ctx := context.Background()
+	st, m, leaf, _ := familyManager(t, nil)
+	for step := range 2 {
+		m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, step, 10, 0)})
+	}
+	if got := firingBy(m); len(got) != 1 {
+		t.Fatalf("setup: %d alerts firing, want v6", len(got))
+	}
+	// m is gone; the target is edited with nothing running.
+	setFamily(t, st, leaf, "gw.example.net", "v4")
+	m2 := alert.NewManager(st, nil)
+	if err := m2.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := m2.Firing(); len(got) != 0 {
+		t.Errorf("a v6 alert of a v4 target survived the first reload: %+v", got)
 	}
 	states, err := st.ListAlertStates(ctx)
 	if err != nil {
@@ -318,22 +400,5 @@ func TestChangingATargetsFamilyEndsWhatWasFiringOnTheOldOne(t *testing.T) {
 		if s.Firing {
 			t.Errorf("the store still holds a firing state: %+v", s)
 		}
-	}
-	// A restart reads the store, and must not find it firing there either.
-	m2 := alert.NewManager(st, nil)
-	if err := m2.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := m2.Firing(); len(got) != 0 {
-		t.Errorf("after a restart the ended alert is back: %+v", got)
-	}
-	// The new family is a series of its own and fires on its own evidence.
-	m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, 4, 10, 0)})
-	if got := m.Firing(); len(got) != 0 {
-		t.Errorf("one bad v6 interval fired a rule that needs two: %+v", got)
-	}
-	m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, 5, 10, 0)})
-	if got := firingBy(m); len(got) != 1 || got[tree.FamilyV6].Family != tree.FamilyV6 {
-		t.Errorf("two bad v6 intervals: firing %+v, want the v6 alert alone", got)
 	}
 }

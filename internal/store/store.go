@@ -237,9 +237,9 @@ type Store interface {
 	DeleteTarget(ctx context.Context, id int64) error
 	// RecordResolution appends a row to the DNS change log (DESIGN.md §5.4).
 	RecordResolution(ctx context.Context, targetID int64, family tree.Family, ts int64, address string) error
-	// LastResolution returns the most recently logged address for the target,
-	// or "" when none has been recorded.
-	LastResolution(ctx context.Context, targetID int64) (string, error)
+	// LastResolution returns the most recently logged address of one family of
+	// the target, or "" when none has been recorded.
+	LastResolution(ctx context.Context, targetID int64, family tree.Family) (string, error)
 	// LastPath and RecordPath keep the route change log (DESIGN.md §9a).
 	// Only changes are written: a route is stable for days and then is not.
 	LastPath(ctx context.Context, targetID, agentID int64, family tree.Family) (string, error)

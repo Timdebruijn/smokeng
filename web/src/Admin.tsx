@@ -360,6 +360,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
               >
                 <option value="v4">v4</option>
                 <option value="v6">v6</option>
+                <option value="both">v4 + v6</option>
               </select>
             </label>
           </>
@@ -718,6 +719,7 @@ function AddChildForm({
       <select aria-label="Address family" value={family} onChange={(e) => setFamily(e.target.value)} disabled={!host}>
         <option value="v4">v4</option>
         <option value="v6">v6</option>
+        <option value="both">v4 + v6</option>
       </select>
       <button type="submit" disabled={busy || !name}>
         Create

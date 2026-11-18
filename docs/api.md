@@ -102,7 +102,7 @@ prober), `from` and `to`. `availability` takes the same, plus `down_threshold`.
 | --- | --- | --- |
 | `target_id` | required | Target id, from `/api/v1/targets`. |
 | `agent_id` | `0`; for availability, every agent the target is assigned to | Vantage point. |
-| `family` | the target's current family | `v4`, `v6` or `unknown`: which of the target's series to read; anything else is `400`. `unknown` is history whose address family could not be established when the upgrade to schema 28 filed it, for example from before the target's `address_family` was changed (see [Upgrade and rollback](operations.md#upgrade-and-rollback)). Measurements, availability and paths only; the Arrow stream does not say which family it holds. |
+| `family` | the target's family; v4 for a target measured over both | `v4`, `v6` or `unknown`: which of the target's series to read; anything else is `400`. `unknown` is history whose address family could not be established when the upgrade to schema 28 filed it, for example from before the target's `address_family` was changed (see [Upgrade and rollback](operations.md#upgrade-and-rollback)). Measurements, availability and paths only; the Arrow stream does not say which family it holds. |
 | `from`, `to` | `to` = now, `from` = `to` minus 3600 | Unix seconds. |
 | `down_threshold` | `100` | Availability only: the loss percent at which an interval counts as down. |
 | `columns` | none | Measurements only: the width of the plot the read is for, 1 to 8192. See [pooled measurements](#pooled-measurements). |
@@ -185,6 +185,10 @@ ask for a shorter window, or more columns.
 `agents`, `retention_s` and more) as `local`, `effective` and `source`. `source` is `"local"`,
 the ancestor that provides the value, or `"outside"` when that ancestor is above the caller's
 scope. A group has `is_group: true` and a null `host`.
+
+`address_family` is `v4`, `v6` or `both`; `both` is two series of one target, and needs a hostname
+in `host`: with an IP address it is `400`, with a message saying so. The series routes read the v4
+series of such a target unless `family=v6` is given.
 
 ### Availability
 

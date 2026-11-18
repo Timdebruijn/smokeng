@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -669,5 +670,36 @@ func TestReplayNamesTheFamilyAndMatchesSilencesWithIt(t *testing.T) {
 	series = find(t, run(t, e.st, opts("loss", 0, 9)), "/Production/web", "local")
 	if len(series.Episodes) != 1 || !series.Episodes[0].FireSilenced {
 		t.Errorf("a silence scoped to v4 did not cover a v4 series: %+v", series.Episodes)
+	}
+}
+
+// Protects the replay of a target measured over both families: it is two
+// series, one per family, each judged on its own rows, as live. Run on a single
+// family, or on both pooled, the broken v6 would be missing or would be
+// averaged into a healthy v4.
+func TestReplayRunsOneSeriesPerFamilyOfATarget(t *testing.T) {
+	e := newEnv(t)
+	web := tree.Target{ID: e.web, ParentID: &e.prod, Name: "web", Enabled: true,
+		Host: ptr("web.example.net"), AddressFamily: ptr("both")}
+	if err := e.st.UpsertTarget(context.Background(), &web); err != nil {
+		t.Fatal(err)
+	}
+	e.save(e.rule(e.prod, "loss", alert.MetricLoss, alert.OpGreater, 20, 3, 3))
+	var ms []store.Measurement
+	for i := range 12 {
+		ms = append(ms,
+			store.Measurement{TargetID: e.web, Family: tree.FamilyV4, TS: at(i), Sent: 20, Received: 20, Samples: slices.Repeat([]uint32{5000}, 20)},
+			store.Measurement{TargetID: e.web, Family: tree.FamilyV6, TS: at(i), Sent: 20, Received: 5, Samples: slices.Repeat([]uint32{5000}, 5)})
+	}
+	if err := e.st.WriteMeasurements(context.Background(), ms); err != nil {
+		t.Fatal(err)
+	}
+	rep := run(t, e.st, opts("loss", 0, 12))
+	got := map[tree.Family]int{}
+	for _, s := range rep.Series {
+		got[s.Family] = len(s.Episodes)
+	}
+	if len(rep.Series) != 2 || got[tree.FamilyV4] != 0 || got[tree.FamilyV6] != 1 {
+		t.Errorf("episodes by family = %v over %d series, want one series each, v6 firing once and v4 never", got, len(rep.Series))
 	}
 }

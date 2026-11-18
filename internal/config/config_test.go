@@ -1018,3 +1018,43 @@ threshold = 40
 		t.Error("a misspelt severity was accepted")
 	}
 }
+
+// Protects "both" in the TOML: it imports, it is exported as written, and
+// importing the export gives the same target. A literal host with it is refused
+// at import, with the hint, since the file goes through the same validation as
+// the API.
+func TestAddressFamilyBothImportsExportsAndRefusesALiteral(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	const dual = "[targets.\"Lab/dual\"]\nhost = \"dual.example.net\"\naddress_family = \"both\"\n"
+	if _, err := Import(ctx, s, []byte(dual), false, false); err != nil {
+		t.Fatal(err)
+	}
+	_, byPath := mustTree(t, s)
+	n, ok := byPath["/Lab/dual"]
+	if !ok || n.AddressFamily == nil || *n.AddressFamily != "both" {
+		t.Fatalf("imported target = %+v, want address_family both", n)
+	}
+	if got := n.Families(); !reflect.DeepEqual(got, []tree.Family{tree.FamilyV4, tree.FamilyV6}) {
+		t.Errorf("Families = %v", got)
+	}
+	exported, err := Export(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(exported), `address_family = 'both'`) && !strings.Contains(string(exported), `address_family = "both"`) {
+		t.Errorf("export does not carry both:\n%s", exported)
+	}
+	s2 := open(t)
+	if _, err := Import(ctx, s2, exported, false, false); err != nil {
+		t.Fatalf("re-import of export: %v\n%s", err, exported)
+	}
+	if _, byPath := mustTree(t, s2); byPath["/Lab/dual"].AddressFamily == nil || *byPath["/Lab/dual"].AddressFamily != "both" {
+		t.Errorf("round trip lost both: %+v", byPath["/Lab/dual"])
+	}
+
+	_, err = Import(ctx, open(t), []byte("[targets.\"x\"]\nhost = \"192.0.2.1\"\naddress_family = \"both\"\n"), false, false)
+	if err == nil || !strings.Contains(err.Error(), "hostname") {
+		t.Errorf("both with a literal host: %v, want the hostname hint", err)
+	}
+}

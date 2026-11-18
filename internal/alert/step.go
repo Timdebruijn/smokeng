@@ -86,8 +86,10 @@ type Applicable struct {
 	IntervalS int
 	Path      string
 	Host      string
-	// Family is the address family the target is measured over.
-	Family tree.Family
+	// Families are the address families the target is measured over: one, or
+	// both. A rule is evaluated per family, and a series of any other family is
+	// not evaluated (Observe) and has no state (Reload).
+	Families []tree.Family
 	// ExcludePositionalLoss is the target's positional_loss setting: true when a
 	// rule on loss reads an interval flagged as losing at fixed send positions
 	// as one without loss.
@@ -124,7 +126,7 @@ func Resolve(targets []tree.Target, rules []Rule) (map[int64]Applicable, error) 
 			return nil, err
 		}
 		app := Applicable{
-			IntervalS: res.IntervalS.Effective, Path: path, Host: *n.Host, Family: n.Family(),
+			IntervalS: res.IntervalS.Effective, Path: path, Host: *n.Host, Families: n.Families(),
 			ExcludePositionalLoss: res.PositionalLoss.Effective == tree.PositionalExclude,
 		}
 		if node, ok := NearestRuleNode(tr, func(id int64) bool { return len(byNode[id]) > 0 }, n.ID); ok {

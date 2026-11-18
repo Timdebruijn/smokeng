@@ -337,12 +337,16 @@ matching. Adding a label makes Alertmanager see every alert as a new one once: a
 firing across the upgrade shows up a second time, and the old one expires after Alertmanager's
 resolve timeout.
 
-Changing a target's `address_family` ends whatever was firing on the old family: that series
-gets no more intervals, so nothing could ever clear it. No resolve is sent, since nothing
-recovered; Alertmanager expires the alert when it stops being repeated. The new family starts
-clean. This is done by the running master when it sees the change. If the family is changed
-while the master is stopped (an offline `config import`), an alert that was firing then stays
-listed until its rule is deleted and created again.
+A rule on a target with `address_family = "both"` is evaluated per family: the v4 series and the
+v6 series each have their own streak and state, fire and resolve apart, and carry their family in
+the `family` label. A healthy v6 never resolves a broken v4.
+
+A state of a family the target is not measured over has no series left to clear it. Every reload
+ends such a state, the first after a start included: changing a target from `both` to `v4` ends
+what was firing on v6, and so does a change made while the master was stopped (an offline `config
+import`), seen when the master starts. No resolve is sent, since nothing recovered; Alertmanager
+expires the alert when it stops being repeated. An interval of a family the target is not
+measured over is stored but not evaluated.
 
 **Where the URL lives.** A webhook URL is often the credential: a token in the path, a key
 in the query, a user and password before the host. `--alert-webhook` puts it in the

@@ -84,7 +84,7 @@ CREATE TABLE targets (
   parent_id      INTEGER REFERENCES targets(id),   -- NULL = root
   name           TEXT NOT NULL,
   host           TEXT,                              -- NULL for group nodes
-  address_family TEXT CHECK (address_family IN ('v4','v6')),  -- NULL for groups
+  address_family TEXT CHECK (address_family IN ('v4','v6','both')),  -- NULL for groups; the column is last in the table since v30
   title          TEXT,                              -- display name; falls back to name
   notes          TEXT,                              -- free-form remark, shown in UI
   hidden         INTEGER NOT NULL DEFAULT 0,        -- measured but not shown; ≠ enabled
@@ -159,13 +159,22 @@ Alerting follows the same key (schema v29): an alert's state is kept per
 to old rows by the same rule as above, judged at the event's or the baseline's time), a
 silence may be scoped to one family, and the webhook carries it as the `family` label.
 
+Schema v30 widens the CHECK of `targets.address_family` to admit `both`. A CHECK cannot be
+altered, and `targets` is not rebuilt (grants and silences reference it with cascading foreign
+keys), so the column is added anew with the wider CHECK, filled, the old one dropped and the new
+one renamed. The column ends up last; every reader names its columns.
+
 Notes:
 
 - `measurements` is `WITHOUT ROWID`: the table is clustered on the primary key, so the
   dominant query (range scan of one series over `[from, to)`) is a sequential B-tree walk.
 - The database is the single source of truth for targets from v0.1 on. TOML is an
   import/export format (§7.3), never a file the server watches or patches.
-- Address families are separate targets, per the brief. A dual-stack host is two rows.
+- Address families are separate series, never averaged or pooled. A dual-stack host is one
+  target with `address_family = 'both'` (schema v30; it needs a hostname, since a literal
+  address has one family) or two targets, one per family. A `both` target is measured by the
+  master's prober as two series with the same target id. Remote agents measure it over IPv4
+  only, and the assignment endpoint sends it to them as `v4`.
 - `received` is deliberately denormalized (derivable from the blob) so loss queries never
   decode blobs. On any discrepancy the blob is authoritative.
 - 100% loss still writes a row (`received = 0`, empty sample section) — the loss rail
@@ -556,7 +565,9 @@ Full kernel timestamping on Linux, both directions, from v0.1 — not the half v
   previous address until a new resolution succeeds.
 - On address change: log line + row in `resolutions` (§3.1). This makes anycast/failover
   flips visible in the UI later without storing anything per measurement.
-- `address_family` strictly selects A vs AAAA. Never "whatever resolves". A lookup that gives
+- `address_family` strictly selects A vs AAAA. Never "whatever resolves". `both` is two loops,
+  one per family, each resolving, checking its route and logging its resolutions on its own:
+  `LastResolution` is per family, so one loop's address is never the other's previous one. A lookup that gives
   no address is logged and the interval is stored as no data with the reason `no address`
   (§8.2), not skipped silently. A lookup that fails for any reason on a name that never
   resolved is no address. A name that resolved earlier in this run of the prober keeps being
@@ -950,10 +961,10 @@ A row that fails those last two, or that claims more replies than probes, is dro
 the rest accepted — a 400 makes the agent discard its whole batch, so one bad row must not
 cost the rest. The batch carries `loss_mask` (§3.4) as an optional nullable `Binary` column
 beside `send_error`. So does `family` (`Uint8`, 4 or 6, null when the agent's store holds the
-row as unknown): the master files a row under the family it states, and under the target's current
-family when it states none or a value that is not a family; the row is kept either way, as it is
-when a mask does not fit. A row of a family other
-than the target's current one is stored but not handed to alerting, since a state kept for it
+row as unknown): the master files a row under the family it states, and under the target's default
+family (v4 for a target measured over both) when it states none or a value that is not a family; the
+row is kept either way, as it is when a mask does not fit. A row of a family the target is not
+measured over is stored but not handed to alerting, since a state kept for it
 would have no later interval to clear it. The master checks each mask against its row's `sent` and `received`,
 and against the part of the prober's rule a row can show (its flags, and that the loss is
 partial), and drops a mask that fails either, keeping the row and logging one line per

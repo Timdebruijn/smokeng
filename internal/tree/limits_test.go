@@ -493,3 +493,51 @@ func TestADisabledTargetIsNotHeldToTheLoadLimits(t *testing.T) {
 		t.Errorf("a new disabled target over the load limit was refused: %v", err)
 	}
 }
+
+// A target measured over both families is two probe loops at one host, so it is
+// held to the limits at twice the rate: a load that is allowed over one family
+// is refused over both, a change from one family to both is checked as a change
+// that makes things worse, and it counts twice against the total. Counted once,
+// a tree at the total limit could double what it sends by switching every
+// target to both, and nothing would refuse it.
+func TestATargetOverBothFamiliesCountsTwiceAgainstTheLimits(t *testing.T) {
+	leafWith := func(family string, pings int) []Target {
+		l := Target{ID: 3, ParentID: ptr(int64(2)), Name: "l", Enabled: true, Host: ptr("gw.example"), AddressFamily: ptr(family),
+			Settings: Settings{PingsPerInterval: ptr(pings), IntervalS: ptr(1), TimeoutMS: ptr(1000), BurstGapMS: ptr(1)}}
+		return withLeaf(testTargets()[0], l, Settings{})
+	}
+	if err := CheckTreeLimits(nil, leafWith("v4", 60)); err != nil {
+		t.Fatalf("setup: 60 pings a second over one family was refused: %v", err)
+	}
+	if err := CheckTreeLimits(nil, leafWith("both", 50)); err != nil {
+		t.Errorf("50 pings a second over both families is 100, the limit, and was refused: %v", err)
+	}
+	err := CheckTreeLimits(nil, leafWith("both", 60))
+	if err == nil || !strings.Contains(err.Error(), "over 2 address families") || !strings.Contains(err.Error(), "120 a second") {
+		t.Errorf("60 pings a second over both families = %v, want a refusal naming 120 a second over 2 address families", err)
+	}
+	// The same settings, only the family changed: not "no worse than before".
+	if err := CheckTreeLimits(leafWith("v4", 60), leafWith("both", 60)); err == nil {
+		t.Error("changing a target at 60 pings a second from v4 to both was accepted")
+	}
+	// And back down is always allowed.
+	if err := CheckTreeLimits(leafWith("both", 60), leafWith("v4", 60)); err != nil {
+		t.Errorf("changing an over-limit both target to v4 was refused: %v", err)
+	}
+
+	build := func(n int, family string) []Target {
+		ts := testTargets()[:2]
+		for i := 0; i < n; i++ {
+			ts = append(ts, Target{ID: int64(100 + i), ParentID: ptr(int64(2)), Name: fmt.Sprintf("t%d", i), Enabled: true,
+				Host: ptr("gw.example"), AddressFamily: ptr(family),
+				Settings: Settings{PingsPerInterval: ptr(50), IntervalS: ptr(1), TimeoutMS: ptr(1000), BurstGapMS: ptr(1)}})
+		}
+		return ts
+	}
+	if err := CheckTreeLimits(nil, build(100, "v4")); err != nil {
+		t.Fatalf("setup: 100 targets at 50 a second, the total limit, was refused: %v", err)
+	}
+	if err := CheckTreeLimits(build(100, "v4"), build(100, "both")); err == nil {
+		t.Error("a tree at the total limit doubled its load by switching to both, and was accepted")
+	}
+}

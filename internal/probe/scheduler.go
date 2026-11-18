@@ -407,9 +407,9 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	// property of the socket, not of this bucket, and it will keep happening
 	// until the process restarts.
 	if suspectTX > 0 {
-		log.Printf("probe: target %d (%s): discarded %d kernel transmit stamp(s) that did not fit "+
+		log.Printf("probe: %s (%s): discarded %d kernel transmit stamp(s) that did not fit "+
 			"the ping they were attributed to; using userspace timestamps for those",
-			spec.TargetID, spec.Host, suspectTX)
+			spec.label(), spec.Host, suspectTX)
 	}
 
 	if len(errCounts) > 0 {

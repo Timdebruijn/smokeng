@@ -113,7 +113,7 @@ type lossPatternReport struct {
 	From   time.Time           `json:"from"`
 	To     time.Time           `json:"to"`
 	Series []lossPatternSeries `json:"series"`
-	// other is set when Family is not the target's current one, which the text
+	// other is set when Family is not one the target is measured over now, which the text
 	// form then says; the JSON always carries Family.
 	other bool
 }
@@ -221,7 +221,7 @@ func diagLossPattern(args []string, now time.Time, stdout io.Writer) error {
 	if a.named {
 		family = a.family
 	}
-	rep := lossPatternReport{Schema: 1, Target: p, Family: family.String(), other: family != leaf.Family(),
+	rep := lossPatternReport{Schema: 1, Target: p, Family: family.String(), other: !slices.Contains(leaf.Families(), family),
 		From: time.Unix(a.from, 0).UTC(), To: time.Unix(a.to, 0).UTC(), Series: []lossPatternSeries{}}
 	for _, id := range agents {
 		acc := lossPatternSeries{Vantage: names[id], AgentID: id}

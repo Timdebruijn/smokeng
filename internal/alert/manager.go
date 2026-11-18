@@ -69,10 +69,6 @@ type Manager struct {
 	// not persisted: a restart re-warms it, which is honest, since a baseline
 	// smokeng has not observed since restart is not one it can judge against.
 	shapes map[stateKey]*shapeState
-	// left is, per target, the family it was last changed away from. No series
-	// of that family is measured any more, so its states are ended at every
-	// reload and its intervals are not evaluated (see Reload).
-	left map[int64]tree.Family
 	// golden holds captured reference distributions for golden-baseline shape
 	// rules, keyed by rule id, with what each was taken from so the API can say
 	// which window and series it came from. Loaded in Reload from the store.
@@ -92,7 +88,6 @@ func NewManager(st Store, notifier Notifier) *Manager {
 		agentNames: map[int64]string{},
 		ancestors:  map[int64]map[int64]bool{},
 		shapes:     map[stateKey]*shapeState{},
-		left:       map[int64]tree.Family{},
 		golden:     map[int64]Baselined{},
 	}
 }
@@ -162,37 +157,30 @@ func (m *Manager) Reload(ctx context.Context) error {
 			kept[key] = live
 		}
 	}
-	// A target whose family was changed is no longer measured over the old one,
-	// so no interval will ever arrive to clear what was firing there: keyed on
-	// the family, that alert would fire, and be repeated to the webhook, for
-	// good. Its series has ended; so does its state. No resolve is sent, since
-	// nothing recovered: Alertmanager expires an alert it stops hearing about.
+	// A state of a family its target is not measured over has no series left
+	// to clear it: no interval of that family will arrive, so keyed on the
+	// family the alert would fire, and be repeated to the webhook, for good.
+	// Such a state is ended, and so is its shape memory. No resolve is sent,
+	// since nothing recovered: Alertmanager expires an alert it stops hearing
+	// about.
 	//
-	// The family a target left is remembered, and its states are ended at every
-	// reload, not only the one that sees the change. Two things can put such a
-	// state back after it was ended: an Observe that took its snapshot before
-	// this reload and saves it afterwards, and a save below that failed. Both
-	// leave a firing row in the store, and the next reload reads it and ends it
-	// again. Observe, for its part, does not evaluate an interval of that
-	// family: the prober's old loop is stopped only after this returns and can
-	// still deliver one.
+	// This is a standing rule applied at every reload, the first after a start
+	// included, not a reaction to a change: it needs no memory of what the
+	// target was before, so a family dropped while the master was stopped is
+	// ended too, and so is a state that comes back after it was ended. Two
+	// things can bring one back: an Observe that took its snapshot before this
+	// reload and saves it afterwards, and a save below that failed. Both leave a
+	// firing row in the store, which the next reload reads and ends again.
+	// Observe, for its part, does not evaluate an interval of such a family: the
+	// prober's old loop is stopped only after this returns and can still
+	// deliver one.
 	//
-	// A change made while the master is stopped is not seen, since there is
-	// nothing to compare with, and that alert stays until its rule is removed.
-	// Telling a family a target is no longer measured over from one it is, as a
-	// standing rule, has to wait until a target can say it has two.
-	for id, was := range m.byTarget {
-		now, still := resolved[id]
-		switch {
-		case !still:
-			delete(m.left, id)
-		case was.Family != now.Family:
-			m.left[id] = was.Family
-		}
-	}
+	// A target that is not in the resolved set (a group, disabled, deleted) is
+	// not judged here: it has no families to compare with.
 	var ended []State
 	for key, st := range kept {
-		if f, ok := m.left[key.targetID]; !ok || f != key.family {
+		app, ok := resolved[key.targetID]
+		if !ok || slices.Contains(app.Families, key.family) {
 			continue
 		}
 		if st.Firing {
@@ -249,9 +237,10 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 		if !ok || len(app.Rules) == 0 {
 			continue
 		}
-		// A late interval of the family the target was changed away from. It
-		// would start a state that nothing after it could clear.
-		if f, ok := m.left[meas.TargetID]; ok && f == meas.Family {
+		// An interval of a family the target is not measured over, such as a
+		// late one of the family it was changed away from. It would start a
+		// state that nothing after it could clear.
+		if !slices.Contains(app.Families, meas.Family) {
 			continue
 		}
 		for _, r := range app.Rules {

@@ -84,7 +84,8 @@ type SeriesReport struct {
 	TargetID  int64  `json:"target_id"`
 	Vantage   string `json:"vantage"`
 	AgentID   int64  `json:"agent_id"`
-	// Family is the family the series was read over: the target's current one.
+	// Family is the family the series was read over; a target measured over
+	// both has a series of each.
 	Family         tree.Family `json:"family"`
 	Intervals      int         `json:"intervals"`
 	Fired          int         `json:"fired"`
@@ -353,11 +354,15 @@ func Run(ctx context.Context, src Source, opts Options) (*Report, error) {
 		if app.IntervalS <= 0 {
 			return nil, fmt.Errorf("replay: %s has interval %d", app.Path, app.IntervalS)
 		}
+		// One series per family the target is measured over, as live: a target
+		// measured over both is two series, each with its own state.
 		for _, agent := range agentIDs {
-			jobs = append(jobs, &seriesRun{
-				src: src, opts: opts, mode: mode, silences: silences, golden: goldenOf,
-				ancestors: ancestors[leaf], leaf: leaf, family: tr.FamilyOf(leaf), agent: agent, app: app, rules: rules,
-			})
+			for _, fam := range app.Families {
+				jobs = append(jobs, &seriesRun{
+					src: src, opts: opts, mode: mode, silences: silences, golden: goldenOf,
+					ancestors: ancestors[leaf], leaf: leaf, family: fam, agent: agent, app: app, rules: rules,
+				})
+			}
 		}
 	}
 
@@ -401,7 +406,7 @@ func Run(ctx context.Context, src Source, opts Options) (*Report, error) {
 
 	slices.SortStableFunc(rep.Series, func(a, b SeriesReport) int {
 		return cmp.Or(cmp.Compare(a.RuleNode, b.RuleNode), cmp.Compare(a.Rule, b.Rule),
-			cmp.Compare(a.Target, b.Target), cmp.Compare(a.Vantage, b.Vantage))
+			cmp.Compare(a.Target, b.Target), cmp.Compare(a.Vantage, b.Vantage), cmp.Compare(a.Family, b.Family))
 	})
 	for _, s := range rep.Series {
 		rep.Totals.Series++
@@ -427,7 +432,7 @@ type seriesRun struct {
 	golden    map[int64]alert.Baselined
 	ancestors map[int64]bool
 	leaf      int64
-	family    tree.Family // the target's current one
+	family    tree.Family // one of the families the target is measured over
 	agent     int64
 	app       alert.Applicable
 	rules     []*alert.Rule

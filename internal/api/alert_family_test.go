@@ -14,9 +14,8 @@ import (
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
-// alertFamilyServer is a v4 target with a loss rule firing for both families
-// (fed to the manager directly: no target can have two families through
-// configuration yet) and a golden shape rule, with stored measurements that
+// alertFamilyServer is a target measured over both families with a loss rule
+// firing for both and a golden shape rule, with stored measurements that
 // tell the families apart: v4 samples are 100 µs, v6 samples 200 µs and fewer.
 func alertFamilyServer(t *testing.T) (h http.Handler, leaf int64, lossRule, shapeRule alert.Rule) {
 	t.Helper()
@@ -26,7 +25,7 @@ func alertFamilyServer(t *testing.T) (h http.Handler, leaf int64, lossRule, shap
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	tg := tree.Target{ParentID: new(int64(1)), Name: "web", Enabled: true, Host: new("192.0.2.1"), AddressFamily: new("v4")}
+	tg := tree.Target{ParentID: new(int64(1)), Name: "web", Enabled: true, Host: new("web.example.net"), AddressFamily: new("both")}
 	if err := st.UpsertTarget(ctx, &tg); err != nil {
 		t.Fatal(err)
 	}

@@ -80,9 +80,25 @@ with neither is a *group*: it exists to hold settings and to organise the UI. Se
 one of the two is an error. Intermediate groups are created automatically if you skip
 them, so you can declare a deep path directly.
 
-IPv4 and IPv6 are separate targets, on purpose. A host that answers on both is two
-measurements — they take different paths and fail independently, and averaging them
-together would hide exactly the problem you are looking for.
+`address_family` is `v4`, `v6` or `both`. `v4` and `v6` measure the host over that family
+only. `both` measures it over IPv4 and IPv6, and needs a hostname: with an IP address as
+`host` it is refused, because an address has one family (use `v4` or `v6`, or give a name).
+The setting belongs to the target and is not inherited.
+
+IPv4 and IPv6 are separate series, on purpose. A host that answers on both is two
+measurements — they take different paths and fail independently, and averaging or pooling
+them would hide exactly the problem you are looking for. A target set to `both` carries both
+series, each stored, graphed and alerted on by itself; two targets, one `v4` and one `v6`,
+remain possible and mean the same.
+
+`both` is measured by the master's own prober. A remote agent measures a `both` target over
+IPv4 only (see [Agents](agents.md#versions)). On a host with no route for one family, or a name
+with no record of it, that family's series is no data, which is the expected result and not an
+error (see [What loss means](probes.md#what-loss-means)). A `both` target is probed twice, once
+per family, and counts twice against the [limits](#limits).
+
+For now the web UI's graphs show the IPv4 series of a `both` target. The IPv6 series is read
+through the API (`family=v6`, see [api.md](api.md)) or the CLI (`--family v6`).
 
 ## Inheritance
 
