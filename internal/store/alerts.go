@@ -108,7 +108,7 @@ func (s *SQLite) DeleteAlertRule(ctx context.Context, id int64) error {
 // ListAlertStates returns the standing of every rule that has been evaluated.
 func (s *SQLite) ListAlertStates(ctx context.Context) ([]alert.State, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT rule_id, target_id, agent_id, firing, COALESCE(since, 0), streak, COALESCE(last_ts, 0), value,
+		SELECT rule_id, target_id, agent_id, family, firing, COALESCE(since, 0), streak, COALESCE(last_ts, 0), value,
 			COALESCE(acked_since, 0), COALESCE(acked_at, 0), COALESCE(acked_by, '')
 		FROM alert_state`)
 	if err != nil {
@@ -118,7 +118,7 @@ func (s *SQLite) ListAlertStates(ctx context.Context) ([]alert.State, error) {
 	var out []alert.State
 	for rows.Next() {
 		var st alert.State
-		if err := rows.Scan(&st.RuleID, &st.TargetID, &st.AgentID, &st.Firing,
+		if err := rows.Scan(&st.RuleID, &st.TargetID, &st.AgentID, &st.Family, &st.Firing,
 			&st.Since, &st.Streak, &st.LastTS, &st.Value,
 			&st.AckedSince, &st.AckedAt, &st.AckedBy); err != nil {
 			return nil, err
@@ -142,9 +142,9 @@ func (s *SQLite) SaveAlertStates(ctx context.Context, states []alert.State) erro
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT OR REPLACE INTO alert_state
-			(rule_id, target_id, agent_id, firing, since, streak, last_ts, value,
+			(rule_id, target_id, agent_id, family, firing, since, streak, last_ts, value,
 			 acked_since, acked_at, acked_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (s *SQLite) SaveAlertStates(ctx context.Context, states []alert.State) erro
 		if st.AckedSince != 0 {
 			ackedSince, ackedAt, ackedBy = st.AckedSince, st.AckedAt, st.AckedBy
 		}
-		if _, err := stmt.ExecContext(ctx, st.RuleID, st.TargetID, st.AgentID,
+		if _, err := stmt.ExecContext(ctx, st.RuleID, st.TargetID, st.AgentID, st.Family,
 			st.Firing, since, st.Streak, lastTS, st.Value,
 			ackedSince, ackedAt, ackedBy); err != nil {
 			return err

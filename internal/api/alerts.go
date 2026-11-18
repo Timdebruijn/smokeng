@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/timdebruijn/smokeng/internal/alert"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // handleAlertRules lists every rule with the node it is defined on. Which
@@ -236,6 +237,7 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 			"target":    path,
 			"host":      a.TargetHost,
 			"agent":     a.AgentName,
+			"family":    a.Family.String(),
 			"value":     a.Value,
 			"describes": a.Rule.Describe(),
 			// The identifiers the acknowledge endpoint needs — the names alone
@@ -293,7 +295,7 @@ func (s *server) handleAlertEvents(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{
 			"id": e.ID, "ts": e.TS, "firing": e.Firing,
 			"rule": e.RuleName, "describes": e.Describes, "value": e.Value,
-			"target": paths[e.TargetID], "agent_id": e.AgentID,
+			"target": paths[e.TargetID], "agent_id": e.AgentID, "family": e.Family.String(),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": out})
@@ -308,7 +310,9 @@ func (s *server) handleAckAlert(w http.ResponseWriter, r *http.Request) {
 		RuleID   int64 `json:"rule_id"`
 		TargetID int64 `json:"target_id"`
 		AgentID  int64 `json:"agent_id"`
-		Ack      *bool `json:"ack"` // absent means acknowledge; false clears it
+		// Family is the series' family; absent means the target's current one.
+		Family *tree.Family `json:"family"`
+		Ack    *bool        `json:"ack"` // absent means acknowledge; false clears it
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
 		badRequest(w, err)
@@ -317,17 +321,22 @@ func (s *server) handleAckAlert(w http.ResponseWriter, r *http.Request) {
 	// Write on the target the alert is about: acknowledging is an operational
 	// action on shared state, so an editor of that subtree may do it and a
 	// viewer may not.
-	if _, ok := s.requireWrite(w, r, body.TargetID); !ok {
+	sc, ok := s.requireWrite(w, r, body.TargetID)
+	if !ok {
 		return
 	}
+	family := sc.tr.FamilyOf(body.TargetID)
+	if body.Family != nil {
+		family = *body.Family
+	}
 	ack := body.Ack == nil || *body.Ack
-	changed, err := s.alerts.Acknowledge(r.Context(), body.RuleID, body.TargetID, body.AgentID, ack, s.callerName(r))
+	changed, err := s.alerts.Acknowledge(r.Context(), body.RuleID, body.TargetID, body.AgentID, family, ack, s.callerName(r))
 	if err != nil {
 		internalError(w, err)
 		return
 	}
 	if !changed {
-		// Nothing firing for that (rule, target, agent) — it may have resolved
+		// Nothing firing for that (rule, target, agent, family) — it may have resolved
 		// between the page loading and the click. Say so rather than imply an
 		// ack landed on a problem that is over.
 		notFound(w)

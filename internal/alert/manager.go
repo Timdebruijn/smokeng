@@ -32,8 +32,10 @@ type Store interface {
 	RecordAlertEvents(ctx context.Context, events []Event) error
 }
 
+// stateKey is a series' rule standing: the series is (target, agent, family).
 type stateKey struct {
 	ruleID, targetID, agentID int64
+	family                    tree.Family
 }
 
 // Manager owns rule resolution, evaluation state and notification. It is fed
@@ -139,7 +141,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 		if _, ok := byID[st.RuleID]; !ok {
 			continue
 		}
-		kept[stateKey{st.RuleID, st.TargetID, st.AgentID}] = &st
+		kept[stateKey{st.RuleID, st.TargetID, st.AgentID, st.Family}] = &st
 	}
 
 	m.mu.Lock()
@@ -193,10 +195,10 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 			continue
 		}
 		for _, r := range app.Rules {
-			key := stateKey{r.ID, meas.TargetID, meas.AgentID}
+			key := stateKey{r.ID, meas.TargetID, meas.AgentID, meas.Family}
 			st, ok := m.states[key]
 			if !ok {
-				st = &State{RuleID: r.ID, TargetID: meas.TargetID, AgentID: meas.AgentID}
+				st = &State{RuleID: r.ID, TargetID: meas.TargetID, AgentID: meas.AgentID, Family: meas.Family}
 				m.states[key] = st
 			}
 			// An interval at or before the last one this rule has seen is
@@ -285,7 +287,7 @@ func (m *Manager) alertLocked(r *Rule, st *State, app Applicable, firing bool) A
 		agentName = fmt.Sprintf("agent %d", st.AgentID)
 	}
 	a := Alert{
-		Rule: r, TargetID: st.TargetID, AgentID: st.AgentID,
+		Rule: r, TargetID: st.TargetID, AgentID: st.AgentID, Family: st.Family,
 		TargetPath: app.Path, TargetHost: app.Host,
 		AgentName: agentName, Firing: firing, Value: st.Value,
 	}
@@ -313,16 +315,16 @@ func (m *Manager) alertLocked(r *Rule, st *State, app Applicable, firing bool) A
 
 // Acknowledge marks a firing alert seen, or clears that mark when ack is false.
 // It returns whether a firing alert was found to change — false when nothing is
-// firing for that (rule, target, agent), so the caller can answer 404 rather
+// firing for that (rule, target, agent, family), so the caller can answer 404 rather
 // than pretend it did something.
 //
 // The change is persisted at once rather than waiting for the next
 // measurement's save, so an acknowledgement is not lost to a restart in the
 // gap — and because firing state is itself persisted, the ack still matches its
 // episode after a restart.
-func (m *Manager) Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, ack bool, by string) (bool, error) {
+func (m *Manager) Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, family tree.Family, ack bool, by string) (bool, error) {
 	m.mu.Lock()
-	st, ok := m.states[stateKey{ruleID, targetID, agentID}]
+	st, ok := m.states[stateKey{ruleID, targetID, agentID, family}]
 	if !ok || !st.Firing {
 		m.mu.Unlock()
 		return false, nil
@@ -386,7 +388,7 @@ func (m *Manager) silencedLocked(now int64, a Alert) (bool, int64) {
 	silenced := false
 	for i := range m.silences {
 		s := &m.silences[i]
-		if !s.Covers(now, ruleID, a.AgentID, m.ancestors[a.TargetID]) {
+		if !s.Covers(now, ruleID, a.AgentID, a.Family, m.ancestors[a.TargetID]) {
 			continue
 		}
 		silenced = true
@@ -498,17 +500,19 @@ type ShapeRef struct {
 	Samples []uint32
 	Kind    string
 	OK      bool
-	// Source is the series a golden reference was captured from; HasSource is
-	// false for a rolling reference, which is the target's own history.
-	Source    int64
-	HasSource bool
+	// Source is the series a golden reference was captured from (its target and
+	// family); HasSource is false for a rolling reference, which is the series'
+	// own history.
+	Source       int64
+	SourceFamily tree.Family
+	HasSource    bool
 }
 
 // ShapeReferenceDetail returns the distribution a shape rule is comparing
 // against for one series (captured for golden, pooled history for rolling) and,
 // for golden, the series it was captured from, read under one lock. OK is false
 // when there is nothing to compare against yet.
-func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64) ShapeRef {
+func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64, family tree.Family) ShapeRef {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, exists := m.rules[ruleID]
@@ -519,11 +523,11 @@ func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64) ShapeRef
 		b, ok := m.golden[ruleID]
 		ref := ShapeRef{Samples: b.Samples, Kind: "golden", OK: len(b.Samples) > 0}
 		if ok {
-			ref.Source, ref.HasSource = b.TargetID, true
+			ref.Source, ref.SourceFamily, ref.HasSource = b.TargetID, b.Family, true
 		}
 		return ref
 	}
-	ss := m.shapes[stateKey{ruleID, targetID, agentID}]
+	ss := m.shapes[stateKey{ruleID, targetID, agentID, family}]
 	if ss == nil {
 		return ShapeRef{Kind: "rolling"}
 	}
@@ -545,7 +549,7 @@ func (m *Manager) record(ctx context.Context, alerts []Alert) {
 	events := make([]Event, 0, len(alerts))
 	for _, a := range alerts {
 		events = append(events, Event{
-			TS: transitionTS(a, now), RuleID: a.Rule.ID, TargetID: a.TargetID, AgentID: a.AgentID,
+			TS: transitionTS(a, now), RuleID: a.Rule.ID, TargetID: a.TargetID, AgentID: a.AgentID, Family: a.Family,
 			Firing: a.Firing, RuleName: a.Rule.Name, Describes: a.Rule.Describe(), Value: a.Value,
 		})
 	}

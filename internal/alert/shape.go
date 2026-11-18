@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/timdebruijn/smokeng/internal/shape"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // Baselined is a captured reference distribution for a golden-baseline shape
@@ -13,15 +14,17 @@ import (
 // been doing lately. What it was taken from is kept with it — an anonymous curve
 // nobody can trace back is not evidence of anything.
 type Baselined struct {
-	RuleID     int64    `json:"rule_id"`
-	TargetID   int64    `json:"target_id"`
-	AgentID    int64    `json:"agent_id"`
-	FromTS     int64    `json:"from_ts"`
-	ToTS       int64    `json:"to_ts"`
-	Intervals  int      `json:"intervals"`
-	Samples    []uint32 `json:"-"`
-	CapturedAt int64    `json:"captured_at"`
-	CapturedBy string   `json:"captured_by"`
+	RuleID   int64 `json:"rule_id"`
+	TargetID int64 `json:"target_id"`
+	AgentID  int64 `json:"agent_id"`
+	// Family is the family of the series it was captured from.
+	Family     tree.Family `json:"family"`
+	FromTS     int64       `json:"from_ts"`
+	ToTS       int64       `json:"to_ts"`
+	Intervals  int         `json:"intervals"`
+	Samples    []uint32    `json:"-"`
+	CapturedAt int64       `json:"captured_at"`
+	CapturedBy string      `json:"captured_by"`
 }
 
 // How much history a shape rule keeps, and how much it needs before it will fire.

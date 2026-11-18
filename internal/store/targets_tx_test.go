@@ -139,7 +139,7 @@ func TestDeletingATargetTakesItsRulesAndTheirStateAlong(t *testing.T) {
 	if err := s.UpsertAlertRule(ctx, &rule); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`INSERT INTO alert_state (rule_id, target_id, agent_id, firing) VALUES (?, ?, 0, 1)`, rule.ID, target); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO alert_state (rule_id, target_id, agent_id, family, firing) VALUES (?, ?, 0, 4, 1)`, rule.ID, target); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.WriteMeasurements(ctx, []Measurement{{TargetID: target, TS: 1000, Sent: 1, Received: 1, Samples: []uint32{5}}}); err != nil {
@@ -177,7 +177,7 @@ func TestDeletingATargetTakesTheStateOfInheritedRulesToo(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tgt := range []int64{leaf, other} {
-		if _, err := s.db.Exec(`INSERT INTO alert_state (rule_id, target_id, agent_id, firing) VALUES (?, ?, 0, 1)`, rule.ID, tgt); err != nil {
+		if _, err := s.db.Exec(`INSERT INTO alert_state (rule_id, target_id, agent_id, family, firing) VALUES (?, ?, 0, 4, 1)`, rule.ID, tgt); err != nil {
 			t.Fatal(err)
 		}
 	}

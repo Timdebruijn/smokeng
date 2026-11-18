@@ -177,6 +177,7 @@ func (m *Measurement) AlertInput() alert.Input {
 	return alert.Input{
 		TargetID:    m.TargetID,
 		AgentID:     m.AgentID,
+		Family:      m.Family,
 		TS:          m.TS,
 		Sent:        m.Sent,
 		Received:    m.Received,

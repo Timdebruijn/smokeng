@@ -637,3 +637,37 @@ func TestNoMoreThanFourSeriesAtOnce(t *testing.T) {
 		t.Errorf("%d series were being read at once, want between 1 and 4", p)
 	}
 }
+
+// Protects the family of a replayed series and the family scope of a silence in
+// a replay: the series says the family it was read over (the target's current
+// one), a silence scoped to the other family covers nothing of it, and one
+// scoped to its own family covers it, as the live manager decides.
+func TestReplayNamesTheFamilyAndMatchesSilencesWithIt(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.save(e.rule(e.prod, "loss", alert.MetricLoss, alert.OpGreater, 20, 2, 2))
+	e.put(e.web, 0, lossPattern("ggbbbbggg"))
+	v4, v6 := tree.FamilyV4, tree.FamilyV6
+	for _, s := range []alert.Silence{
+		{Family: &v6, StartsAt: at(0), EndsAt: at(20), Reason: "t", CreatedBy: "t"},
+	} {
+		if err := e.st.CreateSilence(ctx, &s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	series := find(t, run(t, e.st, opts("loss", 0, 9)), "/Production/web", "local")
+	if series.Family != v4 {
+		t.Errorf("series family = %v, want v4", series.Family)
+	}
+	if len(series.Episodes) != 1 || series.Episodes[0].FireSilenced || series.Episodes[0].ResolveSilenced {
+		t.Errorf("a silence scoped to v6 covered a v4 series: %+v", series.Episodes)
+	}
+
+	if err := e.st.CreateSilence(ctx, &alert.Silence{Family: &v4, StartsAt: at(0), EndsAt: at(20), Reason: "t", CreatedBy: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	series = find(t, run(t, e.st, opts("loss", 0, 9)), "/Production/web", "local")
+	if len(series.Episodes) != 1 || !series.Episodes[0].FireSilenced {
+		t.Errorf("a silence scoped to v4 did not cover a v4 series: %+v", series.Episodes)
+	}
+}

@@ -16,6 +16,8 @@ package alert
 import (
 	"fmt"
 	"math"
+
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // Input is the part of a measurement that alerting reads. Keeping it narrow
@@ -24,9 +26,12 @@ import (
 // underlying measurement can be trusted for each kind of question.
 type Input struct {
 	TargetID, AgentID int64
-	TS                int64
-	Sent, Received    int
-	Samples           []uint32 // RTTs in µs, sorted ascending
+	// Family is the address family the interval was measured over; with the
+	// target and the agent it names the series.
+	Family         tree.Family
+	TS             int64
+	Sent, Received int
+	Samples        []uint32 // RTTs in µs, sorted ascending
 	// LossTrusted is false when the loss figure includes replies smokeng
 	// itself dropped; RTTTrusted is false when a clock step made the RTTs
 	// unreliable. Alerting on either would page someone about smokeng rather
@@ -193,7 +198,10 @@ type State struct {
 	RuleID   int64
 	TargetID int64
 	AgentID  int64
-	Firing   bool
+	// Family is the family of the series: one rule on one target has a state of
+	// its own per family, so the two fire, resolve and are acknowledged apart.
+	Family tree.Family
+	Firing bool
 	// Since is the interval at which the current firing period began.
 	Since int64
 	// Streak counts consecutive intervals pushing towards the opposite
@@ -364,6 +372,7 @@ type Event struct {
 	RuleID    int64
 	TargetID  int64
 	AgentID   int64
+	Family    tree.Family
 	Firing    bool
 	RuleName  string
 	Describes string

@@ -11,7 +11,7 @@ import (
 // the manager by rule id.
 func (s *SQLite) ListAlertBaselines(ctx context.Context) ([]alert.Baselined, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT rule_id, target_id, agent_id, from_ts, to_ts, intervals, samples, captured_at, captured_by
+		SELECT rule_id, target_id, agent_id, family, from_ts, to_ts, intervals, samples, captured_at, captured_by
 		FROM alert_baselines`)
 	if err != nil {
 		return nil, err
@@ -21,7 +21,7 @@ func (s *SQLite) ListAlertBaselines(ctx context.Context) ([]alert.Baselined, err
 	for rows.Next() {
 		var b alert.Baselined
 		var blob []byte
-		if err := rows.Scan(&b.RuleID, &b.TargetID, &b.AgentID, &b.FromTS, &b.ToTS,
+		if err := rows.Scan(&b.RuleID, &b.TargetID, &b.AgentID, &b.Family, &b.FromTS, &b.ToTS,
 			&b.Intervals, &blob, &b.CapturedAt, &b.CapturedBy); err != nil {
 			return nil, err
 		}
@@ -41,14 +41,14 @@ func (s *SQLite) SaveAlertBaseline(ctx context.Context, b *alert.Baselined) erro
 	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO alert_baselines
-			(rule_id, target_id, agent_id, from_ts, to_ts, intervals, samples, captured_at, captured_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(rule_id, target_id, agent_id, family, from_ts, to_ts, intervals, samples, captured_at, captured_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(rule_id) DO UPDATE SET
-			target_id = excluded.target_id, agent_id = excluded.agent_id,
+			target_id = excluded.target_id, agent_id = excluded.agent_id, family = excluded.family,
 			from_ts = excluded.from_ts, to_ts = excluded.to_ts,
 			intervals = excluded.intervals, samples = excluded.samples,
 			captured_at = excluded.captured_at, captured_by = excluded.captured_by`,
-		b.RuleID, b.TargetID, b.AgentID, b.FromTS, b.ToTS, b.Intervals, blob,
+		b.RuleID, b.TargetID, b.AgentID, b.Family, b.FromTS, b.ToTS, b.Intervals, blob,
 		b.CapturedAt, b.CapturedBy)
 	return err
 }

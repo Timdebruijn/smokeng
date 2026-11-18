@@ -31,7 +31,7 @@ type AlertView interface {
 	Delivering() bool
 	// Acknowledge marks a firing alert seen (or clears it), returning whether a
 	// firing alert existed to change.
-	Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, ack bool, by string) (bool, error)
+	Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, family tree.Family, ack bool, by string) (bool, error)
 	// Silences: suppress delivery and attention for matching alerts over a time
 	// window, applied at once rather than at the next reload.
 	ListSilences() []alert.Silence
@@ -44,7 +44,7 @@ type AlertView interface {
 	ClearBaseline(ctx context.Context, ruleID int64) (bool, error)
 	// ShapeReferenceDetail returns the reference with the series a golden one was
 	// captured from, read together.
-	ShapeReferenceDetail(ruleID, targetID, agentID int64) alert.ShapeRef
+	ShapeReferenceDetail(ruleID, targetID, agentID int64, family tree.Family) alert.ShapeRef
 }
 
 // Store is everything the API persists through: the measurement store plus

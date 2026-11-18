@@ -203,7 +203,7 @@ func writeReplayJSON(w io.Writer, rep *replay.Report) error {
 }
 
 var replayCSVHeader = []string{"rule", "rule_node", "target", "vantage", "start", "end", "seconds",
-	"crossed_at", "peak", "open", "fire_silenced", "resolve_silenced"}
+	"crossed_at", "peak", "open", "fire_silenced", "resolve_silenced", "family"}
 
 func writeReplayCSV(w io.Writer, rep *replay.Report) error {
 	cw := csv.NewWriter(w)
@@ -218,7 +218,8 @@ func writeReplayCSV(w io.Writer, rep *replay.Report) error {
 			cw.Write([]string{s.Rule, s.RuleNode, s.Target, s.Vantage,
 				e.Start.Format(time.RFC3339), end, strconv.FormatInt(e.Seconds, 10),
 				num(e.CrossedAt), num(e.Peak), strconv.FormatBool(e.Open),
-				strconv.FormatBool(e.FireSilenced), strconv.FormatBool(e.ResolveSilenced)})
+				strconv.FormatBool(e.FireSilenced), strconv.FormatBool(e.ResolveSilenced),
+				s.Family.String()})
 		}
 	}
 	cw.Flush()
@@ -247,12 +248,12 @@ func writeReplayText(out io.Writer, rep *replay.Report) error {
 		for _, s := range rep.Series[i:j] {
 			if len(s.Episodes) == 0 {
 				if quiet++; quiet <= quietListed {
-					fmt.Fprintf(w, "  %s from %s: no episodes (%d intervals)\n", s.Target, s.Vantage, s.Intervals)
+					fmt.Fprintf(w, "  %s (%s) from %s: no episodes (%d intervals)\n", s.Target, s.Family, s.Vantage, s.Intervals)
 				}
 				continue
 			}
-			fmt.Fprintf(w, "  %s from %s: %d episodes, firing %s, longest %s (%d intervals)\n",
-				s.Target, s.Vantage, len(s.Episodes), dur(s.FiringSeconds), dur(s.LongestSeconds), s.Intervals)
+			fmt.Fprintf(w, "  %s (%s) from %s: %d episodes, firing %s, longest %s (%d intervals)\n",
+				s.Target, s.Family, s.Vantage, len(s.Episodes), dur(s.FiringSeconds), dur(s.LongestSeconds), s.Intervals)
 			for _, e := range s.Episodes {
 				end := "still firing"
 				if e.End != nil {
