@@ -262,7 +262,7 @@ func TestShapeMemoryIsPerFamily(t *testing.T) {
 // does not bring it back; the new family then starts clean.
 func TestChangingATargetsFamilyEndsWhatWasFiringOnTheOldOne(t *testing.T) {
 	ctx := context.Background()
-	st, m, leaf, _ := familyManager(t, nil)
+	st, m, leaf, rule := familyManager(t, nil)
 	for step := range 2 {
 		m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV4, step, 10, 0)})
 	}
@@ -288,6 +288,37 @@ func TestChangingATargetsFamilyEndsWhatWasFiringOnTheOldOne(t *testing.T) {
 	if got := m.Firing(); len(got) != 0 {
 		t.Errorf("after the family changed, still firing: %+v", got)
 	}
+	// The prober's old loop is stopped only after the reload and can still
+	// deliver an interval of the old family. It must not start a state that
+	// nothing could clear: two of them would fire this rule.
+	for step := 2; step < 4; step++ {
+		m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV4, step, 10, 0)})
+	}
+	if got := m.Firing(); len(got) != 0 {
+		t.Errorf("late intervals of the old family fired: %+v", got)
+	}
+	// An Observe that took its snapshot before the reload saves it afterwards,
+	// which puts the firing row back in the store. The next reload ends it again.
+	stale := alert.State{RuleID: rule.ID, TargetID: leaf, AgentID: store.LocalAgentID, Family: tree.FamilyV4,
+		Firing: true, Since: 1_756_400_060, LastTS: 1_756_400_060, Value: 100}
+	if err := st.SaveAlertStates(ctx, []alert.State{stale}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Firing(); len(got) != 0 {
+		t.Errorf("a firing row put back in the store came back to life: %+v", got)
+	}
+	states, err := st.ListAlertStates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range states {
+		if s.Firing {
+			t.Errorf("the store still holds a firing state: %+v", s)
+		}
+	}
 	// A restart reads the store, and must not find it firing there either.
 	m2 := alert.NewManager(st, nil)
 	if err := m2.Reload(ctx); err != nil {
@@ -297,11 +328,11 @@ func TestChangingATargetsFamilyEndsWhatWasFiringOnTheOldOne(t *testing.T) {
 		t.Errorf("after a restart the ended alert is back: %+v", got)
 	}
 	// The new family is a series of its own and fires on its own evidence.
-	m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, 2, 10, 0)})
+	m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, 4, 10, 0)})
 	if got := m.Firing(); len(got) != 0 {
 		t.Errorf("one bad v6 interval fired a rule that needs two: %+v", got)
 	}
-	m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, 3, 10, 0)})
+	m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, 5, 10, 0)})
 	if got := firingBy(m); len(got) != 1 || got[tree.FamilyV6].Family != tree.FamilyV6 {
 		t.Errorf("two bad v6 intervals: firing %+v, want the v6 alert alone", got)
 	}

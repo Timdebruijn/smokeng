@@ -69,6 +69,10 @@ type Manager struct {
 	// not persisted: a restart re-warms it, which is honest, since a baseline
 	// smokeng has not observed since restart is not one it can judge against.
 	shapes map[stateKey]*shapeState
+	// left is, per target, the family it was last changed away from. No series
+	// of that family is measured any more, so its states are ended at every
+	// reload and its intervals are not evaluated (see Reload).
+	left map[int64]tree.Family
 	// golden holds captured reference distributions for golden-baseline shape
 	// rules, keyed by rule id, with what each was taken from so the API can say
 	// which window and series it came from. Loaded in Reload from the store.
@@ -88,6 +92,7 @@ func NewManager(st Store, notifier Notifier) *Manager {
 		agentNames: map[int64]string{},
 		ancestors:  map[int64]map[int64]bool{},
 		shapes:     map[stateKey]*shapeState{},
+		left:       map[int64]tree.Family{},
 		golden:     map[int64]Baselined{},
 	}
 }
@@ -163,16 +168,31 @@ func (m *Manager) Reload(ctx context.Context) error {
 	// good. Its series has ended; so does its state. No resolve is sent, since
 	// nothing recovered: Alertmanager expires an alert it stops hearing about.
 	//
-	// This sees a change made while the manager runs, by comparing with what the
-	// last reload resolved. One made while the master is stopped it cannot see,
-	// and that alert stays until its rule is removed; telling a family a target
-	// is no longer measured over from one it is, as a standing rule, has to wait
-	// until a target can say it has two.
+	// The family a target left is remembered, and its states are ended at every
+	// reload, not only the one that sees the change. Two things can put such a
+	// state back after it was ended: an Observe that took its snapshot before
+	// this reload and saves it afterwards, and a save below that failed. Both
+	// leave a firing row in the store, and the next reload reads it and ends it
+	// again. Observe, for its part, does not evaluate an interval of that
+	// family: the prober's old loop is stopped only after this returns and can
+	// still deliver one.
+	//
+	// A change made while the master is stopped is not seen, since there is
+	// nothing to compare with, and that alert stays until its rule is removed.
+	// Telling a family a target is no longer measured over from one it is, as a
+	// standing rule, has to wait until a target can say it has two.
+	for id, was := range m.byTarget {
+		now, still := resolved[id]
+		switch {
+		case !still:
+			delete(m.left, id)
+		case was.Family != now.Family:
+			m.left[id] = was.Family
+		}
+	}
 	var ended []State
 	for key, st := range kept {
-		was, known := m.byTarget[key.targetID]
-		now, still := resolved[key.targetID]
-		if !known || !still || was.Family == now.Family || key.family != was.Family {
+		if f, ok := m.left[key.targetID]; !ok || f != key.family {
 			continue
 		}
 		if st.Firing {
@@ -201,7 +221,8 @@ func (m *Manager) Reload(ctx context.Context) error {
 	m.silences = silences
 	m.mu.Unlock()
 	// Stored as cleared rather than left as it was: a row still marked firing
-	// would come back as a firing alert at the next restart.
+	// would come back as a firing alert at the next restart. If this fails the
+	// row is read and ended again by the next reload.
 	if len(ended) > 0 {
 		if err := m.st.SaveAlertStates(ctx, ended); err != nil {
 			return err
@@ -226,6 +247,11 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 		meas := &ms[i]
 		app, ok := m.byTarget[meas.TargetID]
 		if !ok || len(app.Rules) == 0 {
+			continue
+		}
+		// A late interval of the family the target was changed away from. It
+		// would start a state that nothing after it could clear.
+		if f, ok := m.left[meas.TargetID]; ok && f == meas.Family {
 			continue
 		}
 		for _, r := range app.Rules {
