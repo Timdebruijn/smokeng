@@ -120,7 +120,10 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                     </td>
                     <td>
                       <code>{a.target}</code>
-                      <span className="hint small"> · {seriesLabel(a.agent, a.family)}</span>
+                      <span className="hint small" style={{ whiteSpace: 'nowrap' }}>
+                        {' '}
+                        · {seriesLabel(a.agent, a.family)}
+                      </span>
                     </td>
                     <td>
                       {a.metric} is{' '}
