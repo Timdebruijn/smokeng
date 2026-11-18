@@ -51,7 +51,7 @@ fake 0%, and real loss under 0.1% reads `<0.1%`, not `0.0%`.
 
 ## Quick start
 
-Linux (amd64 below; arm64 and arm builds too, plus macOS for development):
+Linux (amd64 below; arm64 and arm builds too, plus macOS on Apple silicon for development):
 
 ```bash
 # 1. Download and verify
