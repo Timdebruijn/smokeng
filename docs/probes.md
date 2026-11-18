@@ -32,8 +32,27 @@ failure* with a reason. The loss rail shows it labelled as smokeng's side, not t
 | Out of file descriptors, ports or buffers on the prober (`tcp`, `http`) | send failure |
 | Query or request that could not be built or written | send failure |
 | `irtt` session that never opened | send failure for every probe of the interval |
+| A lookup that fails for any reason on a name that never resolved, or that gives no address of the target's family. A name that resolved earlier in this run of the prober keeps being probed at its last address while the resolvers fail, and is no data once the resolvers answer that the record is gone and none of them has it. After a restart nothing is remembered, so a name that does not resolve then is no data | **no data**, reason `no address to send to`; nothing is sent |
+| The prober's routing table has no route to the target's address, asked once per interval before any probe is sent | **no data**, reason `no route to the target` |
 | `irtt` session that paced fewer packets than asked | not counted at all; the interval is narrower |
 | Receive queue overflow on the ICMP socket | interval flagged `dropped replies`; some loss is ours |
+
+**No data is neither loss nor a clean interval.** In the two no-data rows the prober could not
+ask the target anything, for a reason that lies with its own host, so the interval says nothing
+about the target. It is stored as an interval with no probes sent and no replies, flagged `not
+sent` with the reason, and drawn as a gap. It applies to every probe type.
+
+The no-route row is decided once per interval, before any probe is sent: the prober asks its
+own routing table for a route to the target's address, by connecting a UDP socket of the
+family to it, which sends nothing. No route means no data for that interval and nothing is sent.
+That is measured, on Linux: with no default route, or the uplink administratively down, that
+connect fails with `ENETUNREACH`, and so do ICMP, TCP and UDP sends. With a dead gateway or a
+lost carrier the routes stay in place, the sends succeed, nothing answers and the interval is
+ordinary loss by timeout. The probes' own errors are not used for this, because they do not
+prove it: when this host has a route and a router on the path has none, the UDP connect
+succeeds, but a TCP connect fails with the same `ENETUNREACH`. That is loss on the path and
+stays loss, as does `EHOSTUNREACH`, flagged `not sent` wherever it was. Any other outcome of the
+route check, including any other error, probes the interval as usual.
 
 Badges and how to read them: [Reading graphs](reading-graphs.md).
 

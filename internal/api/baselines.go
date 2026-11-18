@@ -152,7 +152,11 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var samples []uint32
+	intervals := 0 // an interval that sent nothing (no data) is not one the baseline was taken from
 	for i := range ms {
+		if ms[i].Sent > 0 {
+			intervals++
+		}
 		samples = append(samples, ms[i].Samples...)
 	}
 	if len(samples) == 0 {
@@ -163,7 +167,7 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 
 	b := alert.Baselined{
 		RuleID: ruleID, TargetID: body.TargetID, AgentID: agentID, Family: family,
-		FromTS: body.From, ToTS: body.To, Intervals: len(ms), Samples: samples,
+		FromTS: body.From, ToTS: body.To, Intervals: intervals, Samples: samples,
 		CapturedAt: time.Now().Unix(), CapturedBy: s.callerName(r),
 	}
 	if err := s.alerts.CaptureBaseline(r.Context(), b); err != nil {

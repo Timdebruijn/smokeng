@@ -7,6 +7,7 @@ import {
   alertName,
   csvCell,
   seriesLabel,
+  summarise,
   fromLocalInput,
   minMax,
   refreshMs,
@@ -120,4 +121,33 @@ test('an alert is named with its series, and without a trailing comma when it ha
   const a = { rule: 'loss', target: '/Production/web', agent: 'local', family: 'v6' }
   assert.equal(alertName(a), 'loss on /Production/web, local · v6')
   assert.equal(alertName({ rule: 'loss', target: '/Production/web' }), 'loss on /Production/web')
+})
+
+// Protects the summary figures from an interval that sent nothing (no data,
+// with a reason): it is left out of loss, so one such interval beside a lossy
+// one does not dilute the loss and does not count as a clean one, and the flag
+// it carries still reaches the series' flags.
+test('summarise leaves intervals that sent nothing out of the loss', () => {
+  const s = summarise({
+    values: new Uint32Array([1000, 2000]),
+    sent: new Float64Array([10, 0, 0]),
+    received: new Float64Array([5, 0, 0]),
+    flags: new Uint8Array([0, 1 << 6, 1 << 6]),
+  })
+  assert.equal(s.loss, 50)
+  assert.equal(s.sent, 10)
+  assert.equal(s.flags, 1 << 6)
+})
+
+// Protects the window that is only no data: nothing was sent, which callers read
+// off `sent` (loss alone would say 0%).
+test('summarise of a window with nothing sent says so by sent, with no latency', () => {
+  const s = summarise({
+    values: new Uint32Array(),
+    sent: new Float64Array([0, 0]),
+    received: new Float64Array([0, 0]),
+    flags: new Uint8Array([1 << 6, 1 << 6]),
+  })
+  assert.equal(s.sent, 0)
+  assert.equal(s.median, null)
 })

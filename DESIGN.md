@@ -556,7 +556,13 @@ Full kernel timestamping on Linux, both directions, from v0.1 — not the half v
   previous address until a new resolution succeeds.
 - On address change: log line + row in `resolutions` (§3.1). This makes anycast/failover
   flips visible in the UI later without storing anything per measurement.
-- `address_family` strictly selects A vs AAAA. Never "whatever resolves".
+- `address_family` strictly selects A vs AAAA. Never "whatever resolves". A lookup that gives
+  no address is logged and the interval is stored as no data with the reason `no address`
+  (§8.2), not skipped silently. A lookup that fails for any reason on a name that never
+  resolved is no address. A name that resolved earlier in this run of the prober keeps being
+  probed at its last address while the resolvers fail, and becomes no data once a resolver
+  answers that the record is gone (NOERROR or NXDOMAIN without a record of that type) and no
+  other resolver has it. The cache does not outlive the process.
 
 ## 6. Storage engine
 
@@ -854,6 +860,18 @@ draws nothing and breaks the median line; density and median are never interpola
 across missing data (scheduler downtime, disabled periods). RRDtool gets this right with
 its UNKNOWN handling and a reimplementation that connects lines across outages would be
 quietly lying.
+
+**No data with a reason is a gap too.** An interval in which the prober could not ask the
+target anything, for a reason that lies with its own host, is stored as a row with
+`sent = 0`, `received = 0`, the `not sent` flag and a reason: `no address` when the hostname
+gave no address of the target's family, `unreachable` when the prober's own
+routing table has no route to the target's address (checked once per interval, before any probe
+is sent). It is drawn as a gap in the smoke, the
+median line and the loss rail, and left out of every figure that divides by `sent`: it is
+neither 0% nor 100% loss. A probe's own `ENETUNREACH` or `EHOSTUNREACH` is not read as
+"no route": a router on the path can cause either, and that is loss on the path. A dead gateway,
+where the route stays and the sends succeed, is loss too. Alert rules read no
+value from it and availability counts it as unknown.
 
 **Variable settings over time are a feature, not a corruption case.** SmokePing fixes
 `step` and `pings` into the RRD at creation — changing either means deleting history.

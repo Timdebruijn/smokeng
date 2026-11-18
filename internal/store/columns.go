@@ -24,8 +24,11 @@ const ColumnQuantiles = 256
 // median of medians.
 type Column struct {
 	From, To int64
-	// Rounds is how many intervals were stored in the column: coverage is
-	// Rounds against what the target's interval says there should be.
+	// Rounds is how many intervals with data were stored in the column: coverage
+	// is Rounds against what the target's interval says there should be. An
+	// interval that sent nothing (no data, with a reason) is not counted, so a
+	// column of only those has no rounds and no probes: a gap, whose Flags and
+	// Flagged still say that intervals were stored and not sent.
 	Rounds   int
 	Sent     int
 	Received int
@@ -175,7 +178,9 @@ func (p *pooler) add(m Measurement) error {
 		p.cur = &Column{From: p.start(i), To: p.start(i + 1)}
 	}
 	c := p.cur
-	c.Rounds++
+	if m.Sent > 0 {
+		c.Rounds++
+	}
 	c.Sent += m.Sent
 	c.Received += m.Received
 	if m.Flags != 0 {

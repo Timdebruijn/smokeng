@@ -26,6 +26,20 @@ export function fmtLoss(pct: number): string {
 }
 
 /**
+ * What the cursor readout says about the replies of one interval or pooled
+ * column. An interval that sent nothing (the prober could not ask: no address,
+ * no route) is not "0/0 replies" and not "no reply", which would say the target
+ * was asked and did not answer; it is no data.
+ */
+export function replyLines(sent: number, received: number, median: number, loss: number): string[] {
+  if (sent === 0) return ['no data']
+  return [
+    Number.isNaN(median) ? 'no reply' : `median ${fmtUs(median)}`,
+    `${received}/${sent} replies${loss > 0 ? ` · ${fmtLoss(loss * 100)} loss` : ''}`,
+  ]
+}
+
+/**
  * Send positions (1-based, ascending) the way an operator reads them, runs as
  * ranges: [16, 17, 18, 19, 20] is "16–20", [4, 8, 12] is "4, 8, 12". The same
  * notation `smokeng diag loss-pattern` prints.

@@ -3,12 +3,15 @@ package probe
 import (
 	"context"
 	"errors"
+	"net"
+	"net/netip"
 	"os"
 	"syscall"
 
 	"github.com/heistp/irtt"
 
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // sendReasonFor classifies a failed send.
@@ -21,6 +24,39 @@ import (
 // not enough to tell a network fault from a bug in this prober.
 func sendReasonFor(err error) uint8 {
 	return sendReasonOr(err, store.SendReasonSocket)
+}
+
+// noRouteTo asks this host's routing table whether it has a route to addr, by
+// connecting a UDP socket of the family to it and closing it again: connect on
+// UDP sends nothing, and fails with ENETUNREACH exactly when there is no route.
+// Any other outcome, including any other error, is "go and probe", so a check
+// that cannot be made never hides an interval.
+func noRouteTo(addr netip.Addr, family string) bool {
+	network := "udp4"
+	if family == "v6" {
+		network = "udp6"
+	}
+	c, err := net.DialUDP(network, nil, net.UDPAddrFromAddrPort(netip.AddrPortFrom(addr.Unmap(), 9)))
+	if err == nil {
+		c.Close()
+		return false
+	}
+	return errors.Is(err, syscall.ENETUNREACH)
+}
+
+// noDataRow is an interval in which the prober could not ask the target
+// anything, for a reason that lies with its own host. Sent is 0, which is what
+// tells it from "N probes attempted, all failed locally": a reader treats it as
+// no data, neither loss nor a clean interval. The flag and reason say why.
+func noDataRow(spec TargetSpec, bucket int64, reason uint8) store.Measurement {
+	return store.Measurement{
+		TargetID: spec.TargetID,
+		AgentID:  store.LocalAgentID,
+		Family:   tree.FamilyOf(spec.Family),
+		TS:       bucket,
+		Flags:    store.FlagSendFailed,
+		SendErr:  &reason,
+	}
 }
 
 // sendReasonOr is sendReasonFor with a caller-chosen answer for an error it

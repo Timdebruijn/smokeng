@@ -89,3 +89,31 @@ func TestAvailabilityNoData(t *testing.T) {
 		t.Fatalf("empty: %+v", r)
 	}
 }
+
+// Protects availability from reading an interval that sent nothing (the host
+// could not ask, no data with a reason) as up or down, or as covered time, and
+// from joining the outage on either side of it into one episode: it is unknown,
+// like a missing interval.
+func TestAvailabilityNoDataIsUnknown(t *testing.T) {
+	p := []Point{
+		{TS: 1000, Sent: 10, Received: 10},
+		{TS: 1060, Sent: 10, Received: 0},
+		{TS: 1120}, // sent nothing
+		{TS: 1180, Sent: 10, Received: 0},
+		{TS: 1240}, // sent nothing
+		{TS: 1300}, // sent nothing
+	}
+	r := Availability(p, 60, 1000, 1360, 100)
+	if r.UpIntervals != 1 || r.DownIntervals != 2 {
+		t.Fatalf("up=%d down=%d, want 1 and 2", r.UpIntervals, r.DownIntervals)
+	}
+	if r.CoveredS != 180 || r.UnknownS != 180 || r.Coverage != 0.5 {
+		t.Errorf("covered=%d unknown=%d coverage=%v, want 180, 180, 0.5", r.CoveredS, r.UnknownS, r.Coverage)
+	}
+	if len(r.Downtime) != 2 {
+		t.Errorf("%d downtime episodes, want 2: the no-data interval between the two is not outage", len(r.Downtime))
+	}
+	if only := Availability([]Point{{TS: 1000}, {TS: 1060}}, 60, 1000, 1120, 100); only.HasData || only.CoveredS != 0 {
+		t.Errorf("a window of only no data has data: %+v", only)
+	}
+}

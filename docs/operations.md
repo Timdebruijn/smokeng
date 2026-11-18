@@ -369,6 +369,17 @@ returned to the filesystem. History the upgrade could not place under a family i
 unknown; it is kept and can be read with `family=unknown` on the API or `--family unknown` on
 `smokeng diag loss-pattern`.
 
+An interval in which the prober could not ask the target anything is now stored as no data
+instead of as loss or as nothing: when the hostname gives no address of the target's family
+(reason `no address to send to`), and when the prober's own routing table has no route to the
+target's address (reason `no route to the target`). The routing table is asked once per
+interval, before any probe is sent, and nothing is sent when it has no route. It is a row with no probes sent and the `not sent` flag, so it needs no schema change
+and an agent's batch carries it unchanged. After the upgrade, a host that loses its route draws
+gaps instead of 100% loss, and its loss rules no longer fire on that; a dead gateway or a lost
+carrier, where the route stays, is still loss. A target whose name stops resolving now shows
+`not sent` gaps where it showed empty ones. Availability reports count these intervals as
+unknown, not as covered time.
+
 ### Rollback
 
 Downgrades are not supported. To go back, stop the service, put the previous binary back,

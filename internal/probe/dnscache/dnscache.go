@@ -8,6 +8,7 @@ package dnscache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -24,6 +25,12 @@ const (
 	queryTimeout = 5 * time.Second
 )
 
+// ErrNoRecord is the resolvers' definitive answer that the name has no record
+// of the wanted type: at least one answered NOERROR or NXDOMAIN with nothing of
+// that type, and none had the record. A resolver that failed, timed out or
+// answered SERVFAIL or REFUSED says nothing about the name and is not this.
+var ErrNoRecord = errors.New("no record")
+
 type key struct {
 	host   string
 	family string
@@ -39,6 +46,9 @@ type entry struct {
 type Cache struct {
 	client  *dns.Client
 	servers []string
+	// exchange asks one server. It is client.Exchange, and a field so a test can
+	// give the resolver an answer without a network.
+	exchange func(ctx context.Context, m *dns.Msg, server string) (*dns.Msg, error)
 
 	mu      sync.Mutex
 	entries map[key]*entry
@@ -61,9 +71,14 @@ func New() (*Cache, error) {
 	for _, s := range conf.Servers {
 		servers = append(servers, net.JoinHostPort(s, port))
 	}
+	client := dns.NewClient()
 	return &Cache{
-		client:  dns.NewClient(),
+		client:  client,
 		servers: servers,
+		exchange: func(ctx context.Context, m *dns.Msg, server string) (*dns.Msg, error) {
+			r, _, err := client.Exchange(ctx, m, "udp", server)
+			return r, err
+		},
 		entries: map[key]*entry{},
 	}, nil
 }
@@ -112,9 +127,23 @@ func (c *Cache) refresh(k key) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e := c.entries[k]
+	if e == nil {
+		// Forgotten by another refresh of the same name while this one was out.
+		// Not reachable while a refresh is shorter than the minimum TTL, and
+		// this goroutine has nothing above it to recover a nil dereference.
+		return
+	}
 	e.refreshing = false
+	if errors.Is(err, ErrNoRecord) {
+		// The record is gone. Serving the old address would probe something the
+		// name no longer points at, so forget it: the next Lookup resolves
+		// again and returns the error.
+		delete(c.entries, k)
+		return
+	}
 	if err != nil {
-		// Keep serving the stale address; retry after the minimum TTL.
+		// No resolver gave an answer about the name: keep serving the stale
+		// address and retry after the minimum TTL.
 		e.expires = time.Now().Add(minTTL)
 		return
 	}
@@ -130,13 +159,31 @@ func (c *Cache) resolve(ctx context.Context, host, family string) (netip.Addr, t
 	m := dns.NewMsg(host, qtype)
 	m.ID = dns.ID()
 
+	// A resolver's "no such record" is only taken as the answer when no other
+	// resolver has the record. Stopping at the first one would let a single
+	// resolver that wrongly says no make the cache forget a good address, and
+	// keep the target without data for as long as it went on saying so.
 	var lastErr error
+	denied := false
 	for _, server := range c.servers {
 		qctx, cancel := context.WithTimeout(ctx, queryTimeout)
-		r, _, err := c.client.Exchange(qctx, m, "udp", server)
+		r, err := c.exchange(qctx, m, server)
 		cancel()
 		if err != nil {
 			lastErr = err
+			continue
+		}
+		// Only NOERROR and NXDOMAIN answer the question. SERVFAIL, REFUSED and
+		// the rest are this server failing, so the next one is tried.
+		if r.Rcode != dns.RcodeSuccess && r.Rcode != dns.RcodeNameError {
+			lastErr = fmt.Errorf("resolver %s answered rcode %d", server, r.Rcode)
+			continue
+		}
+		// A truncated answer is cut off, not complete: its answer section may
+		// be empty for a name that has the record. Read as "no record" it would
+		// now make the cache forget a good address, so it is a failure too.
+		if r.Truncated {
+			lastErr = fmt.Errorf("resolver %s answered truncated", server)
 			continue
 		}
 		for _, rr := range r.Answer {
@@ -151,7 +198,10 @@ func (c *Cache) resolve(ctx context.Context, host, family string) (netip.Addr, t
 				}
 			}
 		}
-		return netip.Addr{}, 0, fmt.Errorf("dnscache: no %s record for %s", recordName(family), host)
+		denied = true
+	}
+	if denied {
+		return netip.Addr{}, 0, fmt.Errorf("dnscache: %w: no %s record for %s", ErrNoRecord, recordName(family), host)
 	}
 	return netip.Addr{}, 0, fmt.Errorf("dnscache: all resolvers failed for %s: %w", host, lastErr)
 }

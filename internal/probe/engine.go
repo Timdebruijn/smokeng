@@ -32,8 +32,14 @@ const (
 // effective agent list includes "local", probes it per bucket, and batches
 // finalized measurements into the store (single writer, DESIGN.md §6).
 type Engine struct {
-	st      store.Store
-	dns     *dnscache.Cache
+	st  store.Store
+	dns *dnscache.Cache
+	// lookup resolves a target's host. It is dns.Lookup, and a field so a test
+	// can make resolution fail without a network.
+	lookup func(ctx context.Context, host, family string) (netip.Addr, error)
+	// noRoute reports whether this host has no route to addr. It is noRouteTo,
+	// and a field so a test can make a host routeless without one.
+	noRoute func(addr netip.Addr, family string) bool
 	alerter *alert.Manager
 
 	results   chan store.Measurement
@@ -79,6 +85,8 @@ func NewEngine(st store.Store, alerter *alert.Manager) (*Engine, error) {
 	return &Engine{
 		st:      st,
 		dns:     dns,
+		lookup:  dns.Lookup,
+		noRoute: noRouteTo,
 		alerter: alerter,
 		results: make(chan store.Measurement, 1024),
 		conns:   map[connKey]*conn{},
@@ -342,12 +350,20 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			return
 		}
 
-		addr, err := e.dns.Lookup(ctx, spec.Host, spec.Family)
+		addr, err := e.lookup(ctx, spec.Host, spec.Family)
 		if err != nil {
-			// No address, no measurement: the gap in the data is the honest
-			// representation (DESIGN.md §8.2).
+			// A lookup cancelled by shutdown or by a reload of this target says
+			// nothing about the name, so it is not a row.
+			if ctx.Err() != nil {
+				return
+			}
+			// No address of the target's family: nothing could be asked of it,
+			// which says nothing about the target. The interval is stored as no
+			// data with that reason, through the same path as a finalized one so
+			// alerting and an agent's outbox see it (DESIGN.md §8.2).
 			log.Printf("probe: target %d (%q): resolve: %v", spec.TargetID, spec.Host, err)
 			e.dnsErrs.Add(1)
+			e.emit(noDataRow(spec, bucket, store.SendReasonNoAddress))
 			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
 				return
 			}
@@ -361,6 +377,21 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 				log.Printf("probe: target %d: record resolution: %v", spec.TargetID, err)
 			}
 			lastAddr = a
+		}
+
+		// Ask the routing table once per interval, before anything is sent. A
+		// probe's own ENETUNREACH proves nothing about this host: a router on
+		// the path with no route makes a TCP connect fail with the same errno,
+		// and that is loss on the path. Only the host's own table says the host
+		// could not send, and then nothing is, so the interval is no data.
+		if e.noRoute(addr, spec.Family) {
+			log.Printf("probe: target %d (%s): no route to %s on this host for %s; interval stored as no data",
+				spec.TargetID, spec.Host, addr, spec.Family)
+			e.emit(noDataRow(spec, bucket, store.SendReasonUnreachable))
+			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
+				return
+			}
+			continue
 		}
 
 		// Only ICMP needs a shared socket; the other types open their own
@@ -408,14 +439,19 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 				})
 			}
 		} else {
+			// Said once per interval, not once per probe: a host without a route
+			// for the target's family fails every send of every interval, and
+			// that is twenty lines saying one thing.
+			sendLogged := false
 			for i, at := range times {
 				if !sleepUntil(ctx, at) {
 					aborted = true
 					break
 				}
 				if c != nil {
-					if err := c.send(col, i, addr, spec.PacketSize); err != nil {
-						log.Printf("probe: target %d: send: %v", spec.TargetID, err)
+					if err := c.send(col, i, addr, spec.PacketSize); err != nil && !sendLogged {
+						log.Printf("probe: target %d (%s): send: %v", spec.TargetID, spec.Host, err)
+						sendLogged = true
 					}
 					continue
 				}
@@ -455,16 +491,22 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			if c != nil {
 				c.forget(col)
 			}
-			select {
-			case e.results <- m:
-			default:
-				log.Printf("probe: results backlog full, dropping measurement for target %d", spec.TargetID)
-				e.dropped.Add(1)
-			}
+			e.emit(m)
 		})
 		if aborted {
 			return
 		}
+	}
+}
+
+// emit hands a finalized measurement to the writer, or drops it when the
+// backlog is full.
+func (e *Engine) emit(m store.Measurement) {
+	select {
+	case e.results <- m:
+	default:
+		log.Printf("probe: results backlog full, dropping measurement for target %d", m.TargetID)
+		e.dropped.Add(1)
 	}
 }
 

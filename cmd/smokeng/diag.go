@@ -276,6 +276,11 @@ func eachRow(ctx context.Context, st *store.SQLite, target, agent int64, family 
 // add counts one interval and, if it recorded which probes it lost, keeps it
 // for the verdict.
 func (s *lossPatternSeries) add(m *store.Measurement) {
+	// An interval that sent nothing is no data, not a clean interval: it is not
+	// one the target was measured in.
+	if m.Sent == 0 {
+		return
+	}
 	s.Intervals++
 	if m.Received >= m.Sent {
 		return
