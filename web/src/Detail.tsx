@@ -141,7 +141,7 @@ export default function Detail({
       <div className="detail-head">
         <span
           className="dot"
-          style={{ background: stats ? (stats.loss > 0 ? 'var(--warn)' : 'var(--good)') : 'var(--dim)' }}
+          style={{ background: stats && stats.sent > 0 ? (stats.loss > 0 ? 'var(--warn)' : 'var(--good)') : 'var(--dim)' }}
         />
         <h1>{target.title ?? target.path}</h1>
         {/* The probe type belongs on the identity line, not buried in the
@@ -176,7 +176,9 @@ export default function Detail({
         />
         <Stat
           label="Loss"
-          value={stats ? fmtLoss(stats.loss) : '—'}
+          // Nothing sent in the window (no address, no route) is no data, not a
+          // loss of 0%.
+          value={stats && stats.sent > 0 ? fmtLoss(stats.loss) : '—'}
           tone={stats && stats.loss > 0 ? 'bad' : undefined}
         />
       </div>

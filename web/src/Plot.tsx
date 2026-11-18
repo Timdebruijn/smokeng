@@ -8,7 +8,7 @@ import {
   type Target,
 } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
-import { fmtLoss, fmtUs, positionalTitle } from './format'
+import { positionalTitle, replyLines } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt } from './layout'
 import { useRenderWorker, useWidth, ErrorText } from './shared'
 
@@ -303,8 +303,7 @@ export default function Plot({
 
     const lines = [
       rows.pooled ? `${fmtWhen(rows.ts[idx])} – ${fmtWhen(rows.pooled.ends[idx])}` : fmtClock(rows.ts[idx]),
-      Number.isNaN(rows.median[idx]) ? 'no reply' : `median ${fmtUs(rows.median[idx])}`,
-      `${rows.received[idx]}/${rows.sent[idx]} replies${rows.loss[idx] > 0 ? ` · ${fmtLoss(rows.loss[idx] * 100)} loss` : ''}`,
+      ...replyLines(rows.sent[idx], rows.received[idx], rows.median[idx], rows.loss[idx]),
     ]
     if (rows.pooled) {
       // Coverage against the interval the target has now: one that changed
