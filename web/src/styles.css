@@ -663,6 +663,52 @@ a.button {
   flex: 1;
 }
 
+/* The family choice in the header: three buttons that stay together and
+   shrink with the row instead of widening the page. */
+.family-filter {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+}
+
+.family-filter .pill {
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+/* The same control as a select, for a header too narrow for three buttons. */
+.family-select {
+  display: none;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 6px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card2);
+  color: var(--fg);
+}
+
+@media (max-width: 640px) {
+  .family-filter {
+    display: none;
+  }
+  .family-select {
+    display: block;
+    /* A phone's browser zooms the page in when a form control with smaller
+       text takes focus. */
+    font-size: 16px;
+  }
+}
+
+/* The stat rows and plots of one family on the detail page, and the family
+   named in an availability block. */
+.family-label {
+  margin: 14px 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--dim);
+}
+
 .chip-button {
   display: flex;
   align-items: center;

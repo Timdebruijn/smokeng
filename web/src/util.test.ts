@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { availabilityURL, fetchSeries, pathsURL, seriesURL, type Target } from './api.ts'
 import { axisLabel } from './layout.ts'
 import {
   afterName,
   alertKey,
   alertName,
   csvCell,
+  filterByFamily,
+  parseFamilyChoice,
+  resolveSeries,
+  seriesKey,
   seriesLabel,
+  shownFamilies,
+  showsFamily,
   summarise,
   fromLocalInput,
   minMax,
@@ -150,4 +157,112 @@ test('summarise of a window with nothing sent says so by sent, with no latency',
   })
   assert.equal(s.sent, 0)
   assert.equal(s.median, null)
+})
+
+// A target only as far as the series code reads it.
+const target = (address_family: string | null, agents = 'local'): Target =>
+  ({ id: 7, address_family, settings: { agents: { effective: agents } } }) as unknown as Target
+const ids = new Map([
+  ['local', 0],
+  ['edge', 3],
+])
+
+test('a single-family target is one series per agent with no family', () => {
+  for (const af of ['v4', 'v6', null]) {
+    const s = resolveSeries(target(af), ids)
+    assert.equal(s.length, 1)
+    assert.equal(s[0].family, undefined)
+  }
+})
+
+test('a both target is v4 then v6 for each agent', () => {
+  const s = resolveSeries(target('both', 'local edge'), ids)
+  assert.deepEqual(
+    s.map((x) => [x.agentId, x.family]),
+    [
+      [0, 'v4'],
+      [0, 'v6'],
+      [3, 'v4'],
+      [3, 'v6'],
+    ],
+  )
+})
+
+test('a both target nobody measures is one unresolved series, not two', () => {
+  const s = resolveSeries(target('both', 'ghost'), ids)
+  assert.equal(s.length, 1)
+  assert.equal(s[0].agentId, null)
+  assert.equal(s[0].family, undefined)
+})
+
+test('the family filter against v4-only, v6-only and both targets', () => {
+  const v4 = target('v4')
+  const v6 = target('v6')
+  const both = target('both')
+  const shows = (c: 'v4' | 'v6' | 'both', t: Target) =>
+    filterByFamily(resolveSeries(t, ids), c).map((s) => s.family ?? s.target.address_family)
+  assert.deepEqual(shows('both', v4), ['v4'])
+  assert.deepEqual(shows('both', v6), ['v6'])
+  assert.deepEqual(shows('both', both), ['v4', 'v6'])
+  assert.deepEqual(shows('v4', v4), ['v4'])
+  assert.deepEqual(shows('v4', v6), [])
+  assert.deepEqual(shows('v4', both), ['v4'])
+  assert.deepEqual(shows('v6', v4), [])
+  assert.deepEqual(shows('v6', v6), ['v6'])
+  assert.deepEqual(shows('v6', both), ['v6'])
+  // An unresolved both target belongs to both families, so neither choice hides it.
+  const ghost = resolveSeries(target('both', 'ghost'), ids)
+  assert.equal(filterByFamily(ghost, 'v6').length, 1)
+  assert.equal(filterByFamily(ghost, 'v4').length, 1)
+  // A group-like target with no family is read as v4, the family the API defaults to.
+  assert.equal(showsFamily('v6', target(null)), false)
+  assert.equal(showsFamily('v4', target(null)), true)
+})
+
+test('shownFamilies is what the detail page draws', () => {
+  assert.deepEqual(shownFamilies(target('both'), 'both'), ['v4', 'v6'])
+  assert.deepEqual(shownFamilies(target('both'), 'v6'), ['v6'])
+  assert.deepEqual(shownFamilies(target('v4'), 'both'), [undefined])
+  assert.deepEqual(shownFamilies(target('v4'), 'v6'), [])
+})
+
+test('a stored family choice is read back, and anything else is both', () => {
+  assert.equal(parseFamilyChoice('v4'), 'v4')
+  assert.equal(parseFamilyChoice('v6'), 'v6')
+  assert.equal(parseFamilyChoice('both'), 'both')
+  assert.equal(parseFamilyChoice(null), 'both')
+  assert.equal(parseFamilyChoice('v5'), 'both')
+})
+
+test('a series key carries the family, and is unchanged without one', () => {
+  assert.equal(seriesKey(7, 3), '7-3')
+  assert.equal(seriesKey(7, null), '7-unresolved')
+  assert.equal(seriesKey(7, 3, 'v4'), '7-3-v4')
+  assert.notEqual(seriesKey(7, 3, 'v4'), seriesKey(7, 3, 'v6'))
+})
+
+test('the requests carry family only when it is set', () => {
+  assert.equal(seriesURL(7, 3, 10, 20), '/api/v1/measurements?target_id=7&agent_id=3&from=10&to=20')
+  assert.equal(seriesURL(7, 3, 10, 20, 500), '/api/v1/measurements?target_id=7&agent_id=3&from=10&to=20&columns=500')
+  assert.equal(seriesURL(7, 3, 10, 20, 500, 'v6'), '/api/v1/measurements?target_id=7&agent_id=3&from=10&to=20&columns=500&family=v6')
+  assert.equal(pathsURL(7, 3, 10, 20), '/api/v1/paths?target_id=7&agent_id=3&from=10&to=20')
+  assert.equal(pathsURL(7, 3, 10, 20, 'v6'), '/api/v1/paths?target_id=7&agent_id=3&from=10&to=20&family=v6')
+  assert.equal(availabilityURL(7, 10, 20), '/api/v1/availability?target_id=7&from=10&to=20')
+  assert.equal(availabilityURL(7, 10, 20, 100), '/api/v1/availability?target_id=7&from=10&to=20&down_threshold=100')
+  assert.equal(availabilityURL(7, 10, 20, 100, 'v6'), '/api/v1/availability?target_id=7&from=10&to=20&down_threshold=100&family=v6')
+})
+
+test('the two families of one window are two in-flight requests', async () => {
+  const urls: string[] = []
+  const real = globalThis.fetch
+  globalThis.fetch = (async (u: string) => {
+    urls.push(u)
+    return new Response('x', { status: 500 })
+  }) as typeof fetch
+  try {
+    await Promise.allSettled([fetchSeries(7, 3, 10, 20, 5, 'v4'), fetchSeries(7, 3, 10, 20, 5, 'v6')])
+  } finally {
+    globalThis.fetch = real
+  }
+  assert.equal(urls.length, 2)
 })

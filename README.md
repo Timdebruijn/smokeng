@@ -79,12 +79,18 @@ address_family = "v4"
 [targets."Internet/quad9"]
 host = "9.9.9.9"
 address_family = "v4"
+
+[targets."Internet/cloudflare-dns"]
+host = "one.one.one.one"
+address_family = "both"
 EOF
 smokeng config import --db smokeng.db targets.toml
 
 # 4. Run
 smokeng serve --db smokeng.db --listen 127.0.0.1:8080
 ```
+
+`one.one.one.one` is measured over IPv4 and over IPv6 as two series, drawn as two plots, v4 above v6.
 
 Open <http://127.0.0.1:8080>. The first measurements land after one interval; the smoke reads well
 after a few. Without OIDC configured, smokeng listens on loopback only.

@@ -211,19 +211,36 @@ export interface AvailabilityResponse {
   agents: { agent_id: number; agent: string; report: AvailabilityReport }[]
 }
 
-export async function fetchAvailability(
+/**
+ * `family` is sent only when set: without it the server answers for the IPv4
+ * series of a target measured over both, which is also the only series of any
+ * other target.
+ */
+export function availabilityURL(
   targetId: number,
   from: number,
   to: number,
   downThreshold?: number,
-): Promise<AvailabilityResponse> {
+  family?: string,
+): string {
   const p = new URLSearchParams({
     target_id: String(targetId),
     from: String(from),
     to: String(to),
   })
   if (downThreshold !== undefined) p.set('down_threshold', String(downThreshold))
-  return get<AvailabilityResponse>(`/api/v1/availability?${p.toString()}`, 'availability')
+  if (family) p.set('family', family)
+  return `/api/v1/availability?${p.toString()}`
+}
+
+export async function fetchAvailability(
+  targetId: number,
+  from: number,
+  to: number,
+  downThreshold?: number,
+  family?: string,
+): Promise<AvailabilityResponse> {
+  return get<AvailabilityResponse>(availabilityURL(targetId, from, to, downThreshold, family), 'availability')
 }
 
 /**
@@ -600,13 +617,18 @@ export interface PathChange {
   hops: string[]
 }
 
+export function pathsURL(targetId: number, agentId: number, from: number, to: number, family?: string): string {
+  return `/api/v1/paths?target_id=${targetId}&agent_id=${agentId}&from=${from}&to=${to}${family ? `&family=${family}` : ''}`
+}
+
 export async function fetchPathChanges(
   targetId: number,
   agentId: number,
   from: number,
   to: number,
+  family?: string,
 ): Promise<PathChange[]> {
-  const url = `/api/v1/paths?target_id=${targetId}&agent_id=${agentId}&from=${from}&to=${to}`
+  const url = pathsURL(targetId, agentId, from, to, family)
   return (await get<{ changes: PathChange[] }>(url, 'paths')).changes ?? []
 }
 
@@ -714,12 +736,16 @@ export function fetchSeries(
   from: number,
   to: number,
   columns?: number,
+  family?: string,
 ): Promise<Series> {
-  const key = `${targetId}/${agentId}/${from}/${to}/${columns ?? ''}`
+  // The request itself is the key, so everything that makes two requests
+  // different, the family included, makes two entries: the v4 and the v6 plot
+  // of one target mount together and must not be handed each other's data.
+  const key = seriesURL(targetId, agentId, from, to, columns, family)
   const now = Date.now()
   const hit = inFlight.get(key)
   if (hit && now - hit.at < SHARE_MS) return hit.p.then((s) => structuredClone(s))
-  const p = fetchSeriesUncached(targetId, agentId, from, to, columns).catch((e: unknown) => {
+  const p = fetchSeriesUncached(key).catch((e: unknown) => {
     // A failure is never shared: the next caller must be able to try again.
     // Guarded like the timeout below, and for the same reason — a slow request
     // that has already been evicted must not delete the entry that replaced
@@ -736,18 +762,22 @@ export function fetchSeries(
   return p.then((s) => structuredClone(s))
 }
 
-async function fetchSeriesUncached(
+/** The measurements request; `family` is sent only when set, as for availabilityURL. */
+export function seriesURL(
   targetId: number,
   agentId: number,
   from: number,
   to: number,
   columns?: number,
-): Promise<Series> {
+  family?: string,
+): string {
   const cols = columns === undefined ? '' : `&columns=${columns}`
-  const r = await fetch(
-    `/api/v1/measurements?target_id=${targetId}&agent_id=${agentId}&from=${from}&to=${to}${cols}`,
-    { cache: 'no-store' },
-  )
+  const fam = family ? `&family=${family}` : ''
+  return `/api/v1/measurements?target_id=${targetId}&agent_id=${agentId}&from=${from}&to=${to}${cols}${fam}`
+}
+
+async function fetchSeriesUncached(url: string): Promise<Series> {
+  const r = await fetch(url, { cache: 'no-store' })
   if (!r.ok) {
     // A 400 says what to change (a window too large for one read); that is
     // worth showing, where a status code alone is not.

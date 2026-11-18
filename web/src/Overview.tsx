@@ -12,7 +12,19 @@ import {
 } from './api'
 import { fmtLoss, fmtUs } from './format'
 import { Stat, ErrorText } from './shared'
-import { afterName, alertKey, minMax, seriesLabel, REFRESH_MS, resolveSeries, summarise } from './util'
+import {
+  afterName,
+  alertKey,
+  showsFamily,
+  minMax,
+  seriesKey,
+  seriesLabel,
+  REFRESH_MS,
+  resolveSeries,
+  summarise,
+  type Family,
+  type FamilyChoice,
+} from './util'
 
 const WINDOW_S = 3600
 
@@ -22,6 +34,7 @@ interface Row {
   // enrolled agent — there is nothing to query, not just nothing queried yet.
   agentId: number | null
   agentName?: string
+  family?: Family
   median: number | null
   p95: number | null
   loss: number
@@ -41,8 +54,20 @@ interface Row {
  * that a p95 remains available afterwards, so an overview that fell back to
  * averages would be arguing against the tool it belongs to.
  */
-export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
-  const [rows, setRows] = useState<Row[] | null>(null)
+export default function Overview({
+  family,
+  onOpenDetail,
+}: {
+  family: FamilyChoice
+  onOpenDetail: (id: number) => void
+}) {
+  // Every series, whatever the family filter says: the filter is applied to
+  // what is drawn, so changing it shows the other rows at once instead of the
+  // old ones until a refetch returns.
+  const [all, setAll] = useState<Row[] | null>(null)
+  // Targets that would have a row but for the family filter, to tell an empty
+  // overview from one the filter emptied.
+  const [targetCount, setTargetCount] = useState(0)
   const [firing, setFiring] = useState<FiringAlert[]>([])
   const [delivering, setDelivering] = useState(true)
   const [recent, setRecent] = useState<AlertEvent[]>([])
@@ -70,8 +95,8 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
         const leaves = targets.filter((t) => t.host !== null && t.enabled && !t.hidden)
         const now = Math.floor(Date.now() / 1000)
 
-        // One row per (target, agent), not per target. A target measured from
-        // two places is two measurements, and collapsing them here would hide
+        // One row per (target, agent, family), not per target. A target measured
+        // from two places, or over two families, is two measurements, and collapsing them here would hide
         // exactly the disagreement a second vantage point exists to reveal —
         // including its quality flags.
         const series = leaves.flatMap((t) => resolveSeries(t, byName, ', '))
@@ -81,14 +106,17 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
             const none = { median: null, p95: null, loss: 0, sent: 0, received: 0, flags: 0, spark: [] }
             if (x.agentId === null) return { ...x, ...none }
             try {
-              const s = await fetchSeries(x.target.id, x.agentId, now - WINDOW_S, now)
+              const s = await fetchSeries(x.target.id, x.agentId, now - WINDOW_S, now, undefined, x.family)
               return { ...x, ...summarise(s), spark: sparkOf(s) }
             } catch {
               return { ...x, ...none }
             }
           }),
         )
-        if (!cancelled) setRows(built)
+        if (!cancelled) {
+          setAll(built)
+          setTargetCount(leaves.length)
+        }
       } catch (e) {
         if (!cancelled) setError((e as Error).message)
       }
@@ -111,6 +139,7 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
     }
   }, [refreshTick])
 
+  const rows = all && all.filter((r) => showsFamily(family, r.target, r.family))
   const worst = rows?.reduce((a, r) => Math.max(a, r.loss), 0) ?? 0
   const flagged = rows?.filter((r) => r.flags !== 0).length ?? 0
   const measured = rows?.filter((r) => r.spark.length > 0).length ?? 0
@@ -169,7 +198,9 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
           {rows === null ? (
             <p className="hint panel-pad">Measuring…</p>
           ) : rows.length === 0 ? (
-            <p className="hint panel-pad">No targets yet.</p>
+            <p className="hint panel-pad">
+              {targetCount > 0 ? 'Every series is hidden by the family filter.' : 'No targets yet.'}
+            </p>
           ) : (
             <>
               {rows.map((r) => {
@@ -182,7 +213,7 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
                 const noData = r.sent === 0
                 return (
                   <button
-                    key={`${r.target.id}-${r.agentId ?? 'unresolved'}`}
+                    key={seriesKey(r.target.id, r.agentId, r.family)}
                     className="health-row"
                     onClick={() => onOpenDetail(r.target.id)}
                   >
@@ -208,6 +239,12 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
                         )}
                       </span>
                       <span className="health-host">
+                        {/* The family comes first on the host line. Title and
+                            host are both cut off with an ellipsis when they do
+                            not fit, and anything after them goes with the cut:
+                            the two rows of a target measured over both families
+                            would then read exactly alike. */}
+                        {r.family ? `${r.family} · ` : ''}
                         {r.target.host}
                         {/* Only when it is not the default. On a dense list a
                             badge reading "icmp" on every row carries no

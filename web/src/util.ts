@@ -113,22 +113,76 @@ export function orderedTargets(targets: Target[]): { target: Target; depth: numb
   return out
 }
 
+export type Family = 'v4' | 'v6'
+
+/** What the header's family filter can say: one family, or both. */
+export type FamilyChoice = Family | 'both'
+
 /**
- * One target seen from one agent. `agentId` is null when the target's
- * configured agent name(s) name nobody enrolled: there is no series to draw,
- * and that absence is itself the thing to show.
+ * A stored or typed choice as a choice. Anything else, including nothing at
+ * all, is "both": a filter that hid series because of a garbled value would be
+ * a page that silently shows less than is measured.
+ */
+export function parseFamilyChoice(raw: string | null | undefined): FamilyChoice {
+  return raw === 'v4' || raw === 'v6' ? raw : 'both'
+}
+
+/**
+ * The families a target is drawn in, one entry per series family: `v4` then
+ * `v6` for a target measured over both, and a single unset entry for any other,
+ * whose one series needs no family on the wire or on screen.
+ */
+export function seriesFamilies(t: Target): (Family | undefined)[] {
+  return t.address_family === 'both' ? ['v4', 'v6'] : [undefined]
+}
+
+/**
+ * Whether the filter lets a series of this target through. A series without a
+ * family belongs to the one family of a single-family target (v6 only for
+ * `v6`), or, when it stands for a `both` target as a whole, to both of them.
+ */
+export function showsFamily(choice: FamilyChoice, t: Target, family?: Family): boolean {
+  if (choice === 'both') return true
+  if (family) return family === choice
+  if (t.address_family === 'both') return true
+  return (t.address_family === 'v6' ? 'v6' : 'v4') === choice
+}
+
+/** The families of `t` that the filter lets through; see seriesFamilies. */
+export function shownFamilies(t: Target, choice: FamilyChoice): (Family | undefined)[] {
+  return seriesFamilies(t).filter((f) => showsFamily(choice, t, f))
+}
+
+/** What identifies one series on screen: React keys and legend keys. */
+export function seriesKey(targetId: number, agentId: number | null, family?: Family): string {
+  return `${targetId}-${agentId ?? 'unresolved'}${family ? `-${family}` : ''}`
+}
+
+/**
+ * One target seen from one agent, in one family. `agentId` is null when the
+ * target's configured agent name(s) name nobody enrolled: there is no series to
+ * draw, and that absence is itself the thing to show.
  */
 export interface PlotSeries {
   target: Target
   agentId: number | null
   /** The agent to attribute the series to, or the unresolved names verbatim. */
   agentName?: string
+  /** Set only for a target measured over both families. */
+  family?: Family
+}
+
+/** The series the filter lets through. */
+export function filterByFamily(series: PlotSeries[], choice: FamilyChoice): PlotSeries[] {
+  return series.filter((s) => showsFamily(choice, s.target, s.family))
 }
 
 /**
- * One series per (target, agent) pair: the same target seen from two vantage
+ * One series per (target, agent, family): the same target seen from two vantage
  * points is two different measurements, and averaging them would destroy the
- * very thing that makes a second vantage point worth having.
+ * very thing that makes a second vantage point worth having. The same goes for
+ * the two families of a target measured over both: a host that answers over v4
+ * and not over v6 is the finding.
  *
  * No fallback to the local agent. Querying agent 0 for a target assigned to
  * someone else attributes one vantage point's measurements to another, and it
@@ -137,7 +191,7 @@ export interface PlotSeries {
  * target instead would only move the lie: a missing plot reads as "not
  * selected", and the misconfiguration that nothing measures this target is
  * precisely what the operator needs to see. So it keeps its place, with no
- * agent and a reason.
+ * agent and a reason, and once: it is the same absence in either family.
  */
 export function resolveSeries(t: Target, byName: Map<string, number>, sep = ' '): PlotSeries[] {
   const names = (t.settings.agents.effective || 'local').split(/\s+/).filter(Boolean)
@@ -145,11 +199,14 @@ export function resolveSeries(t: Target, byName: Map<string, number>, sep = ' ')
     .map((n) => ({ name: n, id: byName.get(n) }))
     .filter((a): a is { name: string; id: number } => a.id !== undefined)
   if (resolved.length === 0) return [{ target: t, agentId: null, agentName: names.join(sep) }]
-  return resolved.map((a) => ({
-    target: t,
-    agentId: a.id,
-    agentName: resolved.length > 1 ? a.name : undefined,
-  }))
+  return resolved.flatMap((a) =>
+    seriesFamilies(t).map((family) => ({
+      target: t,
+      agentId: a.id,
+      agentName: resolved.length > 1 ? a.name : undefined,
+      family,
+    })),
+  )
 }
 
 /**
