@@ -229,6 +229,12 @@ h1 {
   cursor: help;
 }
 
+/* A flag this probe type cannot be without: said, not warned about. */
+.quality.expected {
+  border-color: var(--border);
+  color: var(--dim);
+}
+
 .plot-stack,
 .series-canvas {
   position: relative;

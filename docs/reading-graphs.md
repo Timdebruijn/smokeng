@@ -251,6 +251,12 @@ smokeng records *how well it was able to measure* alongside *what it measured*, 
 it beside the target name rather than leaving you to infer it. A badge with a count like
 `(3/166)` affected only some intervals in view.
 
+The dot before a plot's target name is yellow when a badge is there and green when none is, with
+two exceptions that are shown and do not turn it yellow: `positional loss`, which says
+something about the target and not about the measurement, and `userspace TX` / `userspace RX`
+on a `tcp`, `http(s)` or `irtt` target, where they are on every interval that got a reply.
+The overview's "Flagged" figure counts series the same way.
+
 | Badge | Meaning | What to do |
 | --- | --- | --- |
 | `userspace TX` / `userspace RX` | Timestamps were taken in userspace, not by the kernel. Scheduler jitter is included in the measurement, so the smoke is wider than the network really is. On Linux, `tcp`, `http(s)` and `irtt` targets always carry both badges, because those probes are timed in userspace. On `icmp` and `dns` targets on Linux it means kernel timestamping was unavailable. Expected for everything on macOS. | Expect it on tcp, http(s) and irtt. On icmp or dns, check the host for scheduler load before blaming the path. |

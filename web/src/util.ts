@@ -280,3 +280,19 @@ export function alertName(a: { rule: string; target: string; agent?: string; fam
   const series = seriesLabel(a.agent, a.family)
   return `${a.rule} on ${a.target}${series ? `, ${series}` : ''}`
 }
+
+/** store.FlagUserspaceTX | store.FlagUserspaceRX. */
+const USERSPACE_FLAGS = 0b11
+
+/**
+ * The flags that count against how cleanly a series was measured: all of them,
+ * less the userspace pair on a probe type that carries it on every interval
+ * with a reply.
+ * tcp, http(s) and irtt are timed around a userspace call or handed a duration,
+ * so the pair is how they work, and a dot that can never be green says
+ * nothing. icmp and dns are stamped by the kernel: there the pair means that
+ * failed, and it counts.
+ */
+export function countedFlags(flags: number, probeType: unknown): number {
+  return ['tcp', 'http', 'https', 'irtt'].includes(String(probeType)) ? flags & ~USERSPACE_FLAGS : flags
+}

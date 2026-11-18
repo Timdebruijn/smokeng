@@ -7,7 +7,7 @@ import {
   type PathChange,
   type Target,
 } from './api'
-import type { Family } from './util'
+import { countedFlags, type Family } from './util'
 import { setCursor, subscribeCursor } from './crosshair'
 import { positionalTitle, replyLines } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt } from './layout'
@@ -87,9 +87,21 @@ const FLAGS: { bit: number; label: string; title: string }[] = [
 /**
  * One badge beside a plot. Most say how a measurement was weakened. One with
  * aboutTarget says something the measurement found out about the target
- * instead, and so does not count against how cleanly it was measured.
+ * instead, and so does not count against how cleanly it was measured. Nor does
+ * one that is expected: a flag this target's probe type cannot be without.
  */
-type Badge = { label: string; title: string; count: number; aboutTarget?: boolean }
+type Badge = { label: string; title: string; count: number; aboutTarget?: boolean; expected?: boolean }
+
+/** The badge of one flag bit, expected or not for this probe type (countedFlags). */
+function flagBadge(f: (typeof FLAGS)[number], count: number, probeType: unknown): Badge {
+  if (countedFlags(f.bit, probeType) !== 0) return { label: f.label, title: f.title, count }
+  return {
+    label: f.label,
+    title: `${f.title} Expected here: ${probeType} probes are always timed in userspace.`,
+    count,
+    expected: true,
+  }
+}
 
 const FLAG_ICMP_ERROR = 1 << 4
 const FLAG_SEND_FAILED = 1 << 6
@@ -111,10 +123,10 @@ function tally(flags: Uint8Array, codes: (number | null)[], bit: number): [numbe
  * was: so the labels are shown without counts, and the per-interval detail is
  * what zooming in is for.
  */
-function pooledFlags(flags: Uint8Array, positional: Float64Array): Badge[] {
+function pooledFlags(flags: Uint8Array, positional: Float64Array, probeType: unknown): Badge[] {
   let any = 0
   for (let i = 0; i < flags.length; i++) any |= flags[i]
-  const out: Badge[] = FLAGS.filter((f) => any & f.bit).map((f) => ({ label: f.label, title: f.title, count: 0 }))
+  const out: Badge[] = FLAGS.filter((f) => any & f.bit).map((f) => flagBadge(f, 0, probeType))
   if (any & FLAG_ICMP_ERROR) {
     out.push({
       label: 'ICMP errors',
@@ -142,11 +154,12 @@ function flagCounts(
   sendErrors: (number | null)[],
   lossPositions: (number[] | null)[],
   lossWindows: (number | null)[],
+  probeType: unknown,
 ): Badge[] {
   const out: Badge[] = FLAGS.map((f) => {
     let count = 0
     for (let i = 0; i < flags.length; i++) if (flags[i] & f.bit) count++
-    return { label: f.label, title: f.title, count }
+    return flagBadge(f, count, probeType)
   }).filter((f) => f.count > 0)
 
   // ICMP errors get named rather than lumped together: "host prohibited" and
@@ -228,6 +241,7 @@ export default function Plot({
   const [fetchError, setFetchError] = useState<string | null>(null)
   const width = useWidth(stackRef)
   const workerRef = useRenderWorker(canvasRef, `plot ${target.path}`)
+  const probeType = String(target.settings.probe_type.effective || 'icmp')
 
   // Pixel ↔ time mapping, in CSS pixels over the density area only.
   const xToTime = useCallback((xCss: number, widthCss: number): number | null => {
@@ -391,8 +405,15 @@ export default function Plot({
         rowsRef.current = rows
         setQuality(
           series.pooled
-            ? pooledFlags(series.flags, series.pooled.positional)
-            : flagCounts(series.flags, series.icmpErrors, series.sendErrors, series.lossPositions, series.lossWindows),
+            ? pooledFlags(series.flags, series.pooled.positional, probeType)
+            : flagCounts(
+                series.flags,
+                series.icmpErrors,
+                series.sendErrors,
+                series.lossPositions,
+                series.lossWindows,
+                probeType,
+              ),
         )
         // Counts are per interval; a pooled read has columns, so none are shown.
         setRowCount(series.pooled ? 0 : n)
@@ -444,7 +465,7 @@ export default function Plot({
     return () => {
       cancelled = true
     }
-  }, [target.id, target.path, agentId, family, from, to, refreshKey, logScale, width, drawOverlay])
+  }, [target.id, target.path, probeType, agentId, family, from, to, refreshKey, logScale, width, drawOverlay])
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -485,7 +506,7 @@ export default function Plot({
   return (
     <section className="card plot">
       <div className="plot-head">
-        <span className="dot" style={{ background: dotColour(quality.filter((q) => !q.aboutTarget).length) }} />
+        <span className="dot" style={{ background: dotColour(quality.filter((q) => !q.aboutTarget && !q.expected).length) }} />
         {onOpenDetail ? (
           <button className="plot-title link-title" onClick={onOpenDetail}>
             {target.title ?? target.path}
@@ -500,7 +521,7 @@ export default function Plot({
         {family && <span className="agent">{family}</span>}
         {agentName && <span className="agent">from {agentName}</span>}
         {quality.map((q) => (
-          <span key={q.label} className="quality" title={q.title}>
+          <span key={q.label} className={q.expected ? 'quality expected' : 'quality'} title={q.title}>
             {q.label}
             {rowCount > 0 && q.count < rowCount && <> ({q.count}/{rowCount})</>}
           </span>
@@ -535,6 +556,7 @@ export default function Plot({
 // cleanly, not whether the network is fast: a widened band with a flag on it
 // has an attributable cause, and that is what the colour is for. A badge about
 // the target (aboutTarget) is not counted: the measurement it sits on was clean.
+// Nor is an expected one: that probe type has it on every interval with a reply.
 function dotColour(flagged: number): string {
   return flagged === 0 ? 'var(--good)' : 'var(--warn)'
 }
