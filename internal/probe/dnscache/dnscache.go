@@ -80,12 +80,15 @@ func New() (*Cache, error) {
 // exchangeUDP asks one server over UDP, with a client of its own.
 //
 // A client per query. One client shared by every lookup is what the
-// library's documentation allows, and it does not work: Client.Exchange
-// empties the client's table of queries in flight when any one of them
-// finishes, and the others then reject their own answers as "ID
-// mismatch". Against a resolver that answers correctly, three in four
-// lookups started together failed. Lookups do start together: every
-// name at start-up, and the two families of one name at every interval.
+// library's documentation allows, and up to v0.6.130 it did not work:
+// Client.Exchange emptied the client's table of queries in flight when
+// any one of them finished, and the others then rejected their own
+// answers as "ID mismatch". Against a resolver that answers correctly,
+// three in four lookups started together failed. v0.6.134 keys that table
+// by connection, and a shared client passes the test for this. The client
+// per query stays, so that lookups do not depend on that fix. Lookups do
+// start together: every name at start-up, and the two families of one
+// name at every interval.
 func exchangeUDP(ctx context.Context, m *dns.Msg, server string) (*dns.Msg, error) {
 	r, _, err := dns.NewClient().Exchange(ctx, m, "udp", server)
 	return r, err

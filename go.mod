@@ -3,13 +3,13 @@ module github.com/timdebruijn/smokeng
 go 1.27.4
 
 require (
-	codeberg.org/miekg/dns v0.6.130
-	github.com/apache/arrow-go/v18 v18.8.0
+	codeberg.org/miekg/dns v0.6.134
+	github.com/apache/arrow-go/v18 v18.9.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/google/flatbuffers v25.12.19+incompatible
 	github.com/heistp/irtt v0.9.2
 	github.com/pelletier/go-toml/v2 v2.4.3
-	golang.org/x/net v0.62.0
+	golang.org/x/net v0.63.0
 	golang.org/x/oauth2 v0.38.0
 	golang.org/x/sys v0.50.0
 	modernc.org/sqlite v1.62.0
@@ -19,7 +19,7 @@ require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/felixge/fgprof v0.9.5 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.8 // indirect
-	github.com/goccy/go-json v0.11.2 // indirect
+	github.com/goccy/go-json v0.12.0 // indirect
 	github.com/google/pprof v0.0.0-20261026192309-dbd0ed30aa88 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
@@ -31,7 +31,7 @@ require (
 	github.com/pkg/profile v1.7.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
 	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
