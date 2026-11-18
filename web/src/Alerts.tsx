@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useState } from 'react'
 import { useAction, ErrorText } from './shared'
+import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
   deleteAlertRule,
@@ -107,7 +108,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
               {firing.map((a) => {
                 const muted = a.acked || a.silenced
                 return (
-                  <tr key={`${a.target}-${a.rule}`} className={muted ? 'disabled-row' : undefined}>
+                  <tr key={alertKey(a)} className={muted ? 'disabled-row' : undefined}>
                     <td>
                       <span className="dot-label">
                         <span
@@ -119,6 +120,9 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                     </td>
                     <td>
                       <code>{a.target}</code>
+                      <span className="hint small" style={{ whiteSpace: 'nowrap' }}>
+                        {afterName(seriesLabel(a.agent, a.family))}
+                      </span>
                     </td>
                     <td>
                       {a.metric} is{' '}
@@ -155,18 +159,21 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                               ? 'Un-acknowledge'
                               : 'Acknowledge — the alert keeps firing, it just stops demanding attention'
                           }
+                          aria-label={`${a.acked ? 'Un-acknowledge' : 'Acknowledge'} ${alertName(a)}`}
                           onClick={() => void ackAlert(a)}
                         >
                           {a.acked ? 'un-acknowledge' : 'acknowledge'}
                         </button>
                         {!a.silenced && (
                           <SilenceQuick
+                            label={alertName(a)}
                             onSilence={(duration_s) =>
                               void run(() =>
                                 createSilence({
                                   target_id: a.target_id,
                                   rule_id: a.rule_id,
                                   agent_id: a.agent_id,
+                                  family: a.family,
                                   duration_s,
                                   reason: `silenced from the firing list`,
                                 }),
@@ -185,7 +192,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
               {firing
                 .filter((a) => a.metric === 'shape')
                 .map((a) => (
-                  <tr key={`ov-${a.target}-${a.rule}`}>
+                  <tr key={`ov-${alertKey(a)}`}>
                     <td colSpan={5}>
                       <details>
                         <summary className="hint small">
@@ -195,6 +202,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                           ruleId={a.rule_id}
                           targetId={a.target_id}
                           agentId={a.agent_id}
+                          family={a.family}
                         />
                       </details>
                     </td>
@@ -333,7 +341,13 @@ function GoldenNote({ rule, baselines }: { rule: AlertRule; baselines: AlertBase
 
 // A compact "silence for…" control on a firing row: one click to reveal a few
 // durations, one more to book a silence scoped to exactly that alert.
-function SilenceQuick({ onSilence }: { onSilence: (durationS: number) => void }) {
+function SilenceQuick({
+  label,
+  onSilence,
+}: {
+  label: string
+  onSilence: (durationS: number) => void
+}) {
   const [open, setOpen] = useState(false)
   const CHOICES: { label: string; s: number }[] = [
     { label: '1h', s: 3600 },
@@ -345,6 +359,7 @@ function SilenceQuick({ onSilence }: { onSilence: (durationS: number) => void })
       <button
         className="pill small"
         title="Silence this alert for a while — suppresses delivery and mutes it, without touching the rule"
+        aria-label={`Silence ${label}`}
         onClick={() => setOpen(true)}
       >
         silence…
@@ -357,6 +372,7 @@ function SilenceQuick({ onSilence }: { onSilence: (durationS: number) => void })
         <button
           key={c.s}
           className="pill small"
+          aria-label={`Silence ${label} for ${c.label}`}
           onClick={() => {
             setOpen(false)
             onSilence(c.s)
@@ -426,6 +442,7 @@ function SilencesSection({
                 <td>
                   <code>{s.target ?? 'everything'}</code>
                   {s.agent_id !== undefined ? <span className="hint small"> · agent {s.agent_id}</span> : ''}
+                  {s.family ? <span className="hint small"> · {s.family}</span> : ''}
                 </td>
                 <td className="dim">
                   {s.upcoming && now < s.starts_at ? (
@@ -637,6 +654,7 @@ function AlertHistory() {
                 <td className="hint">{e.describes}</td>
                 <td>
                   <code>{e.target}</code>
+                  <span className="hint small">{afterName(e.family)}</span>
                 </td>
                 <td className="mono">{new Date(e.ts * 1000).toLocaleString()}</td>
               </tr>

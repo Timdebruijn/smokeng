@@ -189,3 +189,37 @@ export function summarise(s: {
     flags,
   }
 }
+
+/**
+ * What identifies one firing alert. A target measured over both families can
+ * fire one rule twice, so the family is part of the key: without it two rows
+ * collide and an action on one reads as an action on the other.
+ */
+export function alertKey(a: {
+  rule_id: number
+  target_id: number
+  agent_id: number
+  family: string
+}): string {
+  return `${a.rule_id}/${a.target_id}/${a.agent_id}/${a.family}`
+}
+
+/** "local · v4": the vantage point and family as text, either part optional. */
+export function seriesLabel(agent: string | undefined, family: string | undefined): string {
+  return [agent, family].filter((x) => x).join(' · ')
+}
+
+/**
+ * A label as what follows a name, " · local · v4", and nothing at all when
+ * there is no label, so that a row never ends in a separator with nothing
+ * after it.
+ */
+export function afterName(label: string | undefined): string {
+  return label ? ` · ${label}` : ''
+}
+
+/** "loss on /Production/web, local · v4": one alert, named for a control that acts on it. */
+export function alertName(a: { rule: string; target: string; agent?: string; family?: string }): string {
+  const series = seriesLabel(a.agent, a.family)
+  return `${a.rule} on ${a.target}${series ? `, ${series}` : ''}`
+}

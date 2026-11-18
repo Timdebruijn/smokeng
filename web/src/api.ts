@@ -61,6 +61,8 @@ export interface FiringAlert {
   rule_id: number
   target_id: number
   agent_id: number
+  /** Address family of the series (v4, v6 or unknown); with the three ids it names one alert. */
+  family: string
   /** Acknowledged: still firing, but marked seen so it stops demanding attention. */
   acked: boolean
   acked_by?: string
@@ -77,6 +79,8 @@ export interface Silence {
   target_id?: number
   target?: string
   agent_id?: number
+  /** Absent means every family. */
+  family?: string
   rule_id?: number
   starts_at: number
   ends_at: number
@@ -99,6 +103,7 @@ export async function fetchSilences(): Promise<Silence[]> {
 export function createSilence(body: {
   target_id?: number
   agent_id?: number
+  family?: string
   rule_id?: number
   starts_at?: number
   ends_at?: number
@@ -156,11 +161,13 @@ export async function fetchShapeReference(
   ruleId: number,
   targetId: number,
   agentId: number,
+  family: string,
 ): Promise<ShapeReference> {
   const p = new URLSearchParams({
     rule_id: String(ruleId),
     target_id: String(targetId),
     agent_id: String(agentId),
+    family,
   })
   return get<ShapeReference>(`/api/v1/shape-reference?${p.toString()}`, 'shape reference')
 }
@@ -224,13 +231,14 @@ export async function fetchAvailability(
  * The alert keeps firing; this only quiets the UI's attention.
  */
 export function acknowledgeAlert(
-  a: Pick<FiringAlert, 'rule_id' | 'target_id' | 'agent_id'>,
+  a: Pick<FiringAlert, 'rule_id' | 'target_id' | 'agent_id' | 'family'>,
   ack: boolean,
 ): Promise<unknown> {
   return mutate('/api/v1/alerts/ack', 'POST', {
     rule_id: a.rule_id,
     target_id: a.target_id,
     agent_id: a.agent_id,
+    family: a.family,
     ack,
   })
 }
@@ -259,6 +267,7 @@ export interface AlertEvent {
   value: number
   target: string
   agent_id: number
+  family: string
 }
 
 export async function fetchAlertEvents(limit = 50): Promise<AlertEvent[]> {
