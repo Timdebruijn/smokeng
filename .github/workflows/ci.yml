@@ -136,7 +136,7 @@ jobs:
         run: |
           set -eu
           for p in linux/amd64 linux/arm64 linux/arm linux/riscv64 \
-                   darwin/amd64 darwin/arm64; do
+                   darwin/arm64; do
             echo "== $p"
             CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} go build ./...
           done

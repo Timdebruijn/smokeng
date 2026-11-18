@@ -4,7 +4,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 # discovery and drop counting are Linux facilities; darwin builds so the
 # project can be developed on a Mac, with those degradations flagged at
 # runtime rather than hidden.
-PLATFORMS := linux/amd64 linux/arm64 linux/arm darwin/amd64 darwin/arm64
+PLATFORMS := linux/amd64 linux/arm64 linux/arm darwin/arm64
 
 .PHONY: all build web test check notices dist clean
 
