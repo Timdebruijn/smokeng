@@ -261,6 +261,10 @@ export default function Detail({
           // the crosshair bus, the cursor.
           families.map((f) => (
             <Fragment key={familyKey(f)}>
+              {/* Named on the plot itself: the stat rows above carry the
+                  family too, but two plots told apart only by which comes
+                  first are not told apart. */}
+              {f && <p className="family-label">{f}</p>}
               <Plot
                 target={target}
                 agentId={agentId}

@@ -234,15 +234,16 @@ export default function Overview({
                         {r.agentId === null ? (
                           <span className="from-agent">{r.agentName} not enrolled</span>
                         ) : (
-                          seriesLabel(r.agentName, r.family) && (
-                            <span className="from-agent">
-                              {r.agentName ? 'from ' : ''}
-                              {seriesLabel(r.agentName, r.family)}
-                            </span>
-                          )
+                          r.agentName && <span className="from-agent">from {r.agentName}</span>
                         )}
                       </span>
                       <span className="health-host">
+                        {/* The family comes first on the host line. Title and
+                            host are both cut off with an ellipsis when they do
+                            not fit, and anything after them goes with the cut:
+                            the two rows of a target measured over both families
+                            would then read exactly alike. */}
+                        {r.family ? `${r.family} · ` : ''}
                         {r.target.host}
                         {/* Only when it is not the default. On a dense list a
                             badge reading "icmp" on every row carries no

@@ -163,9 +163,11 @@ Whatever protects the UI protects the API, and there are no API tokens. See
 
 A target with `address_family = "both"` is two series per vantage point, and the graphs draw
 them as two plots, v4 directly above v6. Each plot names its family in its title row. They
-share the time axis and the crosshair, so a point in time reads the same on both.
+share the time axis and the crosshair, so a point in time reads the same on both. The overview
+has a row per family, with the family in front of the host.
 
-The **family** buttons in the header, `v4`, `v6` and `v4 + v6`, choose which series are shown.
+The **family** buttons in the header, `v4`, `v6` and `v4 + v6` (a drop-down on a narrow
+screen), choose which series are shown.
 `v6` hides every IPv4 series, including those of targets that are only measured over IPv4, and
 `v4` the other way round; `v4 + v6` is the default. The choice applies to the graphs, the
 overview, the detail view and the compare overlay, not to the alert views or the Targets page,

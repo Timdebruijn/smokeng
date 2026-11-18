@@ -43,19 +43,37 @@ export default function FamilyFilter({
   choice: FamilyChoice
   onChange: (c: FamilyChoice) => void
 }) {
+  // Two forms of one control, and the stylesheet shows one of them: three
+  // buttons where the header has room, a select where it has not. On a phone
+  // the buttons pushed the header onto a third row. The one that is not shown
+  // is display: none, so it is not in the tab order or the accessibility tree.
   return (
-    <div className="family-filter" role="group" aria-label="Address family shown">
-      {CHOICES.map((c) => (
-        <button
-          key={c.value}
-          type="button"
-          className={choice === c.value ? 'pill active' : 'pill'}
-          aria-pressed={choice === c.value}
-          onClick={() => onChange(c.value)}
-        >
-          {c.label}
-        </button>
-      ))}
-    </div>
+    <>
+      <div className="family-filter" role="group" aria-label="Address family shown">
+        {CHOICES.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            className={choice === c.value ? 'pill active' : 'pill'}
+            aria-pressed={choice === c.value}
+            onClick={() => onChange(c.value)}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+      <select
+        className="family-select"
+        aria-label="Address family shown"
+        value={choice}
+        onChange={(e) => onChange(parseFamilyChoice(e.target.value))}
+      >
+        {CHOICES.map((c) => (
+          <option key={c.value} value={c.value}>
+            {c.label}
+          </option>
+        ))}
+      </select>
+    </>
   )
 }
