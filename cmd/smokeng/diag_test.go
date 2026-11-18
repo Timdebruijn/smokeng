@@ -264,6 +264,7 @@ func TestLossPatternFlagValidation(t *testing.T) {
 		{"both windows", "--target /Production/web --since 1d --from 2026-11-01T00:00:00Z --to 2026-11-02T00:00:00Z", "not both"},
 		{"no window", "--target /Production/web", "give a window"},
 		{"bad family", "--target /Production/web --since 1d --family both", `--family is v4, v6 or unknown, not "both"`},
+		{"empty family", "--target /Production/web --since 1d --family=", `--family is v4, v6 or unknown, not ""`},
 		{"bad format", "--target /Production/web --since 1d --format csv", "--format is text or json"},
 		{"unknown flag", "--target /Production/web --since 1d --bogus", "bogus"},
 		{"positional", "--target /Production/web --since 1d stray", "stray"},

@@ -202,5 +202,14 @@ func TestFamilyDoesNotOpenAForeignTarget(t *testing.T) {
 				t.Errorf("%s%s: %d %q without, %d %q with, %q for a missing target", route, extra, c0, b0, c1, b1, bm)
 			}
 		}
+		// A value that is refused is refused alike for a target outside the
+		// caller's scope and one that does not exist. The routes check in a
+		// different order (400 first on two, 404 first on the third), and in
+		// neither order may the answer tell the two targets apart.
+		cf, bf := call(t, a, "GET", "/api/v1/"+route+"?target_id="+num(f.hostB)+"&from=0&to=100&family=bogus", nil)
+		cm, bm := call(t, a, "GET", "/api/v1/"+route+"?target_id=99999&from=0&to=100&family=bogus", nil)
+		if cf != cm || bf != bm || (cf != 400 && cf != 404) {
+			t.Errorf("%s with a bad family: %d %q for a foreign target, %d %q for a missing one", route, cf, bf, cm, bm)
+		}
 	}
 }

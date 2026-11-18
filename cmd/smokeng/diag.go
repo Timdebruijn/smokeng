@@ -90,12 +90,14 @@ func parseLossPatternArgs(args []string, now time.Time) (lossPatternArgs, error)
 	if a.format != "text" && a.format != "json" {
 		return fail("--format is text or json, not %q", a.format)
 	}
-	if *family != "" {
+	// Whether the flag was given, not whether it is empty: --family "$F" with F
+	// unset must be refused, as the API refuses family=, not read as the default.
+	fs.Visit(func(f *flag.Flag) { a.named = a.named || f.Name == "family" })
+	if a.named {
 		var ok bool
 		if a.family, ok = tree.ParseFamily(*family); !ok {
 			return fail("--family is v4, v6 or unknown, not %q", *family)
 		}
-		a.named = true
 	}
 	return a, nil
 }
