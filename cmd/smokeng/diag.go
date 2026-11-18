@@ -33,11 +33,15 @@ func diagCmd(args []string) error {
 
 const lossPatternUsage = `usage: smokeng diag loss-pattern [--db path] --target PATH [--vantage NAME]
                                  (--since 24h | --from RFC3339 --to RFC3339)
-                                 [--format text|json]`
+                                 [--family v4|v6|unknown] [--format text|json]`
 
 type lossPatternArgs struct {
 	db, target, vantage, format string
 	from, to                    int64
+	// family is the series to read; named is false when --family was not given
+	// and the target's current family is read.
+	family tree.Family
+	named  bool
 }
 
 // parseLossPatternArgs validates the flags. now is passed in so that --since
@@ -53,6 +57,7 @@ func parseLossPatternArgs(args []string, now time.Time) (lossPatternArgs, error)
 	from := fs.String("from", "", "window start, RFC 3339")
 	to := fs.String("to", "", "window end, RFC 3339")
 	fs.StringVar(&a.format, "format", "text", "text or json")
+	family := fs.String("family", "", "the address family to read: v4, v6 or unknown (history whose family could not be established); default is the target's current family")
 	fail := func(format string, v ...any) (lossPatternArgs, error) {
 		return a, fmt.Errorf("%s\n%s", fmt.Sprintf(format, v...), lossPatternUsage)
 	}
@@ -85,17 +90,32 @@ func parseLossPatternArgs(args []string, now time.Time) (lossPatternArgs, error)
 	if a.format != "text" && a.format != "json" {
 		return fail("--format is text or json, not %q", a.format)
 	}
+	// Whether the flag was given, not whether it is empty: --family "$F" with F
+	// unset must be refused, as the API refuses family=, not read as the default.
+	fs.Visit(func(f *flag.Flag) { a.named = a.named || f.Name == "family" })
+	if a.named {
+		var ok bool
+		if a.family, ok = tree.ParseFamily(*family); !ok {
+			return fail("--family is v4, v6 or unknown, not %q", *family)
+		}
+	}
 	return a, nil
 }
 
-// The JSON form. Its field names are read by scripts; a change is a bump of
-// Schema and of the pinned test.
+// The JSON form. Its field names are read by scripts; renaming or dropping one
+// is a bump of Schema and of the pinned test. A field added, as family was, is
+// pinned in the test too but leaves Schema alone: a script that ignores what it
+// does not know still reads it.
 type lossPatternReport struct {
 	Schema int                 `json:"schema"`
 	Target string              `json:"target"`
+	Family string              `json:"family"`
 	From   time.Time           `json:"from"`
 	To     time.Time           `json:"to"`
 	Series []lossPatternSeries `json:"series"`
+	// other is set when Family is not the target's current one, which the text
+	// form then says; the JSON always carries Family.
+	other bool
 }
 
 type lossPatternSeries struct {
@@ -197,11 +217,15 @@ func diagLossPattern(args []string, now time.Time, stdout io.Writer) error {
 	}
 	slices.SortFunc(agents, func(x, y int64) int { return strings.Compare(names[x], names[y]) })
 
-	rep := lossPatternReport{Schema: 1, Target: p,
+	family := leaf.Family()
+	if a.named {
+		family = a.family
+	}
+	rep := lossPatternReport{Schema: 1, Target: p, Family: family.String(), other: family != leaf.Family(),
 		From: time.Unix(a.from, 0).UTC(), To: time.Unix(a.to, 0).UTC(), Series: []lossPatternSeries{}}
 	for _, id := range agents {
 		acc := lossPatternSeries{Vantage: names[id], AgentID: id}
-		if err := eachRow(ctx, st, leaf.ID, id, leaf.Family(), a.from, a.to, acc.add); err != nil {
+		if err := eachRow(ctx, st, leaf.ID, id, family, a.from, a.to, acc.add); err != nil {
 			return err
 		}
 		if acc.Intervals == 0 {
@@ -347,8 +371,12 @@ func writeLossPatternText(out io.Writer, rep lossPatternReport) error {
 	// Buffered so that one failed write is remembered and returned by Flush.
 	w := bufio.NewWriter(out)
 	day := "2006-01-02 15:04Z"
+	fam := ""
+	if rep.other {
+		fam = " (" + rep.Family + " history, not the target's current family)"
+	}
 	if len(rep.Series) == 0 {
-		fmt.Fprintf(w, "%s: no measurements from %s to %s.\n", rep.Target, rep.From.Format(day), rep.To.Format(day))
+		fmt.Fprintf(w, "%s%s: no measurements from %s to %s.\n", rep.Target, fam, rep.From.Format(day), rep.To.Format(day))
 		return w.Flush()
 	}
 	for i, s := range rep.Series {
@@ -356,7 +384,7 @@ func writeLossPatternText(out io.Writer, rep lossPatternReport) error {
 			fmt.Fprintln(w)
 		}
 		v := s.Verdict
-		fmt.Fprintf(w, "%s from %s, %s to %s\n\n", rep.Target, s.Vantage, rep.From.Format(day), rep.To.Format(day))
+		fmt.Fprintf(w, "%s%s from %s, %s to %s\n\n", rep.Target, fam, s.Vantage, rep.From.Format(day), rep.To.Format(day))
 		fmt.Fprintf(w, "%d intervals, %d with loss, %d of those with recorded positions\n", s.Intervals, s.WithLoss, s.Recorded)
 		if n := s.WithLoss - s.Recorded; n > 0 {
 			fmt.Fprintf(w, "%d had loss without recorded positions: measured before positions were recorded, total loss, an irtt probe, or an interval flagged as partly smokeng's own doing\n", n)

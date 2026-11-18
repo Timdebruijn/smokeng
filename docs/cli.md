@@ -30,7 +30,7 @@ smokeng agent enable|disable|remove [--db PATH] ID
 smokeng agent key [--key PATH]
 smokeng agent run --master URL [--agent-id ID | --token TOKEN] [flags]
 smokeng alerts replay [--db PATH] (--rule NAME | --rules-file FILE [--rule NAME]) (--since 30d | --from TIME --to TIME) [flags]
-smokeng diag loss-pattern [--db PATH] --target PATH [--vantage NAME] (--since 24h | --from TIME --to TIME) [--format text|json]
+smokeng diag loss-pattern [--db PATH] --target PATH [--vantage NAME] (--since 24h | --from TIME --to TIME) [--family v4|v6|unknown] [--format text|json]
 smokeng version
 ```
 
@@ -289,6 +289,7 @@ smokeng diag loss-pattern --db smokeng.db --target Production/web --vantage ams-
 | `--vantage` | empty | Only this agent's measurements; `local` is the master's own prober. An unknown name is an error. Without it, every agent with measurements for the target in the window gets its own section, in name order. |
 | `--since` | empty | Window ending now: a number with `d`, `h` or `m` (`24h`, `7d`, `90m`). |
 | `--from`, `--to` | empty | Window `[from, to)` as RFC 3339 times. Give `--since`, or both of these, not a mix. |
+| `--family` | the target's current family | `v4`, `v6` or `unknown`: which of the target's series to read. History the upgrade to schema 28 could not place is filed as `unknown`. Output says which family was read when it is not the current one; `json` always has a `family` field. |
 | `--format` | `text` | `text` or `json`. |
 
 The window is at most 400 days. The counts cover all of it; the verdict is about its newest
