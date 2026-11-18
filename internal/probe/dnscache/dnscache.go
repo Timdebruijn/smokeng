@@ -44,9 +44,8 @@ type entry struct {
 
 // Cache resolves hostnames with TTL-based refresh. Safe for concurrent use.
 type Cache struct {
-	client  *dns.Client
 	servers []string
-	// exchange asks one server. It is client.Exchange, and a field so a test can
+	// exchange asks one server. It is a field so a test can
 	// give the resolver an answer without a network.
 	exchange func(ctx context.Context, m *dns.Msg, server string) (*dns.Msg, error)
 
@@ -71,16 +70,25 @@ func New() (*Cache, error) {
 	for _, s := range conf.Servers {
 		servers = append(servers, net.JoinHostPort(s, port))
 	}
-	client := dns.NewClient()
 	return &Cache{
-		client:  client,
-		servers: servers,
-		exchange: func(ctx context.Context, m *dns.Msg, server string) (*dns.Msg, error) {
-			r, _, err := client.Exchange(ctx, m, "udp", server)
-			return r, err
-		},
-		entries: map[key]*entry{},
+		servers:  servers,
+		exchange: exchangeUDP,
+		entries:  map[key]*entry{},
 	}, nil
+}
+
+// exchangeUDP asks one server over UDP, with a client of its own.
+//
+// A client per query. One client shared by every lookup is what the
+// library's documentation allows, and it does not work: Client.Exchange
+// empties the client's table of queries in flight when any one of them
+// finishes, and the others then reject their own answers as "ID
+// mismatch". Against a resolver that answers correctly, three in four
+// lookups started together failed. Lookups do start together: every
+// name at start-up, and the two families of one name at every interval.
+func exchangeUDP(ctx context.Context, m *dns.Msg, server string) (*dns.Msg, error) {
+	r, _, err := dns.NewClient().Exchange(ctx, m, "udp", server)
+	return r, err
 }
 
 // Lookup returns the address for host in the given family ("v4"/"v6").
