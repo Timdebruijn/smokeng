@@ -107,6 +107,7 @@ CREATE TABLE targets (
 CREATE TABLE measurements (
   target_id INTEGER NOT NULL,
   agent_id  INTEGER NOT NULL DEFAULT 0,
+  family    INTEGER NOT NULL,             -- schema v28; 4, 6, or 0 = unknown (see below)
   ts        INTEGER NOT NULL,             -- interval start, unix seconds, UTC-aligned
   sent      INTEGER NOT NULL,
   received  INTEGER NOT NULL,             -- invariant: == sample count in blob
@@ -114,18 +115,19 @@ CREATE TABLE measurements (
   samples    BLOB NOT NULL,               -- encoded sorted RTTs, see §3.3
   icmp_error INTEGER,                     -- schema v2; see §3.4
   loss_mask  BLOB,                        -- schema v25; see §3.4, NULL = not recorded
-  PRIMARY KEY (target_id, agent_id, ts)
+  PRIMARY KEY (target_id, agent_id, family, ts)
 ) WITHOUT ROWID;
 
 CREATE TABLE positional_loss (            -- schema v26; see §3.4, one row per flagged interval
   target_id INTEGER NOT NULL,
   agent_id  INTEGER NOT NULL,
+  family    INTEGER NOT NULL,
   ts        INTEGER NOT NULL,
   p         REAL    NOT NULL,
   intervals INTEGER NOT NULL,
   lost      INTEGER NOT NULL,
   counts    BLOB    NOT NULL,
-  PRIMARY KEY (target_id, agent_id, ts)
+  PRIMARY KEY (target_id, agent_id, family, ts)
 ) WITHOUT ROWID;
 
 CREATE TABLE agents (                     -- reserved now, used from v0.4
@@ -138,11 +140,19 @@ CREATE TABLE agents (                     -- reserved now, used from v0.4
 
 CREATE TABLE resolutions (                -- DNS change log, written only on change
   target_id INTEGER NOT NULL,
+  family    INTEGER NOT NULL,             -- schema v28; the family of the address
   ts        INTEGER NOT NULL,
   address   TEXT NOT NULL,
-  PRIMARY KEY (target_id, ts)
+  PRIMARY KEY (target_id, family, ts)
 );
 ```
+
+A series is `(target_id, agent_id, family)`. The address family is in the key (schema v28)
+so that the two families of one target can never overwrite or be pooled with each other.
+Rows from before v28 were given the family their target has, with one exception: where the
+`resolutions` log shows the target's family was changed, only the master's own rows from
+the change on are certain, and the rest are stored as family 0, unknown, rather than
+guessed. Rows of a target that no longer exists are unknown too.
 
 Notes:
 
@@ -925,7 +935,7 @@ not in the row.
 **Replay is harmless because ingest keeps what is stored.** The nonce cache is in-memory
 and empties on master restart; the timestamp window alone would then admit a captured
 request for up to 300 s. A replay is byte-identical, and ingest inserts on
-`(target_id, agent_id, ts)` and keeps what is already there (§6), so storing it again
+`(target_id, agent_id, family, ts)` and keeps what is already there (§6), so storing it again
 changes nothing. The nonce cache stays (cheap, blocks log spam), but correctness does not
 depend on it. The same rule means a *different* signed submission for an interval already
 reported changes nothing either; an earlier design replaced on conflict, which let an
@@ -1005,7 +1015,7 @@ run would store the same list thousands of times over, so a row is written only 
 path differs from the last one, exactly as `resolutions` already does for DNS:
 
 ```sql
-paths(target_id, agent_id, ts, hops TEXT)   -- schema v6
+paths(target_id, agent_id, family, ts, hops TEXT)   -- schema v6; family since v28
 ```
 
 `hops` is the comma-separated hop list, `*` for a hop that did not answer. Text, because
