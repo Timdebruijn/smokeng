@@ -365,7 +365,9 @@ listening. It needs free disk space of about twice the size of the database: the
 itself grew to 308 MB and the write-ahead log peaked at 176 MB beside it. The file does not
 shrink back afterwards. The space the old tables held is reused by new measurements; run
 `sqlite3 /var/lib/smokeng/smokeng.db VACUUM` with the service stopped if you want it
-returned to the filesystem.
+returned to the filesystem. History the upgrade could not place under a family is filed as
+unknown; it is kept and can be read with `family=unknown` on the API or `--family unknown` on
+`smokeng diag loss-pattern`.
 
 ### Rollback
 

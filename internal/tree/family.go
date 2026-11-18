@@ -35,6 +35,22 @@ func (f Family) String() string {
 	return "unknown"
 }
 
+// ParseFamily is the inverse of Family.String: exactly "v4", "v6" or "unknown".
+// It is not FamilyOf, which reads a target's address_family setting and maps
+// anything it does not know to unknown; a request that names a family it
+// misspelled must be refused, not read as another series.
+func ParseFamily(s string) (Family, bool) {
+	switch s {
+	case "v4":
+		return FamilyV4, true
+	case "v6":
+		return FamilyV6, true
+	case "unknown":
+		return FamilyUnknown, true
+	}
+	return 0, false
+}
+
 // Family is the family the target is measured over now; unknown for a group
 // node, which has no address.
 func (t *Target) Family() Family {

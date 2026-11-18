@@ -36,6 +36,13 @@ func (s *server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
+	family, named, ok := familyParam(w, q)
+	if !ok {
+		return
+	}
+	if !named {
+		family = sc.tr.FamilyOf(targetID)
+	}
 	// The loss at which an interval counts as down. 100 (the default) means only
 	// a total blackout is down; a lower SLA threshold counts heavy loss as down.
 	threshold := 100.0
@@ -108,7 +115,7 @@ func (s *server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 
 	agentsOut := make([]map[string]any, 0, len(wants))
 	for _, v := range wants {
-		points, err := s.st.AvailabilitySeries(r.Context(), targetID, v.id, sc.tr.FamilyOf(targetID), from, to)
+		points, err := s.st.AvailabilitySeries(r.Context(), targetID, v.id, family, from, to)
 		if err != nil {
 			internalError(w, err)
 			return
@@ -123,6 +130,7 @@ func (s *server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"target":             path,
 		"target_id":          targetID,
+		"family":             family.String(),
 		"from":               from,
 		"to":                 to,
 		"interval_s":         intervalS,

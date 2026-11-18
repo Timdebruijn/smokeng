@@ -263,6 +263,7 @@ func TestLossPatternFlagValidation(t *testing.T) {
 		{"unknown vantage", "--target /Production/web --since 1d --vantage nobody", `no agent named "nobody"`},
 		{"both windows", "--target /Production/web --since 1d --from 2026-11-01T00:00:00Z --to 2026-11-02T00:00:00Z", "not both"},
 		{"no window", "--target /Production/web", "give a window"},
+		{"bad family", "--target /Production/web --since 1d --family both", `--family is v4, v6 or unknown, not "both"`},
 		{"bad format", "--target /Production/web --since 1d --format csv", "--format is text or json"},
 		{"unknown flag", "--target /Production/web --since 1d --bogus", "bogus"},
 		{"positional", "--target /Production/web --since 1d stray", "stray"},
@@ -306,7 +307,10 @@ func TestLossPatternJSONSchemaIsPinned(t *testing.T) {
 			t.Errorf("%s keys = %s\nwant       %s", what, got, want)
 		}
 	}
-	check("top level", top, "from schema series target to")
+	check("top level", top, "family from schema series target to")
+	if top["family"] != "v4" {
+		t.Errorf("family = %v, want the target's own v4", top["family"])
+	}
 	if top["schema"] != float64(1) || top["target"] != "/Production/web" || top["to"] != "2026-11-17T12:00:00Z" {
 		t.Errorf("schema/target/to = %v %v %v", top["schema"], top["target"], top["to"])
 	}
@@ -421,5 +425,82 @@ func TestLossPatternRefusesAnEndlessWindow(t *testing.T) {
 	}
 	if _, err := parseLossPatternArgs(strings.Fields("--target /t --since 400d"), replayNow); err != nil {
 		t.Errorf("400 days refused: %v", err)
+	}
+}
+
+// addUnknownRows files tailSeries-shaped history for /Production/web under the
+// unknown family, as the v28 migration does for history it cannot place.
+func addUnknownRows(t *testing.T, db string, count int) {
+	t.Helper()
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	targets, err := st.ListTargets(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []store.Measurement
+	for _, tg := range targets {
+		if tg.Name != "web" {
+			continue
+		}
+		for _, r := range tailSeries(count) {
+			r.TargetID, r.Family = tg.ID, tree.FamilyUnknown
+			rows = append(rows, r)
+		}
+	}
+	if err := st.WriteMeasurements(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Protects --family: history filed as unknown is unreadable by the default (the
+// target's current family, v4 here) and is read by --family unknown, with the
+// output saying which family it is; the default's output does not change. If
+// the flag were ignored, both runs would read the 12 v4 intervals.
+func TestLossPatternReadsAnotherFamily(t *testing.T) {
+	db := diagDB(t, map[string][]store.Measurement{"local": tailSeries(12)})
+	addUnknownRows(t, db, 30)
+
+	out, err := runLossPattern(t, db, "--target", "/Production/web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "12 intervals, 12 with loss") || strings.Contains(out, "history") {
+		t.Errorf("default read is not the v4 rows alone, or names a family:\n%s", out)
+	}
+	if out2, _ := runLossPattern(t, db, "--target", "/Production/web", "--family", "v4"); out2 != out {
+		t.Errorf("--family v4 on a v4 target differs from the default:\n%s", out2)
+	}
+
+	out, err = runLossPattern(t, db, "--target", "/Production/web", "--family", "unknown")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/Production/web (unknown history, not the target's current family) from local", "30 intervals, 30 with loss"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text lacks %q:\n%s", want, out)
+		}
+	}
+	out, err = runLossPattern(t, db, "--target", "/Production/web", "--family", "v6")
+	if err != nil || !strings.Contains(out, "(v6 history, not the target's current family): no measurements") {
+		t.Errorf("v6 read = %q, %v", out, err)
+	}
+
+	out, err = runLossPattern(t, db, "--target", "/Production/web", "--family", "unknown", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep struct {
+		Family string
+		Series []struct{ Intervals int }
+	}
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if rep.Family != "unknown" || len(rep.Series) != 1 || rep.Series[0].Intervals != 30 {
+		t.Errorf("json = %+v", rep)
 	}
 }
