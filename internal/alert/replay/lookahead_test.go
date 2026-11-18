@@ -9,6 +9,7 @@ import (
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/alert/replay"
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 func replayNames(t *testing.T, src replay.Source, names []string, from, to int) []trans {
@@ -97,7 +98,7 @@ func TestWarmupMakesTheStartOfTheWindowIrrelevant(t *testing.T) {
 	e := newEnv(t)
 	rules := e.everyKind()
 	e.fill()
-	early, _ := e.st.QueryRange(ctx, e.web, 0, at(0), at(100))
+	early, _ := e.st.QueryRange(ctx, e.web, 0, tree.FamilyV4, at(0), at(100))
 	var ref []uint32
 	for _, m := range early {
 		ref = append(ref, m.Samples...)
@@ -150,7 +151,7 @@ func TestReadOnlyBesideALiveWriter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ms, err := e.st.QueryRange(ctx, e.web, 0, 0, at(100))
+		ms, err := e.st.QueryRange(ctx, e.web, 0, tree.FamilyV4, 0, at(100))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +176,7 @@ func TestReadOnlyBesideALiveWriter(t *testing.T) {
 				return
 			default:
 			}
-			m := store.Measurement{TargetID: e.web, AgentID: 0, TS: at(1000 + i), Sent: 5, Received: 1,
+			m := store.Measurement{TargetID: e.web, AgentID: 0, Family: tree.FamilyV4, TS: at(1000 + i), Sent: 5, Received: 1,
 				Samples: []uint32{5000}}
 			if err := e.st.WriteMeasurements(ctx, []store.Measurement{m}); err != nil {
 				t.Error(err)

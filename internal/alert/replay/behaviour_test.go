@@ -13,6 +13,7 @@ import (
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/alert/replay"
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // lossPattern builds a loss series: g good, b all lost, . missing.
@@ -250,7 +251,7 @@ func TestGoldenWarnings(t *testing.T) {
 		t.Errorf("no reference: warnings %q, episodes %d", rep.Warnings, rep.Totals.Episodes)
 	}
 
-	ms, _ := e.st.QueryRange(ctx, e.web, 0, at(0), at(30))
+	ms, _ := e.st.QueryRange(ctx, e.web, 0, tree.FamilyV4, at(0), at(30))
 	var ref []uint32
 	for _, m := range ms {
 		ref = append(ref, m.Samples...)
@@ -370,7 +371,7 @@ func TestFileRulesScope(t *testing.T) {
 	})
 	e.put(e.web, 0, bad)
 	e.put(e.gw, 0, bad)
-	ms, _ := e.st.QueryRange(ctx, e.web, 0, at(0), at(8))
+	ms, _ := e.st.QueryRange(ctx, e.web, 0, tree.FamilyV4, at(0), at(8))
 	var ref []uint32
 	for _, m := range ms {
 		ref = append(ref, m.Samples...)
@@ -581,11 +582,11 @@ type failing struct {
 	err    error
 }
 
-func (f *failing) QueryRange(ctx context.Context, tg, ag, from, to int64) ([]store.Measurement, error) {
+func (f *failing) QueryRange(ctx context.Context, tg, ag int64, fam tree.Family, from, to int64) ([]store.Measurement, error) {
 	if tg == f.target {
 		return nil, f.err
 	}
-	return f.Source.QueryRange(ctx, tg, ag, from, to)
+	return f.Source.QueryRange(ctx, tg, ag, fam, from, to)
 }
 
 // Protects the error a replay reports when series run side by side: the read
@@ -614,14 +615,14 @@ type inflight struct {
 	now, peak atomic.Int64
 }
 
-func (f *inflight) QueryRange(ctx context.Context, tg, ag, from, to int64) ([]store.Measurement, error) {
+func (f *inflight) QueryRange(ctx context.Context, tg, ag int64, fam tree.Family, from, to int64) ([]store.Measurement, error) {
 	n := f.now.Add(1)
 	defer f.now.Add(-1)
 	for p := f.peak.Load(); n > p && !f.peak.CompareAndSwap(p, n); p = f.peak.Load() {
 	}
 	// Long enough that every series allowed in is in at the same time.
 	time.Sleep(2 * time.Millisecond)
-	return f.Source.QueryRange(ctx, tg, ag, from, to)
+	return f.Source.QueryRange(ctx, tg, ag, fam, from, to)
 }
 
 // Protects the memory bound across series: a rule on the root reaches three

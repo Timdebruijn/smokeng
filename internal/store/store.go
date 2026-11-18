@@ -11,11 +11,14 @@ import (
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
-// Measurement is one finalized interval for one (target, agent) series.
+// Measurement is one finalized interval for one (target, agent, family) series.
 type Measurement struct {
 	TargetID int64
 	AgentID  int64
-	TS       int64 // interval start, unix seconds, UTC-aligned
+	// Family is the address family the interval was measured over; with the
+	// target and agent it names the series.
+	Family tree.Family
+	TS     int64 // interval start, unix seconds, UTC-aligned
 	// Sent counts probes attempted, including any the local stack refused to
 	// transmit, so loss is measured against what was asked for.
 	Sent     int
@@ -201,7 +204,7 @@ const LocalAgentName = "local"
 // callers require.
 type Store interface {
 	// WriteMeasurements writes a batch in one transaction, replacing any row at
-	// an existing (target, agent, ts). It is for a writer of its own rows: the
+	// an existing (target, agent, family, ts). It is for a writer of its own rows: the
 	// prober recording what it measured.
 	WriteMeasurements(ctx context.Context, ms []Measurement) error
 	// IngestMeasurements writes what a remote agent submitted and never
@@ -211,14 +214,14 @@ type Store interface {
 	// (DESIGN.md §9).
 	IngestMeasurements(ctx context.Context, ms []Measurement) (stored []Measurement, err error)
 	// QueryRange returns one series over [from, to), ordered by ts.
-	QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error)
+	QueryRange(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64) ([]Measurement, error)
 	// QueryColumns returns one series over [from, to) for a plot n columns
 	// wide: raw when the window holds at most n intervals, pooled per column
 	// otherwise (see Column).
-	QueryColumns(ctx context.Context, targetID, agentID, from, to int64, n int) (raw []Measurement, cols []Column, err error)
+	QueryColumns(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64, n int) (raw []Measurement, cols []Column, err error)
 	// AvailabilitySeries returns just sent/received per interval over [from, to),
 	// for an availability report — no samples decoded.
-	AvailabilitySeries(ctx context.Context, targetID, agentID, from, to int64) ([]report.Point, error)
+	AvailabilitySeries(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64) ([]report.Point, error)
 	ListTargets(ctx context.Context) ([]tree.Target, error)
 	// UpsertTarget inserts (ID == 0, assigning t.ID) or updates a target.
 	UpsertTarget(ctx context.Context, t *tree.Target) error
@@ -232,13 +235,13 @@ type Store interface {
 	// must delete children before their parent (foreign key).
 	DeleteTarget(ctx context.Context, id int64) error
 	// RecordResolution appends a row to the DNS change log (DESIGN.md §5.4).
-	RecordResolution(ctx context.Context, targetID, ts int64, address string) error
+	RecordResolution(ctx context.Context, targetID int64, family tree.Family, ts int64, address string) error
 	// LastResolution returns the most recently logged address for the target,
 	// or "" when none has been recorded.
-	LastResolution(ctx context.Context, targetID int64) (string, error)
+	LastResolution(ctx context.Context, targetID int64, family tree.Family) (string, error)
 	// LastPath and RecordPath keep the route change log (DESIGN.md §9a).
 	// Only changes are written: a route is stable for days and then is not.
-	LastPath(ctx context.Context, targetID, agentID int64) (string, error)
-	RecordPath(ctx context.Context, targetID, agentID, ts int64, hops string) error
+	LastPath(ctx context.Context, targetID, agentID int64, family tree.Family) (string, error)
+	RecordPath(ctx context.Context, targetID, agentID int64, family tree.Family, ts int64, hops string) error
 	Close() error
 }

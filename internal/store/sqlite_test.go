@@ -54,7 +54,7 @@ func TestMigrationFromV1(t *testing.T) {
 	}
 
 	// The pre-existing row survives, and reads back through the new column.
-	got, err := s.QueryRange(ctx, 1, LocalAgentID, 0, 1<<40)
+	got, err := s.QueryRange(ctx, 1, LocalAgentID, 0, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestSQLiteRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := s.QueryRange(ctx, child.ID, LocalAgentID, m.TS, m.TS+1)
+	got, err := s.QueryRange(ctx, child.ID, LocalAgentID, 0, m.TS, m.TS+1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestPruneMeasurements(t *testing.T) {
 		t.Fatalf("pruned %d rows, want 5", deleted)
 	}
 
-	remaining, err := s.QueryRange(ctx, kept, LocalAgentID, 0, base+n*step)
+	remaining, err := s.QueryRange(ctx, kept, LocalAgentID, 0, 0, base+n*step)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestPruneMeasurements(t *testing.T) {
 	}
 
 	// The other target is whole: nobody set retention on it.
-	untouched, err := s.QueryRange(ctx, other, LocalAgentID, 0, base+n*step)
+	untouched, err := s.QueryRange(ctx, other, LocalAgentID, 0, 0, base+n*step)
 	if err != nil {
 		t.Fatal(err)
 	}

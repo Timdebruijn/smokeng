@@ -35,14 +35,14 @@ func TestOpenReadOnlyReadsBesideAnOpenWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO measurements (target_id, agent_id, ts, sent, received, flags, samples)
-		VALUES (1, 0, 100, 5, 1, 0, X'01A09C01')`); err != nil {
+	if _, err := tx.Exec(`INSERT INTO measurements (target_id, agent_id, family, ts, sent, received, flags, samples)
+		VALUES (1, 0, 0, 100, 5, 1, 0, X'01A09C01')`); err != nil {
 		t.Fatal(err)
 	}
 
 	read := make(chan int, 1)
 	go func() {
-		ms, err := ro.QueryRange(ctx, 1, 0, 0, 1000)
+		ms, err := ro.QueryRange(ctx, 1, 0, 0, 0, 1000)
 		if err != nil {
 			t.Error(err)
 		}
@@ -60,7 +60,7 @@ func TestOpenReadOnlyReadsBesideAnOpenWriter(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	ms, err := ro.QueryRange(ctx, 1, 0, 0, 1000)
+	ms, err := ro.QueryRange(ctx, 1, 0, 0, 0, 1000)
 	if err != nil || len(ms) != 1 {
 		t.Fatalf("after commit: %d rows, err %v; want 1", len(ms), err)
 	}

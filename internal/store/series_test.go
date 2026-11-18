@@ -23,7 +23,7 @@ func TestSeriesRoundTrip(t *testing.T) {
 			SeriesIPDVReceive: {-9, 0, 3},
 		},
 	})
-	got, err := s.QueryRange(ctx, 1, 2, 0, 2000)
+	got, err := s.QueryRange(ctx, 1, 2, 0, 0, 2000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestSeriesAbsentStaysAbsent(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)
 	writeOne(t, s, Measurement{TargetID: 1, TS: 1000, Sent: 1, Received: 1, Samples: []uint32{50}})
-	got, err := s.QueryRange(ctx, 1, 0, 0, 2000)
+	got, err := s.QueryRange(ctx, 1, 0, 0, 0, 2000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestSeriesReplacedOnRewrite(t *testing.T) {
 	writeOne(t, s, m)
 	m.Series = nil
 	writeOne(t, s, m)
-	got, err := s.QueryRange(ctx, 1, 0, 0, 2000)
+	got, err := s.QueryRange(ctx, 1, 0, 0, 0, 2000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestPruneRemovesSeries(t *testing.T) {
 	if orphans != 0 {
 		t.Errorf("%d series rows outlived their measurement", orphans)
 	}
-	got, err := s.QueryRange(ctx, 1, 0, 0, 9000)
+	got, err := s.QueryRange(ctx, 1, 0, 0, 0, 9000)
 	if err != nil {
 		t.Fatalf("range containing pruned data no longer reads: %v", err)
 	}
@@ -164,12 +164,12 @@ func TestOrphanSeriesIsRefused(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, "DELETE FROM measurements WHERE ts = 1000"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.QueryRange(ctx, 1, 0, 0, 2000); err == nil {
+	if _, err := s.QueryRange(ctx, 1, 0, 0, 0, 2000); err == nil {
 		t.Fatal("a series row with no measurement was read without complaint")
 	}
 	// And it is found even when nothing survives in the window, which is where
 	// an orphan actually sits.
-	if _, err := s.QueryRange(ctx, 1, 0, 900, 1100); err == nil {
+	if _, err := s.QueryRange(ctx, 1, 0, 0, 900, 1100); err == nil {
 		t.Error("an orphan alone in its window went unnoticed")
 	}
 }
@@ -186,7 +186,7 @@ func TestSeriesAreScopedToTheirAgent(t *testing.T) {
 		Samples: []uint32{20}, Series: map[string][]int32{SeriesIPDVSend: {-22}}})
 
 	for agent, want := range map[int64]int32{1: -11, 2: -22} {
-		got, err := s.QueryRange(ctx, 1, agent, 0, 2000)
+		got, err := s.QueryRange(ctx, 1, agent, 0, 0, 2000)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -211,7 +211,7 @@ func TestCorruptSeriesLeavesTheIntervalReadable(t *testing.T) {
 		[]byte{0x7f, 0x01}, SeriesIPDVSend); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.QueryRange(ctx, 1, 0, 0, 2000)
+	got, err := s.QueryRange(ctx, 1, 0, 0, 0, 2000)
 	if err != nil {
 		t.Fatalf("one corrupt optional series made the whole window unreadable: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestSeriesMeasuredButEmptySurvives(t *testing.T) {
 		TargetID: 1, TS: 1000, Sent: 1, Received: 1, Samples: []uint32{50},
 		Series: map[string][]int32{SeriesIPDVSend: {}},
 	})
-	got, err := s.QueryRange(ctx, 1, 0, 0, 2000)
+	got, err := s.QueryRange(ctx, 1, 0, 0, 0, 2000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +335,7 @@ func TestSendReasonRoundTripsThroughTheStore(t *testing.T) {
 	writeOne(t, s, Measurement{
 		TargetID: 1, TS: 2000, Sent: 1, Received: 1, Samples: []uint32{20},
 	})
-	got, err := s.QueryRange(ctx, 1, 0, 0, 3000)
+	got, err := s.QueryRange(ctx, 1, 0, 0, 0, 3000)
 	if err != nil {
 		t.Fatal(err)
 	}

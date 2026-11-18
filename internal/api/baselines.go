@@ -123,7 +123,7 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 	// decode to tens of gigabytes before anything checked it. The count comes
 	// from sent/received alone, which AvailabilitySeries reads without
 	// decoding a sample, so this is cheap next to what it prevents.
-	pts, err := s.st.AvailabilitySeries(r.Context(), body.TargetID, agentID, body.From, body.To)
+	pts, err := s.st.AvailabilitySeries(r.Context(), body.TargetID, agentID, sc.tr.FamilyOf(body.TargetID), body.From, body.To)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -138,7 +138,7 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ms, err := s.st.QueryRange(r.Context(), body.TargetID, agentID, body.From, body.To)
+	ms, err := s.st.QueryRange(r.Context(), body.TargetID, agentID, sc.tr.FamilyOf(body.TargetID), body.From, body.To)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -321,7 +321,7 @@ func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
 	}
 	// The current side: the most recent interval measured for this series.
 	to := time.Now().Unix()
-	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, to-6*3600, to)
+	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, sc.tr.FamilyOf(targetID), to-6*3600, to)
 	if err != nil {
 		internalError(w, err)
 		return

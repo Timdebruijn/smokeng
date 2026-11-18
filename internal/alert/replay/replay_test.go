@@ -9,6 +9,7 @@ import (
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/alert/replay"
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // everyKind is one rule of each kind the engine has, on the Production group.
@@ -85,7 +86,7 @@ func TestReplayMatchesLive(t *testing.T) {
 			goldenID = r.ID
 		}
 	}
-	early, err := e.st.QueryRange(ctx, e.web, 0, at(0), at(100))
+	early, err := e.st.QueryRange(ctx, e.web, 0, tree.FamilyV4, at(0), at(100))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func TestReplayMatchesLive(t *testing.T) {
 	type key struct{ target, agent int64 }
 	var all []store.Measurement
 	for _, k := range []key{{e.web, 0}, {e.web, e.ams}, {e.db, 0}} {
-		ms, err := e.st.QueryRange(ctx, k.target, k.agent, 0, at(1000))
+		ms, err := e.st.QueryRange(ctx, k.target, k.agent, tree.FamilyV4, 0, at(1000))
 		if err != nil {
 			t.Fatal(err)
 		}

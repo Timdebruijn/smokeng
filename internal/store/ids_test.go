@@ -65,7 +65,7 @@ func TestANewTargetDoesNotInheritADeletedTargetsHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	fresh := newTarget(t, s, "customer-b-core")
-	got, err := s.QueryRange(ctx, fresh, 0, 0, 1<<40)
+	got, err := s.QueryRange(ctx, fresh, 0, 0, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,8 +236,8 @@ func TestAgentIDSeedReadsFarLessThanTheHistory(t *testing.T) {
 	s := openTemp(t)
 	if _, err := s.db.Exec(`
 		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 200000)
-		INSERT INTO measurements (target_id, agent_id, ts, sent, received, flags, samples)
-		SELECT (i % 4) + 1, 0, i, 1, 0, 0, X'' FROM n`); err != nil {
+		INSERT INTO measurements (target_id, agent_id, family, ts, sent, received, flags, samples)
+		SELECT (i % 4) + 1, 0, 4, i, 1, 0, 0, X'' FROM n`); err != nil {
 		t.Fatal(err)
 	}
 	var seed string

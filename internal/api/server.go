@@ -17,6 +17,7 @@ import (
 	"github.com/timdebruijn/smokeng/internal/ingest"
 	"github.com/timdebruijn/smokeng/internal/probe"
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // AlertView is what the API needs of the alert manager.
@@ -56,7 +57,7 @@ type Store interface {
 	ListAlertEvents(ctx context.Context, limit int) ([]alert.Event, error)
 	ListAgents(ctx context.Context) ([]store.AgentRecord, error)
 	TouchAgent(ctx context.Context, id, at int64, version string) error
-	PathChanges(ctx context.Context, targetID, agentID, from, to int64) ([]store.PathChange, error)
+	PathChanges(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64) ([]store.PathChange, error)
 	IngestPaths(ctx context.Context, agentID int64, cs []store.PathChange) (int, error)
 	MintEnrolmentToken(ctx context.Context, name string, ttl time.Duration, now time.Time) (store.EnrolmentToken, error)
 	RedeemEnrolmentToken(ctx context.Context, tok string, pub ed25519.PublicKey, now time.Time) (store.AgentRecord, error)

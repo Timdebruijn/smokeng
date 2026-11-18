@@ -78,7 +78,7 @@ func TestLossMaskStoreRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.QueryRange(ctx, 1, 2, 0, 2000)
+	got, err := s.QueryRange(ctx, 1, 2, 0, 0, 2000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestV25LeavesExistingRowsWithoutMask(t *testing.T) {
 		t.Fatalf("migrating a v24 database: %v", err)
 	}
 	defer s.Close()
-	got, err := s.QueryRange(context.Background(), 5, LocalAgentID, 0, 1<<40)
+	got, err := s.QueryRange(context.Background(), 5, LocalAgentID, 0, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}

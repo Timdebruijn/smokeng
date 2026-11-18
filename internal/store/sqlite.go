@@ -493,6 +493,12 @@ CREATE INDEX measurements_masked ON measurements (target_id, agent_id, ts) WHERE
 	// configuration. Everything below inherits, so a subtree can say flag_only.
 	`ALTER TABLE targets ADD COLUMN positional_loss TEXT;
 UPDATE targets SET positional_loss = 'exclude' WHERE parent_id IS NULL AND positional_loss IS NULL;`,
+	// v28: the address family joins the key of every series table. A target is
+	// about to be measurable over IPv4 and IPv6 at once, and those are two
+	// series: keyed on (target, agent, ts) the second would overwrite the first.
+	// The key changes, so the tables are rebuilt; the alert tables are not
+	// touched here. See familyMigration for what each existing row is given.
+	familyMigration(),
 }
 
 func (s *SQLite) migrate() error {
@@ -539,7 +545,7 @@ func (s *SQLite) WriteMeasurements(ctx context.Context, ms []Measurement) error 
 }
 
 // IngestMeasurements writes what a remote agent submitted, keeping what is
-// already stored: a row at an existing (target, agent, ts) is left exactly as
+// already stored: a row at an existing (target, agent, family, ts) is left exactly as
 // it is, and is not among the rows returned, which are the ones stored.
 //
 // WriteMeasurements replaces instead, and for the local prober that is right —
@@ -571,8 +577,8 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 	if !replace {
 		verb, suffix = "INSERT INTO", " ON CONFLICT DO NOTHING"
 	}
-	stmt, err := tx.PrepareContext(ctx, verb+` measurements (target_id, agent_id, ts, sent, received, flags, samples, icmp_error, send_error, loss_mask)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`+suffix)
+	stmt, err := tx.PrepareContext(ctx, verb+` measurements (target_id, agent_id, family, ts, sent, received, flags, samples, icmp_error, send_error, loss_mask)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`+suffix)
 	if err != nil {
 		return nil, err
 	}
@@ -582,14 +588,14 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 	// timestamps would keep serving the jitter it measured the last time it
 	// could — the stalest possible reading, presented as current.
 	delSeries, err := tx.PrepareContext(ctx, `
-		DELETE FROM measurement_series WHERE target_id = ? AND agent_id = ? AND ts = ?`)
+		DELETE FROM measurement_series WHERE target_id = ? AND agent_id = ? AND family = ? AND ts = ?`)
 	if err != nil {
 		return nil, err
 	}
 	defer delSeries.Close()
 	putSeries, err := tx.PrepareContext(ctx, `
-		INSERT INTO measurement_series (target_id, agent_id, ts, series, samples)
-		VALUES (?, ?, ?, ?, ?)`)
+		INSERT INTO measurement_series (target_id, agent_id, family, ts, series, samples)
+		VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return nil, err
 	}
@@ -598,19 +604,19 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 	var history, delPositional, putPositional *sql.Stmt
 	if detect {
 		// Newest first, so that LIMIT keeps the newest Window. The partial
-		// index measurements_masked serves it: (target, agent, ts) in order.
+		// index measurements_masked serves it: (target, agent, family, ts) in order.
 		if history, err = tx.PrepareContext(ctx, historyQuery); err != nil {
 			return nil, err
 		}
 		defer history.Close()
 		if delPositional, err = tx.PrepareContext(ctx, `
-			DELETE FROM positional_loss WHERE target_id = ? AND agent_id = ? AND ts = ?`); err != nil {
+			DELETE FROM positional_loss WHERE target_id = ? AND agent_id = ? AND family = ? AND ts = ?`); err != nil {
 			return nil, err
 		}
 		defer delPositional.Close()
 		if putPositional, err = tx.PrepareContext(ctx, `
-			INSERT INTO positional_loss (target_id, agent_id, ts, p, intervals, lost, counts)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`); err != nil {
+			INSERT INTO positional_loss (target_id, agent_id, family, ts, p, intervals, lost, counts)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
 			return nil, err
 		}
 		defer putPositional.Close()
@@ -625,7 +631,7 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 		if err != nil {
 			return nil, err
 		}
-		res, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.TS, m.Sent, m.Received,
+		res, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.Family, m.TS, m.Sent, m.Received,
 			m.Flags, blob, m.ICMPErr, m.SendErr, m.LossMask)
 		if err != nil {
 			return nil, err
@@ -637,14 +643,14 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 		} else if n == 0 {
 			continue
 		}
-		if _, err := delSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
+		if _, err := delSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.Family, m.TS); err != nil {
 			return nil, err
 		}
 		if detect {
 			// As with the series: a replaced interval is a different interval,
 			// and a flag earned by the old one must not outlive it.
 			m.Positional = nil
-			if _, err := delPositional.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
+			if _, err := delPositional.ExecContext(ctx, m.TargetID, m.AgentID, m.Family, m.TS); err != nil {
 				return nil, err
 			}
 			if m.LossMask != nil {
@@ -654,7 +660,7 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 				}
 				if pl != nil {
 					cblob := EncodePositionalCounts(pl.Counts)
-					if _, err := putPositional.ExecContext(ctx, m.TargetID, m.AgentID, m.TS,
+					if _, err := putPositional.ExecContext(ctx, m.TargetID, m.AgentID, m.Family, m.TS,
 						pl.P, pl.Intervals, pl.Lost, cblob); err != nil {
 						return nil, err
 					}
@@ -673,7 +679,7 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 				return nil, fmt.Errorf("store: measurement (%d,%d,%d) series %q: %w",
 					m.TargetID, m.AgentID, m.TS, name, err)
 			}
-			if _, err := putSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS, name, sblob); err != nil {
+			if _, err := putSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.Family, m.TS, name, sblob); err != nil {
 				return nil, err
 			}
 		}
@@ -691,14 +697,14 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 // partial index applicable.
 const historyQuery = `
 	SELECT ts, sent, received, loss_mask FROM measurements INDEXED BY measurements_masked
-	WHERE target_id = ? AND agent_id = ? AND ts <= ? AND ts >= ? AND loss_mask IS NOT NULL
+	WHERE target_id = ? AND agent_id = ? AND family = ? AND ts <= ? AND ts >= ? AND loss_mask IS NOT NULL
 	ORDER BY ts DESC LIMIT ?`
 
 // detectPositional runs the test on the window that ends at m, which is
 // already written in the transaction, as are any earlier rows of the same
 // batch. It returns nil when the window is not flagged.
 func detectPositional(ctx context.Context, history *sql.Stmt, m *Measurement) (*PositionalLoss, error) {
-	rows, err := history.QueryContext(ctx, m.TargetID, m.AgentID, m.TS, m.TS-losspattern.MaxAgeS, losspattern.Window)
+	rows, err := history.QueryContext(ctx, m.TargetID, m.AgentID, m.Family, m.TS, m.TS-losspattern.MaxAgeS, losspattern.Window)
 	if err != nil {
 		return nil, err
 	}
@@ -737,11 +743,11 @@ func detectPositional(ctx context.Context, history *sql.Stmt, m *Measurement) (*
 	return &PositionalLoss{P: v.P, Intervals: v.Intervals, Lost: v.Lost, Counts: v.Counts}, nil
 }
 
-func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]Measurement, error) {
+func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64) ([]Measurement, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts, sent, received, flags, samples, icmp_error, send_error, loss_mask FROM measurements
-		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?
-		ORDER BY ts`, targetID, agentID, from, to)
+		WHERE target_id = ? AND agent_id = ? AND family = ? AND ts >= ? AND ts < ?
+		ORDER BY ts`, targetID, agentID, family, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -749,7 +755,7 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 	var out []Measurement
 	var samples int
 	for rows.Next() {
-		m := Measurement{TargetID: targetID, AgentID: agentID}
+		m := Measurement{TargetID: targetID, AgentID: agentID, Family: family}
 		var blob []byte
 		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &m.ICMPErr, &m.SendErr, &m.LossMask); err != nil {
 			return nil, err
@@ -767,10 +773,10 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := s.attachSeries(ctx, targetID, agentID, from, to, out); err != nil {
+	if err := s.attachSeries(ctx, targetID, agentID, family, from, to, out); err != nil {
 		return nil, err
 	}
-	if err := s.attachPositional(ctx, targetID, agentID, from, to, out); err != nil {
+	if err := s.attachPositional(ctx, targetID, agentID, family, from, to, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -778,11 +784,11 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID, from, to int
 
 // attachPositional fills in Positional for an already-read range, in one query
 // rather than one per interval.
-func (s *SQLite) attachPositional(ctx context.Context, targetID, agentID, from, to int64, ms []Measurement) error {
+func (s *SQLite) attachPositional(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64, ms []Measurement) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts, p, intervals, lost, counts FROM positional_loss
-		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?`,
-		targetID, agentID, from, to)
+		WHERE target_id = ? AND agent_id = ? AND family = ? AND ts >= ? AND ts < ?`,
+		targetID, agentID, family, from, to)
 	if err != nil {
 		return err
 	}
@@ -816,15 +822,15 @@ func (s *SQLite) attachPositional(ctx context.Context, targetID, agentID, from, 
 
 // attachSeries fills in the extra per-packet distributions for an already-read
 // range, in one query rather than one per interval.
-func (s *SQLite) attachSeries(ctx context.Context, targetID, agentID, from, to int64, ms []Measurement) error {
+func (s *SQLite) attachSeries(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64, ms []Measurement) error {
 	// Deliberately not skipped when the range holds no measurements. An orphan
 	// arises from a measurement being deleted, so a window with nothing left in
 	// it is exactly where one would sit — returning early here pointed the
 	// detector away from its own most likely cause.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts, series, samples FROM measurement_series
-		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?`,
-		targetID, agentID, from, to)
+		WHERE target_id = ? AND agent_id = ? AND family = ? AND ts >= ? AND ts < ?`,
+		targetID, agentID, family, from, to)
 	if err != nil {
 		return err
 	}
@@ -874,11 +880,11 @@ func (s *SQLite) attachSeries(ctx context.Context, targetID, agentID, from, to i
 // window — sent and received, no samples — for an availability report. It skips
 // the per-sample decode QueryRange does, so a month-long window costs a scan of
 // small integer columns rather than a decode of every distribution.
-func (s *SQLite) AvailabilitySeries(ctx context.Context, targetID, agentID, from, to int64) ([]report.Point, error) {
+func (s *SQLite) AvailabilitySeries(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64) ([]report.Point, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts, sent, received FROM measurements
-		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?
-		ORDER BY ts`, targetID, agentID, from, to)
+		WHERE target_id = ? AND agent_id = ? AND family = ? AND ts >= ? AND ts < ?
+		ORDER BY ts`, targetID, agentID, family, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -1068,18 +1074,18 @@ func (s *SQLite) PruneMeasurements(ctx context.Context, targetID, cutoff, sliceS
 	}
 }
 
-func (s *SQLite) RecordResolution(ctx context.Context, targetID, ts int64, address string) error {
+func (s *SQLite) RecordResolution(ctx context.Context, targetID int64, family tree.Family, ts int64, address string) error {
 	_, err := s.db.ExecContext(ctx,
-		"INSERT OR REPLACE INTO resolutions (target_id, ts, address) VALUES (?, ?, ?)",
-		targetID, ts, address)
+		"INSERT OR REPLACE INTO resolutions (target_id, family, ts, address) VALUES (?, ?, ?, ?)",
+		targetID, family, ts, address)
 	return err
 }
 
-func (s *SQLite) LastResolution(ctx context.Context, targetID int64) (string, error) {
+func (s *SQLite) LastResolution(ctx context.Context, targetID int64, family tree.Family) (string, error) {
 	var addr string
 	err := s.db.QueryRowContext(ctx,
-		"SELECT address FROM resolutions WHERE target_id = ? ORDER BY ts DESC LIMIT 1",
-		targetID).Scan(&addr)
+		"SELECT address FROM resolutions WHERE target_id = ? AND family = ? ORDER BY ts DESC LIMIT 1",
+		targetID, family).Scan(&addr)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}

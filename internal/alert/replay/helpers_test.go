@@ -140,7 +140,7 @@ func (e *env) put(target, agent int64, rows map[int64]row) {
 	e.t.Helper()
 	var ms []store.Measurement
 	for _, r := range rows {
-		ms = append(ms, store.Measurement{TargetID: target, AgentID: agent, TS: r.ts,
+		ms = append(ms, store.Measurement{TargetID: target, AgentID: agent, Family: tree.FamilyV4, TS: r.ts,
 			Sent: r.sent, Received: len(r.samples), Flags: r.flags, Samples: r.samples})
 	}
 	if err := e.st.WriteMeasurements(context.Background(), ms); err != nil {
@@ -218,14 +218,14 @@ type spy struct {
 	tooLarge int64
 }
 
-func (s *spy) QueryRange(ctx context.Context, tg, ag, from, to int64) ([]store.Measurement, error) {
+func (s *spy) QueryRange(ctx context.Context, tg, ag int64, fam tree.Family, from, to int64) ([]store.Measurement, error) {
 	s.mu.Lock()
 	s.ranges = append(s.ranges, qrange{tg, ag, from, to})
 	s.mu.Unlock()
 	if s.tooLarge > 0 && to-from > s.tooLarge {
 		return nil, fmt.Errorf("%w: test limit", store.ErrRangeTooLarge)
 	}
-	return s.Source.QueryRange(ctx, tg, ag, from, to)
+	return s.Source.QueryRange(ctx, tg, ag, fam, from, to)
 }
 
 func (r *recorder) Notify(_ context.Context, as []alert.Alert) error {

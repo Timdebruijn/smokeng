@@ -23,11 +23,11 @@ func TestQueryColumnsReturnsRawWhenTheWindowFits(t *testing.T) {
 	if err := s.WriteMeasurements(ctx, ms); err != nil {
 		t.Fatal(err)
 	}
-	want, err := s.QueryRange(ctx, 1, 0, 0, 1<<40)
+	want, err := s.QueryRange(ctx, 1, 0, 0, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, cols, err := s.QueryColumns(ctx, 1, 0, 0, 1<<40, 10)
+	raw, cols, err := s.QueryColumns(ctx, 1, 0, 0, 0, 1<<40, 10)
 	if err != nil || cols != nil {
 		t.Fatalf("10 intervals in 10 columns: cols = %v, err = %v; want raw", cols, err)
 	}
@@ -66,7 +66,7 @@ func TestQueryColumnsPoolsEveryIntervalIntoItsColumn(t *testing.T) {
 	if err := s.WriteMeasurements(ctx, ms); err != nil {
 		t.Fatal(err)
 	}
-	raw, cols, err := s.QueryColumns(ctx, 1, 0, from, to, n)
+	raw, cols, err := s.QueryColumns(ctx, 1, 0, 0, from, to, n)
 	if err != nil || raw != nil {
 		t.Fatalf("raw = %d rows, err = %v; want columns", len(raw), err)
 	}
@@ -162,10 +162,10 @@ func TestOneColumnsSamplesAreBounded(t *testing.T) {
 	if err := s.WriteMeasurements(ctx, ms); err != nil {
 		t.Fatal(err)
 	}
-	if _, cols, err := s.QueryColumns(ctx, 1, 0, 0, 1800, 10); err != nil || len(cols) != 10 {
+	if _, cols, err := s.QueryColumns(ctx, 1, 0, 0, 0, 1800, 10); err != nil || len(cols) != 10 {
 		t.Errorf("30 samples per column: %d columns, %v", len(cols), err)
 	}
-	if _, _, err := s.QueryColumns(ctx, 1, 0, 0, 1800, 1); !errors.Is(err, ErrRangeTooLarge) {
+	if _, _, err := s.QueryColumns(ctx, 1, 0, 0, 0, 1800, 1); !errors.Is(err, ErrRangeTooLarge) {
 		t.Errorf("300 samples in one column: err = %v, want ErrRangeTooLarge", err)
 	}
 }
@@ -185,10 +185,10 @@ func TestAPooledReadWalksABoundedNumberOfIntervals(t *testing.T) {
 	if err := s.WriteMeasurements(ctx, ms); err != nil {
 		t.Fatal(err)
 	}
-	if _, cols, err := s.QueryColumns(ctx, 1, 0, 0, 20*60, 5); err != nil || len(cols) != 5 {
+	if _, cols, err := s.QueryColumns(ctx, 1, 0, 0, 0, 20*60, 5); err != nil || len(cols) != 5 {
 		t.Errorf("20 intervals: %d columns, %v", len(cols), err)
 	}
-	if _, _, err := s.QueryColumns(ctx, 1, 0, 0, 21*60, 5); !errors.Is(err, ErrRangeTooLarge) {
+	if _, _, err := s.QueryColumns(ctx, 1, 0, 0, 0, 21*60, 5); !errors.Is(err, ErrRangeTooLarge) {
 		t.Errorf("21 intervals: err = %v, want ErrRangeTooLarge", err)
 	}
 }
@@ -206,7 +206,7 @@ func TestTooManySamplesForRawArePooled(t *testing.T) {
 	if err := s.WriteMeasurements(ctx, ms); err != nil {
 		t.Fatal(err)
 	}
-	raw, cols, err := s.QueryColumns(ctx, 1, 0, 0, 240, 100)
+	raw, cols, err := s.QueryColumns(ctx, 1, 0, 0, 0, 240, 100)
 	if err != nil || raw != nil || len(cols) != 4 {
 		t.Errorf("4 intervals of 40 in 100 columns: raw %d, cols %d, %v; want 4 columns", len(raw), len(cols), err)
 	}
@@ -232,7 +232,7 @@ func TestQueryColumnsPoolsTheExtraSeries(t *testing.T) {
 	if err := s.WriteMeasurements(ctx, ms); err != nil {
 		t.Fatal(err)
 	}
-	_, cols, err := s.QueryColumns(ctx, 1, 0, 0, 1800, 3)
+	_, cols, err := s.QueryColumns(ctx, 1, 0, 0, 0, 1800, 3)
 	if err != nil || len(cols) != 3 {
 		t.Fatalf("%d columns, %v", len(cols), err)
 	}
@@ -268,7 +268,7 @@ func TestTheSeriesCountTowardsTheWalkBound(t *testing.T) {
 	if err := s.WriteMeasurements(ctx, ms); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.QueryColumns(ctx, 1, 0, 0, 600, 2); !errors.Is(err, ErrRangeTooLarge) {
+	if _, _, err := s.QueryColumns(ctx, 1, 0, 0, 0, 600, 2); !errors.Is(err, ErrRangeTooLarge) {
 		t.Errorf("10 intervals and 10 series rows against 15: err = %v, want ErrRangeTooLarge", err)
 	}
 }

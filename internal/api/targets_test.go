@@ -13,6 +13,7 @@ import (
 
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 func newTestServer(t *testing.T) (http.Handler, *store.SQLite) {
@@ -183,7 +184,7 @@ func TestDeleteKeepsMeasurements(t *testing.T) {
 		"parent_id": 1, "name": "c", "host": "1.1.1.1", "address_family": "v4",
 	})
 	id := int64(leaf["id"].(float64))
-	m := store.Measurement{TargetID: id, TS: 1_756_400_000, Sent: 3, Received: 2,
+	m := store.Measurement{TargetID: id, Family: tree.FamilyV4, TS: 1_756_400_000, Sent: 3, Received: 2,
 		Samples: []uint32{1000, 2000}}
 	if err := st.WriteMeasurements(t.Context(), []store.Measurement{m}); err != nil {
 		t.Fatal(err)
@@ -191,7 +192,7 @@ func TestDeleteKeepsMeasurements(t *testing.T) {
 	if code, _ := do(t, h, "DELETE", "/api/v1/targets/"+itoa(id), nil); code != http.StatusOK {
 		t.Fatal("delete failed")
 	}
-	got, err := st.QueryRange(t.Context(), id, store.LocalAgentID, 0, 1<<40)
+	got, err := st.QueryRange(t.Context(), id, store.LocalAgentID, tree.FamilyV4, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
