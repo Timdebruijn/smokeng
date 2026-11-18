@@ -152,8 +152,8 @@ is left out of loss, a clock step is left out of the round-trip metrics, and, by
 loss rule reads an interval flagged `positional loss` as one without loss. A probe that
 failed to send for most reasons (for example local file-descriptor exhaustion) still counts as
 sent and lost, so it can fire a loss alert. The exceptions are the intervals with no data: one
-whose hostname gave no address, and one in which every probe failed to send with `ENETUNREACH`
-(this host has no route). Those have no value for any metric, so they count neither towards
+whose hostname gave no address, and one for which the prober's routing table had no route to
+the target's address when the interval began (nothing is sent then). Those have no value for any metric, so they count neither towards
 firing nor towards clearing: a firing alert stays firing through them, and, as with a gap, the
 consecutive count starts again after them. A prober whose host loses its route therefore
 reports no data for everything and its loss rules do not fire on that. A dead uplink with the

@@ -99,17 +99,12 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 		// other error (refused, timed out, TLS rejected) is a real measurement
 		// of the endpoint and stays loss.
 		if isLocalResourceError(err) {
-			col.markSendError(idx, sendReasonFor(err), err)
+			col.markSendFailed(idx, sendReasonFor(err))
 			if idx == 0 {
 				log.Printf("probe: target %d (%s): request to %s failed locally: %v; "+
 					"counted as sent and lost, flagged not sent", spec.TargetID, spec.Host, url, err)
 			}
 			return
-		}
-		// ENETUNREACH is this host having no route: loss here unless every
-		// probe of the interval got it (see finalize).
-		if isNoRoute(err) {
-			col.markNoRoute(idx)
 		}
 		return // no response inside the timeout, or a refused/reset connection: loss
 	}

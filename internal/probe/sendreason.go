@@ -3,6 +3,8 @@ package probe
 import (
 	"context"
 	"errors"
+	"net"
+	"net/netip"
 	"os"
 	"syscall"
 
@@ -24,12 +26,21 @@ func sendReasonFor(err error) uint8 {
 	return sendReasonOr(err, store.SendReasonSocket)
 }
 
-// isNoRoute reports ENETUNREACH: the prober's own host has no route for the
-// family. It is kept apart from EHOSTUNREACH, which both map to
-// SendReasonUnreachable in storage, because only the first is a statement about
-// this host. EHOSTUNREACH can be sent back by a router on the path, so it says
-// something about the network and stays loss.
-func isNoRoute(err error) bool {
+// noRouteTo asks this host's routing table whether it has a route to addr, by
+// connecting a UDP socket of the family to it and closing it again: connect on
+// UDP sends nothing, and fails with ENETUNREACH exactly when there is no route.
+// Any other outcome, including any other error, is "go and probe", so a check
+// that cannot be made never hides an interval.
+func noRouteTo(addr netip.Addr, family string) bool {
+	network := "udp4"
+	if family == "v6" {
+		network = "udp6"
+	}
+	c, err := net.DialUDP(network, nil, net.UDPAddrFromAddrPort(netip.AddrPortFrom(addr.Unmap(), 9)))
+	if err == nil {
+		c.Close()
+		return false
+	}
 	return errors.Is(err, syscall.ENETUNREACH)
 }
 

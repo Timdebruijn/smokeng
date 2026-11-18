@@ -148,7 +148,9 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 		// the host would not give us) it says the server is down when it is
 		// fine. markSendFailed flags the interval so the loss rail still shows
 		// it, but labelled as ours rather than the network's.
-		markNeverOpened(col, spec.Pings, err)
+		for i := range spec.Pings {
+			col.markSendFailed(i, sendReasonForOpen(err))
+		}
 		log.Printf("probe: target %d (%s): irtt session to %s never opened: %v; recorded as a send failure",
 			spec.TargetID, spec.Host, cfg.RemoteAddress, err)
 		return
@@ -179,7 +181,7 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 				// a far end that refused the traffic (ECONNREFUSED, which on a
 				// connected UDP socket means an ICMP unreachable came back) is
 				// distinguishable from a local failure to transmit.
-				col.markSendError(i, sendReasonOr(r.SendErr, store.SendReasonSessionEnded), r.SendErr)
+				col.markSendFailed(i, sendReasonOr(r.SendErr, store.SendReasonSessionEnded))
 			} else {
 				col.markSent(i, 0, now) // sent, unanswered: loss
 			}
@@ -210,16 +212,6 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 	markUnsentTail(col, spec, seen, sessionError(r))
 }
 
-// markNeverOpened records every probe of an interval whose session never
-// opened as a send failure. The error goes along with the reason so that a
-// session that failed with ENETUNREACH, which has no route to send by, can make
-// the interval no data (see finalize).
-func markNeverOpened(col *collector, pings int, err error) {
-	for i := range pings {
-		col.markSendError(i, sendReasonForOpen(err), err)
-	}
-}
-
 // sessionError is what broke the session, if anything did.
 //
 // Either half counts: a receive failure stops the client just as a send failure
@@ -247,7 +239,7 @@ func markUnsentTail(col *collector, spec TargetSpec, seen int, sendErr error) {
 	}
 	if sendErr != nil {
 		for i := seen; i < spec.Pings; i++ {
-			col.markSendError(i, sendReasonOr(sendErr, store.SendReasonSessionEnded), sendErr)
+			col.markSendFailed(i, sendReasonOr(sendErr, store.SendReasonSessionEnded))
 		}
 		return
 	}

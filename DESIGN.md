@@ -557,8 +557,11 @@ Full kernel timestamping on Linux, both directions, from v0.1 — not the half v
 - On address change: log line + row in `resolutions` (§3.1). This makes anycast/failover
   flips visible in the UI later without storing anything per measurement.
 - `address_family` strictly selects A vs AAAA. Never "whatever resolves". A lookup that gives
-  no address of that family is logged and the interval is stored as no data with the reason
-  `no address` (§8.2), not skipped silently.
+  no address is logged and the interval is stored as no data with the reason `no address`
+  (§8.2), not skipped silently. A lookup that fails for any reason on a name that never
+  resolved is no address. A name that resolved before keeps being probed at its last address
+  while the resolvers fail, and becomes no data once a resolver answers that the record is
+  gone (NOERROR or NXDOMAIN without a record of that type).
 
 ## 6. Storage engine
 
@@ -860,11 +863,13 @@ quietly lying.
 **No data with a reason is a gap too.** An interval in which the prober could not ask the
 target anything, for a reason that lies with its own host, is stored as a row with
 `sent = 0`, `received = 0`, the `not sent` flag and a reason: `no address` when the hostname
-gave no address of the target's family, `unreachable` when every probe failed to send with
-`ENETUNREACH` (the host has no route for the family). It is drawn as a gap in the smoke, the
+gave no address of the target's family, `unreachable` when the prober's own
+routing table has no route to the target's address (checked once per interval, before any probe
+is sent). It is drawn as a gap in the smoke, the
 median line and the loss rail, and left out of every figure that divides by `sent`: it is
-neither 0% nor 100% loss. `EHOSTUNREACH` can come from a router on the path and stays loss;
-so does a dead gateway, where the route stays and the sends succeed. Alert rules read no
+neither 0% nor 100% loss. A probe's own `ENETUNREACH` or `EHOSTUNREACH` is not read as
+"no route": a router on the path can cause either, and that is loss on the path. A dead gateway,
+where the route stays and the sends succeed, is loss too. Alert rules read no
 value from it and availability counts it as unknown.
 
 **Variable settings over time are a feature, not a corruption case.** SmokePing fixes

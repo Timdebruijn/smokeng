@@ -370,7 +370,7 @@ The `not sent` reasons, and where to look:
 |---|---|
 | `the socket refused the write` | This host: load, descriptors, firewall. |
 | `connection refused — the far end, or a router speaking for it, rejected the traffic` | The target side. |
-| `no route to the target` | Routing on this host. On an interval without data, every probe failed with `ENETUNREACH`: the host has no route for that family (no default route, or the uplink is administratively down). A dead gateway does not show this; it shows loss. |
+| `no route to the target` | Routing on this host. On an interval without data, the prober's routing table had no route to the target's address (no default route, or the uplink is administratively down), so nothing was sent. A dead gateway does not show this; it shows loss, and neither does a router on the path that has no route (a TCP probe fails with `ENETUNREACH` there; that is loss). |
 | `no address to send to` | DNS or the target's address family. The interval is drawn as a gap, not as loss. |
 | `the session was refused` | The irtt server refused the session. |
 | `the session broke part-way` | The path or the irtt server. |

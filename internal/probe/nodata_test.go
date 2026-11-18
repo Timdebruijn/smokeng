@@ -15,131 +15,162 @@ import (
 	"github.com/timdebruijn/smokeng/internal/store"
 )
 
-func noRouteErr(e syscall.Errno) error {
-	return &net.OpError{Op: "write", Net: "udp", Err: os.NewSyscallError("sendto", e)}
-}
-
-// finalizeWith builds an interval of three probes. fail says per probe how it
-// ended: an errno means it failed to send with it, nil means it was answered.
-func finalizeWith(t *testing.T, fail ...error) store.Measurement {
-	t.Helper()
+// Protects the decision that ENETUNREACH on a probe is not "this host has no
+// route": a router on the path with no route makes a TCP connect fail with the
+// same errno, and that is loss on the path. An interval whose probes all failed
+// to send with it is what it always was, N sent, none received, flagged.
+func TestFinalizeAllENETUNREACHStaysLoss(t *testing.T) {
 	var late atomic.Int64
 	spec := burstSpec()
-	spec.Pings = len(fail)
-	col := newCollector(len(fail), &late)
+	spec.Pings = 3
+	col := newCollector(3, &late)
 	base := time.Now().Add(-10 * time.Millisecond)
-	for i, err := range fail {
+	err := &net.OpError{Op: "write", Net: "udp", Err: os.NewSyscallError("sendto", syscall.ENETUNREACH)}
+	for i := range 3 {
 		col.markSent(i, uint16(i), base)
-		if err == nil {
-			col.onRX(i, base.Add(2*time.Millisecond), true)
-			continue
-		}
-		col.markSendError(i, sendReasonFor(err), err)
+		col.markSendFailed(i, sendReasonFor(err))
 	}
-	return col.finalize(spec, 1_756_400_100, conditions{})
-}
-
-// Protects the decision that a host without a route reports no data, not total
-// loss: every probe ENETUNREACH is one row with sent = 0, the flag and the
-// reason, and nothing else that would describe an interval that measured.
-func TestFinalizeAllNoRouteIsNoData(t *testing.T) {
-	e := noRouteErr(syscall.ENETUNREACH)
-	m := finalizeWith(t, e, e, e)
-	if m.Sent != 0 || m.Received != 0 || len(m.Samples) != 0 {
-		t.Fatalf("sent=%d received=%d samples=%d, want an empty interval", m.Sent, m.Received, len(m.Samples))
-	}
-	if m.Flags != store.FlagSendFailed {
-		t.Errorf("flags = %08b, want only FlagSendFailed", m.Flags)
-	}
-	if m.SendErr == nil || *m.SendErr != store.SendReasonUnreachable {
-		t.Errorf("send error = %v, want SendReasonUnreachable", m.SendErr)
-	}
-	if m.LossMask != nil || m.ICMPErr != nil || m.Series != nil {
-		t.Errorf("mask, ICMP error or series on a no-data row: %+v", m)
-	}
-}
-
-// Protects the other half of the distinction: EHOSTUNREACH can come from a
-// router on the path, so it stays what it was, 100% loss with the flag.
-func TestFinalizeHostUnreachableStaysLoss(t *testing.T) {
-	e := noRouteErr(syscall.EHOSTUNREACH)
-	m := finalizeWith(t, e, e, e)
+	m := col.finalize(spec, 1_756_400_100, conditions{})
 	if m.Sent != 3 || m.Received != 0 || m.Flags&store.FlagSendFailed == 0 {
 		t.Fatalf("sent=%d received=%d flags=%08b, want 3 sent, none received, flagged", m.Sent, m.Received, m.Flags)
 	}
-	if m.SendErr == nil || *m.SendErr != store.SendReasonUnreachable {
-		t.Errorf("send error = %v, want SendReasonUnreachable", m.SendErr)
+}
+
+// engineFor is an Engine whose target resolves to a loopback address, with the
+// route check answering noRoute.
+func engineFor(t *testing.T, lookup func(context.Context, string, string) (netip.Addr, error), noRoute bool) *Engine {
+	t.Helper()
+	quietLog(t)
+	st, err := store.Open(filepath.Join(t.TempDir(), "probe.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return &Engine{
+		st:      st,
+		lookup:  lookup,
+		noRoute: func(netip.Addr, string) bool { return noRoute },
+		results: make(chan store.Measurement, 4),
 	}
 }
 
-// Protects against a route that works part of the time being erased: one probe
-// that was sent keeps the interval as the measurement it is.
-func TestFinalizeNoRouteMixedWithRepliesIsUnchanged(t *testing.T) {
-	e := noRouteErr(syscall.ENETUNREACH)
-	m := finalizeWith(t, nil, e, e)
-	if m.Sent != 3 || m.Received != 1 {
-		t.Fatalf("sent=%d received=%d, want 3 and 1", m.Sent, m.Received)
+// tcpSpec probes a local listener with one tcp probe per second, so a probed
+// interval is a row with Sent = 1.
+func tcpSpec(t *testing.T) TargetSpec {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no loopback listener: %v", err)
 	}
-}
-
-// Protects against one probe failing for another reason being swallowed into a
-// no-data interval: ENETUNREACH on some and EHOSTUNREACH on one is mixed.
-func TestFinalizeNoRouteMixedWithOtherFailureIsUnchanged(t *testing.T) {
-	m := finalizeWith(t, noRouteErr(syscall.ENETUNREACH), noRouteErr(syscall.EHOSTUNREACH))
-	if m.Sent != 2 {
-		t.Fatalf("sent = %d, want 2", m.Sent)
-	}
-}
-
-// Protects every other local reason: all probes failing for a reason that is
-// not a missing route is N attempted and lost, as before.
-func TestFinalizeOtherLocalFailureIsUnchanged(t *testing.T) {
-	e := noRouteErr(syscall.ENOBUFS)
-	m := finalizeWith(t, e, e, e)
-	if m.Sent != 3 || m.Received != 0 || m.Flags&store.FlagSendFailed == 0 {
-		t.Fatalf("sent=%d received=%d flags=%08b", m.Sent, m.Received, m.Flags)
-	}
-	if m.SendErr == nil || *m.SendErr != store.SendReasonSocket {
-		t.Errorf("send error = %v, want SendReasonSocket", m.SendErr)
-	}
-}
-
-// Protects tcp and http, which count a failed dial as plain loss: ENETUNREACH
-// there makes no-data only when every probe got it, and a mixed interval keeps
-// the loss and carries no send-failure flag it did not have before.
-func TestFinalizeNoRouteOnDialIsNoDataOnlyWhenAll(t *testing.T) {
-	var late atomic.Int64
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
 	spec := burstSpec()
-	spec.Pings = 2
-	base := time.Now().Add(-10 * time.Millisecond)
-	build := func(second bool) store.Measurement {
-		col := newCollector(2, &late)
-		for i := range 2 {
-			col.markSent(i, 0, base)
+	spec.IntervalS, spec.Pings, spec.TimeoutMS = 1, 1, 500
+	spec.ProbeType, spec.Host, spec.Family = "tcp", "127.0.0.1", "v4"
+	spec.ProbePort = ln.Addr().(*net.TCPAddr).Port
+	return spec
+}
+
+var loopback = func(context.Context, string, string) (netip.Addr, error) {
+	return netip.MustParseAddr("127.0.0.1"), nil
+}
+
+// Protects the route check: with this host reporting no route to the address,
+// the interval is one no-data row with reason unreachable and no probe is sent
+// (the listener never sees a connection and the row says Sent = 0).
+func TestRunTargetNoRouteIsNoDataAndSendsNothing(t *testing.T) {
+	spec := tcpSpec(t)
+	e := engineFor(t, loopback, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.runTarget(ctx, spec)
+
+	select {
+	case m := <-e.results:
+		if m.Sent != 0 || m.Received != 0 || m.Flags != store.FlagSendFailed ||
+			m.SendErr == nil || *m.SendErr != store.SendReasonUnreachable {
+			t.Errorf("row = %+v, want an empty row, FlagSendFailed, SendReasonUnreachable", m)
 		}
-		col.markNoRoute(0)
-		if second {
-			col.markNoRoute(1)
+		if m.TargetID != spec.TargetID || m.TS%int64(spec.IntervalS) != 0 {
+			t.Errorf("row identity = %+v", m)
 		}
-		return col.finalize(spec, 1_756_400_100, conditions{})
+	case <-time.After(5 * time.Second):
+		t.Fatal("no row written for an interval without a route")
 	}
-	if m := build(true); m.Sent != 0 || m.SendErr == nil || *m.SendErr != store.SendReasonUnreachable {
-		t.Errorf("all probes without a route: %+v, want a no-data row", m)
-	}
-	m := build(false)
-	if m.Sent != 2 || m.Received != 0 || m.Flags != 0 {
-		t.Errorf("mixed: sent=%d received=%d flags=%08b, want plain loss", m.Sent, m.Received, m.Flags)
+	// A second row inside the interval would be a probe or a duplicate.
+	select {
+	case m := <-e.results:
+		if m.Sent != 0 {
+			t.Errorf("a probe was sent: %+v", m)
+		}
+	case <-time.After(300 * time.Millisecond):
 	}
 }
 
-// Protects the classification the whole feature rests on, through the wrapping
-// the net stack and an irtt open really produce.
-func TestIsNoRoute(t *testing.T) {
-	if !isNoRoute(noRouteErr(syscall.ENETUNREACH)) {
-		t.Error("ENETUNREACH is not recognised")
+// Protects the other side of the check: with a route the interval is probed as
+// usual, so a check that says anything but "no route" never costs a row.
+func TestRunTargetWithRouteIsProbed(t *testing.T) {
+	spec := tcpSpec(t)
+	e := engineFor(t, loopback, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.runTarget(ctx, spec)
+
+	select {
+	case m := <-e.results:
+		if m.Sent != 1 || m.Received != 1 {
+			t.Errorf("row = %+v, want one probe sent and answered", m)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("no row for a probed interval")
 	}
-	if isNoRoute(noRouteErr(syscall.EHOSTUNREACH)) || isNoRoute(errors.New("x")) || isNoRoute(nil) {
-		t.Error("something that is not ENETUNREACH was taken for it")
+}
+
+// Protects the real check: loopback has a route, so it must not say otherwise,
+// for either family it is asked about. (A routeless host cannot be made in a
+// unit test; the measurement is in docs/probes.md.)
+func TestNoRouteToLoopbackHasRoute(t *testing.T) {
+	if noRouteTo(netip.MustParseAddr("127.0.0.1"), "v4") {
+		t.Error("127.0.0.1 reported as having no route")
+	}
+	if ln, err := net.Listen("tcp6", "[::1]:0"); err == nil {
+		ln.Close()
+		if noRouteTo(netip.MustParseAddr("::1"), "v6") {
+			t.Error("::1 reported as having no route")
+		}
+	}
+}
+
+// Protects against writing a row for a lookup that failed because the engine
+// is stopping or the target's loop was cancelled: that says nothing about the
+// name, and a reload would otherwise leave a no-address row behind.
+func TestRunTargetDoesNotEmitWhenLookupIsCancelled(t *testing.T) {
+	spec := tcpSpec(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	e := engineFor(t, func(ctx context.Context, _, _ string) (netip.Addr, error) {
+		cancel()
+		return netip.Addr{}, ctx.Err()
+	}, false)
+	done := make(chan struct{})
+	go func() { e.runTarget(ctx, spec); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runTarget did not return after its context was cancelled")
+	}
+	select {
+	case m := <-e.results:
+		t.Errorf("a row was emitted for a cancelled lookup: %+v", m)
+	default:
 	}
 }
 
@@ -147,19 +178,9 @@ func TestIsNoRoute(t *testing.T) {
 // is written as a no-data row with SendReasonNoAddress instead of nothing, and
 // is counted as a DNS error.
 func TestRunTargetWritesNoDataWhenUnresolved(t *testing.T) {
-	quietLog(t)
-	st, err := store.Open(filepath.Join(t.TempDir(), "probe.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	e := &Engine{
-		st: st,
-		lookup: func(context.Context, string, string) (netip.Addr, error) {
-			return netip.Addr{}, errors.New("no such host")
-		},
-		results: make(chan store.Measurement, 4),
-	}
+	e := engineFor(t, func(context.Context, string, string) (netip.Addr, error) {
+		return netip.Addr{}, errors.New("no such host")
+	}, false)
 	spec := burstSpec()
 	spec.IntervalS = 1
 	spec.Host = "nowhere.invalid"
@@ -182,32 +203,5 @@ func TestRunTargetWritesNoDataWhenUnresolved(t *testing.T) {
 	}
 	if e.dnsErrs.Load() == 0 {
 		t.Error("the resolve failure was not counted")
-	}
-}
-
-// Protects the irtt open path: a session that never opened because the host has
-// no route must keep the ENETUNREACH on the way to finalize, and one that failed
-// for any other reason must not become no data. The tail of a session that broke
-// part-way is marked the same way.
-func TestFinalizeIRTTNoRouteIsNoData(t *testing.T) {
-	var late atomic.Int64
-	spec := burstSpec()
-	spec.Pings = 3
-	for _, tc := range []struct {
-		name   string
-		mark   func(col *collector, err error)
-		err    error
-		noData bool
-	}{
-		{"never opened, no route", func(c *collector, err error) { markNeverOpened(c, 3, err) }, noRouteErr(syscall.ENETUNREACH), true},
-		{"never opened, host unreachable", func(c *collector, err error) { markNeverOpened(c, 3, err) }, noRouteErr(syscall.EHOSTUNREACH), false},
-		{"broke at once, no route", func(c *collector, err error) { markUnsentTail(c, spec, 0, err) }, noRouteErr(syscall.ENETUNREACH), true},
-	} {
-		col := newCollector(3, &late)
-		tc.mark(col, tc.err)
-		m := col.finalize(spec, 1_756_400_100, conditions{})
-		if got := m.Sent == 0; got != tc.noData {
-			t.Errorf("%s: no data = %v, want %v (%+v)", tc.name, got, tc.noData, m)
-		}
 	}
 }
