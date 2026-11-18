@@ -2,6 +2,13 @@ package store
 
 import "strconv"
 
+// familyOfAddress is the family of a logged address, in SQL: an IPv6 literal
+// holds a colon. So does an IPv4 address written as IPv4-mapped IPv6
+// ("::ffff:192.0.2.1"), which a v4 target may have as its host and which is
+// probed over IPv4; read as IPv6 it would make that target look switched and
+// file its whole history as unknown.
+const familyOfAddress = `CASE WHEN instr(address, ':') > 0 AND address NOT LIKE '::ffff:%.%' THEN 6 ELSE 4 END`
+
 // familyBackfillSQL builds family_backfill, one row per target that says which
 // family its existing history was measured over. It is its own constant so a
 // later migration that needs the same answer can run it again; it creates the
@@ -15,7 +22,10 @@ import "strconv"
 //     address of the other family: from then on the local prober measured
 //     family. NULL when there is none, and for a target that never switched.
 //
-// A resolution's family is the address itself: an IPv6 literal holds a colon.
+// A target switched more than once has only its last stretch placed: the log
+// could place the earlier stretches of the local prober too, but not the
+// interval in which each switch fell, and a target is switched seldom enough
+// that the rule stays this short. What it cannot place is unknown, not lost.
 const familyBackfillSQL = `
 CREATE TABLE family_backfill AS
 WITH t AS (
@@ -23,7 +33,7 @@ WITH t AS (
          CASE address_family WHEN 'v4' THEN 4 WHEN 'v6' THEN 6 ELSE 0 END AS family
   FROM targets
 ), r AS (
-  SELECT target_id, ts, CASE WHEN instr(address, ':') > 0 THEN 6 ELSE 4 END AS fam
+  SELECT target_id, ts, ` + familyOfAddress + ` AS fam
   FROM resolutions
 ), last_other AS (
   SELECT t.target_id, MAX(r.ts) AS ts
@@ -137,7 +147,7 @@ CREATE TABLE resolutions_new (
   PRIMARY KEY (target_id, family, ts)
 );
 INSERT INTO resolutions_new (target_id, family, ts, address)
-  SELECT target_id, CASE WHEN instr(address, ':') > 0 THEN 6 ELSE 4 END, ts, address
+  SELECT target_id, ` + familyOfAddress + `, ts, address
   FROM resolutions;
 DROP TABLE resolutions;
 ALTER TABLE resolutions_new RENAME TO resolutions;

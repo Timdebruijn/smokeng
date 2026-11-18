@@ -64,6 +64,9 @@ func TestV28GivesEveryRowItsFamilyAndKeepsTheRest(t *testing.T) {
 		v4Target   = 10 // always v4
 		v6Target   = 11 // always v6
 		flipTarget = 12 // was v4, resolved a v6 address at 2000, is v6 now
+		backTarget = 13 // v4, a v6 address at 1700, v4 again at 2200
+		mapped     = 14 // v4, with an IPv4-mapped IPv6 literal as its host
+		group      = 15 // no host and no family, yet rows under its id
 		gone       = 99 // no row in targets
 		remote     = 5  // an agent other than the local prober
 	)
@@ -76,10 +79,11 @@ func TestV28GivesEveryRowItsFamilyAndKeepsTheRest(t *testing.T) {
 	for _, tg := range []struct {
 		id  int
 		fam string
-	}{{v4Target, "v4"}, {v6Target, "v6"}, {flipTarget, "v6"}} {
+	}{{v4Target, "v4"}, {v6Target, "v6"}, {flipTarget, "v6"}, {backTarget, "v4"}, {mapped, "v4"}} {
 		exec(`INSERT INTO targets (id, parent_id, name, host, address_family) VALUES (?, 1, ?, 'h', ?)`,
 			tg.id, fmt.Sprintf("t%d", tg.id), tg.fam)
 	}
+	exec(`INSERT INTO targets (id, parent_id, name) VALUES (?, 1, 'g')`, group)
 	exec(`INSERT INTO agents (id, name) VALUES (?, 'remote')`, remote)
 	for _, r := range []struct {
 		target, ts int
@@ -87,6 +91,8 @@ func TestV28GivesEveryRowItsFamilyAndKeepsTheRest(t *testing.T) {
 	}{
 		{v4Target, 500, "192.0.2.1"}, {v6Target, 500, "2001:db8::1"},
 		{flipTarget, 1000, "192.0.2.2"}, {flipTarget, 2000, "2001:db8::2"},
+		{backTarget, 1000, "192.0.2.4"}, {backTarget, 1700, "2001:db8::4"}, {backTarget, 2200, "192.0.2.4"},
+		{mapped, 500, "::ffff:192.0.2.5"},
 		{gone, 500, "192.0.2.3"},
 	} {
 		exec(`INSERT INTO resolutions (target_id, ts, address) VALUES (?, ?, ?)`, r.target, r.ts, r.addr)
@@ -105,10 +111,18 @@ func TestV28GivesEveryRowItsFamilyAndKeepsTheRest(t *testing.T) {
 			if agent == 0 && ts >= 2000 {
 				return tree.FamilyV6
 			}
+		case backTarget:
+			// 1500 was measured over v4 and the log could say so; the rule
+			// places only the last stretch, and unknown is never wrong.
+			if agent == 0 && ts >= 2200 {
+				return tree.FamilyV4
+			}
+		case mapped:
+			return tree.FamilyV4
 		}
 		return tree.FamilyUnknown
 	}
-	for _, target := range []int{v4Target, v6Target, flipTarget, gone} {
+	for _, target := range []int{v4Target, v6Target, flipTarget, backTarget, mapped, group, gone} {
 		for _, agent := range []int{0, remote} {
 			for _, ts := range []int{1500, 2000, 2500} {
 				salt := byte(target + agent*7 + ts)
@@ -188,6 +202,7 @@ func TestV28GivesEveryRowItsFamilyAndKeepsTheRest(t *testing.T) {
 	}
 	if got := dumpFamilies(t, s.db, "resolutions", "target_id||'/'||ts"); !maps.Equal(got, map[string]tree.Family{
 		"10/500": tree.FamilyV4, "11/500": tree.FamilyV6, "12/1000": tree.FamilyV4, "12/2000": tree.FamilyV6, "99/500": tree.FamilyV4,
+		"13/1000": tree.FamilyV4, "13/1700": tree.FamilyV6, "13/2200": tree.FamilyV4, "14/500": tree.FamilyV4,
 	}) {
 		t.Errorf("resolutions families = %v", got)
 	}
@@ -248,6 +263,28 @@ func columnsOf(t *testing.T, db *sql.DB, table string) []string {
 		t.Fatalf("%s: no columns", table)
 	}
 	return out
+}
+
+// Protects the resolutions log as the record of when a target was measured
+// over which family. A target changed to the other family and back resolves to
+// the address it had before; compared with the last address of its own family
+// that return is no change and would not be logged, and the log would end on
+// the family the target no longer has.
+func TestLastResolutionIsTheLatestOfAnyFamily(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	for _, r := range []struct {
+		family tree.Family
+		ts     int64
+		addr   string
+	}{{tree.FamilyV4, 100, "192.0.2.1"}, {tree.FamilyV6, 200, "2001:db8::1"}} {
+		if err := s.RecordResolution(ctx, 7, r.family, r.ts, r.addr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := s.LastResolution(ctx, 7); err != nil || got != "2001:db8::1" {
+		t.Errorf("LastResolution = %q, %v; want the v6 address logged last", got, err)
+	}
 }
 
 func dumpFamilies(t *testing.T, db *sql.DB, table, key string) map[string]tree.Family {

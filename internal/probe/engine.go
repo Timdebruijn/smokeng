@@ -322,7 +322,7 @@ func (e *Engine) connFor(family string, dscp int) (*conn, error) {
 // runTarget is the per-target loop: one iteration per interval bucket.
 func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 	defer e.recoverTarget(spec)
-	lastAddr, err := e.st.LastResolution(ctx, spec.TargetID, tree.FamilyOf(spec.Family))
+	lastAddr, err := e.st.LastResolution(ctx, spec.TargetID)
 	if err != nil {
 		log.Printf("probe: target %d: read last resolution: %v", spec.TargetID, err)
 	}

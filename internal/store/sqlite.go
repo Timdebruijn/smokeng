@@ -1081,11 +1081,16 @@ func (s *SQLite) RecordResolution(ctx context.Context, targetID int64, family tr
 	return err
 }
 
-func (s *SQLite) LastResolution(ctx context.Context, targetID int64, family tree.Family) (string, error) {
+// LastResolution is the target's latest logged address, of whichever family.
+// Not per family: a target changed to the other family and back resolves to
+// the address it had before, and compared with its own family's last row that
+// return would not be logged. The log is what says when a target was measured
+// over which family for everything stored before the rows said so themselves.
+func (s *SQLite) LastResolution(ctx context.Context, targetID int64) (string, error) {
 	var addr string
 	err := s.db.QueryRowContext(ctx,
-		"SELECT address FROM resolutions WHERE target_id = ? AND family = ? ORDER BY ts DESC LIMIT 1",
-		targetID, family).Scan(&addr)
+		"SELECT address FROM resolutions WHERE target_id = ? ORDER BY ts DESC LIMIT 1",
+		targetID).Scan(&addr)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
