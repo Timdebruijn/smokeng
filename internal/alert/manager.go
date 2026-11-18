@@ -32,8 +32,10 @@ type Store interface {
 	RecordAlertEvents(ctx context.Context, events []Event) error
 }
 
+// stateKey is a series' rule standing: the series is (target, agent, family).
 type stateKey struct {
 	ruleID, targetID, agentID int64
+	family                    tree.Family
 }
 
 // Manager owns rule resolution, evaluation state and notification. It is fed
@@ -67,6 +69,10 @@ type Manager struct {
 	// not persisted: a restart re-warms it, which is honest, since a baseline
 	// smokeng has not observed since restart is not one it can judge against.
 	shapes map[stateKey]*shapeState
+	// left is, per target, the family it was last changed away from. No series
+	// of that family is measured any more, so its states are ended at every
+	// reload and its intervals are not evaluated (see Reload).
+	left map[int64]tree.Family
 	// golden holds captured reference distributions for golden-baseline shape
 	// rules, keyed by rule id, with what each was taken from so the API can say
 	// which window and series it came from. Loaded in Reload from the store.
@@ -86,6 +92,7 @@ func NewManager(st Store, notifier Notifier) *Manager {
 		agentNames: map[int64]string{},
 		ancestors:  map[int64]map[int64]bool{},
 		shapes:     map[stateKey]*shapeState{},
+		left:       map[int64]tree.Family{},
 		golden:     map[int64]Baselined{},
 	}
 }
@@ -139,7 +146,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 		if _, ok := byID[st.RuleID]; !ok {
 			continue
 		}
-		kept[stateKey{st.RuleID, st.TargetID, st.AgentID}] = &st
+		kept[stateKey{st.RuleID, st.TargetID, st.AgentID, st.Family}] = &st
 	}
 
 	m.mu.Lock()
@@ -154,6 +161,48 @@ func (m *Manager) Reload(ctx context.Context) error {
 		if _, ok := byID[key.ruleID]; ok {
 			kept[key] = live
 		}
+	}
+	// A target whose family was changed is no longer measured over the old one,
+	// so no interval will ever arrive to clear what was firing there: keyed on
+	// the family, that alert would fire, and be repeated to the webhook, for
+	// good. Its series has ended; so does its state. No resolve is sent, since
+	// nothing recovered: Alertmanager expires an alert it stops hearing about.
+	//
+	// The family a target left is remembered, and its states are ended at every
+	// reload, not only the one that sees the change. Two things can put such a
+	// state back after it was ended: an Observe that took its snapshot before
+	// this reload and saves it afterwards, and a save below that failed. Both
+	// leave a firing row in the store, and the next reload reads it and ends it
+	// again. Observe, for its part, does not evaluate an interval of that
+	// family: the prober's old loop is stopped only after this returns and can
+	// still deliver one.
+	//
+	// A change made while the master is stopped is not seen, since there is
+	// nothing to compare with, and that alert stays until its rule is removed.
+	// Telling a family a target is no longer measured over from one it is, as a
+	// standing rule, has to wait until a target can say it has two.
+	for id, was := range m.byTarget {
+		now, still := resolved[id]
+		switch {
+		case !still:
+			delete(m.left, id)
+		case was.Family != now.Family:
+			m.left[id] = was.Family
+		}
+	}
+	var ended []State
+	for key, st := range kept {
+		if f, ok := m.left[key.targetID]; !ok || f != key.family {
+			continue
+		}
+		if st.Firing {
+			e := *st
+			e.Firing, e.Since, e.Streak = false, 0, 0
+			e.AckedSince, e.AckedAt, e.AckedBy = 0, 0, ""
+			ended = append(ended, e)
+		}
+		delete(kept, key)
+		delete(m.shapes, key)
 	}
 	// Drop the shape memory of rules that no longer exist, so it does not grow
 	// without bound as rules come and go.
@@ -171,6 +220,14 @@ func (m *Manager) Reload(ctx context.Context) error {
 	// database. It is safe because a create or delete also writes through here.
 	m.silences = silences
 	m.mu.Unlock()
+	// Stored as cleared rather than left as it was: a row still marked firing
+	// would come back as a firing alert at the next restart. If this fails the
+	// row is read and ended again by the next reload.
+	if len(ended) > 0 {
+		if err := m.st.SaveAlertStates(ctx, ended); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -192,11 +249,16 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 		if !ok || len(app.Rules) == 0 {
 			continue
 		}
+		// A late interval of the family the target was changed away from. It
+		// would start a state that nothing after it could clear.
+		if f, ok := m.left[meas.TargetID]; ok && f == meas.Family {
+			continue
+		}
 		for _, r := range app.Rules {
-			key := stateKey{r.ID, meas.TargetID, meas.AgentID}
+			key := stateKey{r.ID, meas.TargetID, meas.AgentID, meas.Family}
 			st, ok := m.states[key]
 			if !ok {
-				st = &State{RuleID: r.ID, TargetID: meas.TargetID, AgentID: meas.AgentID}
+				st = &State{RuleID: r.ID, TargetID: meas.TargetID, AgentID: meas.AgentID, Family: meas.Family}
 				m.states[key] = st
 			}
 			// An interval at or before the last one this rule has seen is
@@ -285,7 +347,7 @@ func (m *Manager) alertLocked(r *Rule, st *State, app Applicable, firing bool) A
 		agentName = fmt.Sprintf("agent %d", st.AgentID)
 	}
 	a := Alert{
-		Rule: r, TargetID: st.TargetID, AgentID: st.AgentID,
+		Rule: r, TargetID: st.TargetID, AgentID: st.AgentID, Family: st.Family,
 		TargetPath: app.Path, TargetHost: app.Host,
 		AgentName: agentName, Firing: firing, Value: st.Value,
 	}
@@ -313,16 +375,16 @@ func (m *Manager) alertLocked(r *Rule, st *State, app Applicable, firing bool) A
 
 // Acknowledge marks a firing alert seen, or clears that mark when ack is false.
 // It returns whether a firing alert was found to change — false when nothing is
-// firing for that (rule, target, agent), so the caller can answer 404 rather
+// firing for that (rule, target, agent, family), so the caller can answer 404 rather
 // than pretend it did something.
 //
 // The change is persisted at once rather than waiting for the next
 // measurement's save, so an acknowledgement is not lost to a restart in the
 // gap — and because firing state is itself persisted, the ack still matches its
 // episode after a restart.
-func (m *Manager) Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, ack bool, by string) (bool, error) {
+func (m *Manager) Acknowledge(ctx context.Context, ruleID, targetID, agentID int64, family tree.Family, ack bool, by string) (bool, error) {
 	m.mu.Lock()
-	st, ok := m.states[stateKey{ruleID, targetID, agentID}]
+	st, ok := m.states[stateKey{ruleID, targetID, agentID, family}]
 	if !ok || !st.Firing {
 		m.mu.Unlock()
 		return false, nil
@@ -386,7 +448,7 @@ func (m *Manager) silencedLocked(now int64, a Alert) (bool, int64) {
 	silenced := false
 	for i := range m.silences {
 		s := &m.silences[i]
-		if !s.Covers(now, ruleID, a.AgentID, m.ancestors[a.TargetID]) {
+		if !s.Covers(now, ruleID, a.AgentID, a.Family, m.ancestors[a.TargetID]) {
 			continue
 		}
 		silenced = true
@@ -498,17 +560,19 @@ type ShapeRef struct {
 	Samples []uint32
 	Kind    string
 	OK      bool
-	// Source is the series a golden reference was captured from; HasSource is
-	// false for a rolling reference, which is the target's own history.
-	Source    int64
-	HasSource bool
+	// Source is the series a golden reference was captured from (its target and
+	// family); HasSource is false for a rolling reference, which is the series'
+	// own history.
+	Source       int64
+	SourceFamily tree.Family
+	HasSource    bool
 }
 
 // ShapeReferenceDetail returns the distribution a shape rule is comparing
 // against for one series (captured for golden, pooled history for rolling) and,
 // for golden, the series it was captured from, read under one lock. OK is false
 // when there is nothing to compare against yet.
-func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64) ShapeRef {
+func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64, family tree.Family) ShapeRef {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, exists := m.rules[ruleID]
@@ -519,11 +583,11 @@ func (m *Manager) ShapeReferenceDetail(ruleID, targetID, agentID int64) ShapeRef
 		b, ok := m.golden[ruleID]
 		ref := ShapeRef{Samples: b.Samples, Kind: "golden", OK: len(b.Samples) > 0}
 		if ok {
-			ref.Source, ref.HasSource = b.TargetID, true
+			ref.Source, ref.SourceFamily, ref.HasSource = b.TargetID, b.Family, true
 		}
 		return ref
 	}
-	ss := m.shapes[stateKey{ruleID, targetID, agentID}]
+	ss := m.shapes[stateKey{ruleID, targetID, agentID, family}]
 	if ss == nil {
 		return ShapeRef{Kind: "rolling"}
 	}
@@ -545,7 +609,7 @@ func (m *Manager) record(ctx context.Context, alerts []Alert) {
 	events := make([]Event, 0, len(alerts))
 	for _, a := range alerts {
 		events = append(events, Event{
-			TS: transitionTS(a, now), RuleID: a.Rule.ID, TargetID: a.TargetID, AgentID: a.AgentID,
+			TS: transitionTS(a, now), RuleID: a.Rule.ID, TargetID: a.TargetID, AgentID: a.AgentID, Family: a.Family,
 			Firing: a.Firing, RuleName: a.Rule.Name, Describes: a.Rule.Describe(), Value: a.Value,
 		})
 	}

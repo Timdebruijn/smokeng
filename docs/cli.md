@@ -250,16 +250,17 @@ them in the report as well. `-h` prints the flags.
 
 `json` is the whole report as indented JSON with `"schema": 1`: `from`, `to`, `silences`,
 `series`, `totals`, `warnings` and `notes`. Timestamps are RFC 3339 UTC. Each series carries
-`rule`, `rule_node`, `condition`, `target`, `target_id`, `vantage`, `agent_id`, `intervals`,
-`fired`, `resolved`, `firing_seconds`, `longest_seconds`, `episodes` and `warnings`; each episode
+`rule`, `rule_node`, `condition`, `target`, `target_id`, `vantage`, `agent_id`, `family` (the target's current family, `v4`, `v6` or `unknown`),
+`intervals`, `fired`, `resolved`, `firing_seconds`, `longest_seconds`, `episodes` and `warnings`; each episode
 `start`, `end` (absent while still firing), `open`, `seconds`, `crossed_at`, `peak`,
 `fire_silenced` and `resolve_silenced`. `totals.suppressed` counts the episodes whose fire fell
 under a silence: listed and marked under `report`, left out under `respect`, always 0 under
 `ignore`.
 
 `csv` has one row per episode, with the header
-`rule,rule_node,target,vantage,start,end,seconds,crossed_at,peak,open,fire_silenced,resolve_silenced`
-(`end` is empty for an episode still firing).
+`rule,rule_node,target,vantage,start,end,seconds,crossed_at,peak,open,fire_silenced,resolve_silenced,family`
+(`end` is empty for an episode still firing). The text form names the family after each target,
+as in `/Home/gateway (v4) from local`. Silences are matched with the family.
 
 ## diag
 

@@ -35,6 +35,7 @@ func (s *server) handleListBaselines(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, map[string]any{
 			"rule_id": b.RuleID, "target_id": b.TargetID, "agent_id": b.AgentID,
+			"family":  b.Family.String(),
 			"from_ts": b.FromTS, "to_ts": b.ToTS, "intervals": b.Intervals,
 			"samples":     len(b.Samples),
 			"captured_at": b.CapturedAt, "captured_by": sc.Who(&b.TargetID, b.CapturedBy),
@@ -60,8 +61,11 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 		// default; 0 would name the local prober, and on an installation whose
 		// probing runs as its own agent that is a series with no measurements.
 		AgentID *int64 `json:"agent_id"`
-		From    int64  `json:"from"`
-		To      int64  `json:"to"`
+		// Family is the series to read; absent means the family the target is
+		// measured over now.
+		Family *tree.Family `json:"family"`
+		From   int64        `json:"from"`
+		To     int64        `json:"to"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
 		badRequest(w, err)
@@ -117,13 +121,17 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
+	family := sc.tr.FamilyOf(body.TargetID)
+	if body.Family != nil {
+		family = *body.Family
+	}
 
 	// The window is bounded in intervals above, but an interval is not a size:
 	// one can hold up to 65,535 samples, so an allowed window could still
 	// decode to tens of gigabytes before anything checked it. The count comes
 	// from sent/received alone, which AvailabilitySeries reads without
 	// decoding a sample, so this is cheap next to what it prevents.
-	pts, err := s.st.AvailabilitySeries(r.Context(), body.TargetID, agentID, sc.tr.FamilyOf(body.TargetID), body.From, body.To)
+	pts, err := s.st.AvailabilitySeries(r.Context(), body.TargetID, agentID, family, body.From, body.To)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -138,7 +146,7 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ms, err := s.st.QueryRange(r.Context(), body.TargetID, agentID, sc.tr.FamilyOf(body.TargetID), body.From, body.To)
+	ms, err := s.st.QueryRange(r.Context(), body.TargetID, agentID, family, body.From, body.To)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -154,7 +162,7 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 	slices.Sort(samples)
 
 	b := alert.Baselined{
-		RuleID: ruleID, TargetID: body.TargetID, AgentID: agentID,
+		RuleID: ruleID, TargetID: body.TargetID, AgentID: agentID, Family: family,
 		FromTS: body.From, ToTS: body.To, Intervals: len(ms), Samples: samples,
 		CapturedAt: time.Now().Unix(), CapturedBy: s.callerName(r),
 	}
@@ -163,7 +171,7 @@ func (s *server) handleCaptureBaseline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"rule_id": ruleID, "intervals": b.Intervals, "samples": len(samples),
+		"rule_id": ruleID, "family": family.String(), "intervals": b.Intervals, "samples": len(samples),
 		"from_ts": b.FromTS, "to_ts": b.ToTS,
 	})
 }
@@ -304,7 +312,15 @@ func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ref := s.alerts.ShapeReferenceDetail(ruleID, targetID, agentID)
+	family, named, ok := familyParam(w, q)
+	if !ok {
+		return
+	}
+	if !named {
+		family = sc.tr.FamilyOf(targetID)
+	}
+
+	ref := s.alerts.ShapeReferenceDetail(ruleID, targetID, agentID, family)
 	reference, kind, avail := ref.Samples, ref.Kind, ref.OK
 	// A golden reference is the rule's, not the target's: one distribution
 	// captured from one series and compared against every series the rule
@@ -321,7 +337,7 @@ func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
 	}
 	// The current side: the most recent interval measured for this series.
 	to := time.Now().Unix()
-	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, sc.tr.FamilyOf(targetID), to-6*3600, to)
+	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, family, to-6*3600, to)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -332,6 +348,7 @@ func (s *server) handleShapeReference(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"rule_id": ruleID, "target_id": targetID, "agent_id": agentID,
+		"family":    family.String(),
 		"kind":      kind,
 		"available": avail,
 		"reference": reference,

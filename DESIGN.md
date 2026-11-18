@@ -154,6 +154,11 @@ Rows from before v28 were given the family their target has, with one exception:
 the change on are certain, and the rest are stored as family 0, unknown, rather than
 guessed. Rows of a target that no longer exists are unknown too.
 
+Alerting follows the same key (schema v29): an alert's state is kept per
+`(rule, target, agent, family)`, events and baselines record the family they are about (given
+to old rows by the same rule as above, judged at the event's or the baseline's time), a
+silence may be scoped to one family, and the webhook carries it as the `family` label.
+
 Notes:
 
 - `measurements` is `WITHOUT ROWID`: the table is clustered on the primary key, so the

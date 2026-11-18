@@ -499,6 +499,10 @@ UPDATE targets SET positional_loss = 'exclude' WHERE parent_id IS NULL AND posit
 	// The key changes, so the tables are rebuilt; the alert tables are not
 	// touched here. See familyMigration for what each existing row is given.
 	familyMigration(),
+	// v29: alerting gets the address family: a rule's state is kept per series,
+	// and events, baselines and silences say which family they are about. See
+	// alertFamilyMigration.
+	alertFamilyMigration(),
 }
 
 func (s *SQLite) migrate() error {

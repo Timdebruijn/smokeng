@@ -133,7 +133,7 @@ func TestReplayJSONSchemaIsPinned(t *testing.T) {
 	}
 	check("totals", top["totals"].(map[string]any), "episodes episodes_per_day series series_firing suppressed")
 	s := top["series"].([]any)[0].(map[string]any)
-	check("series", s, "agent_id condition episodes fired firing_seconds intervals longest_seconds resolved rule rule_node target target_id vantage warnings")
+	check("series", s, "agent_id condition episodes family fired firing_seconds intervals longest_seconds resolved rule rule_node target target_id vantage warnings")
 	eps := s["episodes"].([]any)
 	check("closed episode", eps[0].(map[string]any), "crossed_at end fire_silenced open peak resolve_silenced seconds start")
 	check("open episode", eps[1].(map[string]any), "crossed_at fire_silenced open peak resolve_silenced seconds start")
@@ -152,16 +152,16 @@ func TestReplayCSVColumnsArePinned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(rows[0], ","); got != "rule,rule_node,target,vantage,start,end,seconds,crossed_at,peak,open,fire_silenced,resolve_silenced" {
+	if got := strings.Join(rows[0], ","); got != "rule,rule_node,target,vantage,start,end,seconds,crossed_at,peak,open,fire_silenced,resolve_silenced,family" {
 		t.Errorf("header = %s", got)
 	}
 	if len(rows) != 3 {
 		t.Fatalf("%d rows, want header and two episodes", len(rows))
 	}
-	if got := strings.Join(rows[1], ","); got != "loss,/Production,/Production/web,local,2026-11-03T04:00:00Z,2026-11-03T04:10:00Z,600,7.5,31,false,true,false" {
+	if got := strings.Join(rows[1], ","); got != "loss,/Production,/Production/web,local,2026-11-03T04:00:00Z,2026-11-03T04:10:00Z,600,7.5,31,false,true,false,unknown" {
 		t.Errorf("closed row = %s", got)
 	}
-	if got := strings.Join(rows[2], ","); got != "loss,/Production,/Production/web,local,2026-11-05T04:00:00Z,,3600,6,6,true,false,false" {
+	if got := strings.Join(rows[2], ","); got != "loss,/Production,/Production/web,local,2026-11-05T04:00:00Z,,3600,6,6,true,false,false,unknown" {
 		t.Errorf("open row = %s", got)
 	}
 }

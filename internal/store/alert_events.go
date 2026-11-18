@@ -20,14 +20,14 @@ func (s *SQLite) RecordAlertEvents(ctx context.Context, events []alert.Event) er
 	}
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO alert_events (ts, rule_id, target_id, agent_id, firing, rule_name, describes, value)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+		INSERT INTO alert_events (ts, rule_id, target_id, agent_id, family, firing, rule_name, describes, value)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, e := range events {
-		if _, err := stmt.ExecContext(ctx, e.TS, e.RuleID, e.TargetID, e.AgentID,
+		if _, err := stmt.ExecContext(ctx, e.TS, e.RuleID, e.TargetID, e.AgentID, e.Family,
 			e.Firing, e.RuleName, e.Describes, e.Value); err != nil {
 			return err
 		}
@@ -41,7 +41,7 @@ func (s *SQLite) ListAlertEvents(ctx context.Context, limit int) ([]alert.Event,
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, ts, rule_id, target_id, agent_id, firing, rule_name, describes, value
+		SELECT id, ts, rule_id, target_id, agent_id, family, firing, rule_name, describes, value
 		FROM alert_events ORDER BY ts DESC, id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -50,7 +50,7 @@ func (s *SQLite) ListAlertEvents(ctx context.Context, limit int) ([]alert.Event,
 	var out []alert.Event
 	for rows.Next() {
 		var e alert.Event
-		if err := rows.Scan(&e.ID, &e.TS, &e.RuleID, &e.TargetID, &e.AgentID,
+		if err := rows.Scan(&e.ID, &e.TS, &e.RuleID, &e.TargetID, &e.AgentID, &e.Family,
 			&e.Firing, &e.RuleName, &e.Describes, &e.Value); err != nil {
 			return nil, fmt.Errorf("store: read alert event: %w", err)
 		}

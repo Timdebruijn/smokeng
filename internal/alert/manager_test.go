@@ -81,7 +81,7 @@ func input(targetID int64, step, sent, received int) alert.Input {
 		samples[i] = 5000
 	}
 	return alert.Input{
-		TargetID: targetID, AgentID: store.LocalAgentID,
+		TargetID: targetID, AgentID: store.LocalAgentID, Family: tree.FamilyV4,
 		TS: int64(1_756_400_000 + step*60), Sent: sent, Received: received,
 		Samples: samples, LossTrusted: true, RTTTrusted: true,
 	}
@@ -292,7 +292,7 @@ func TestShapeRuleFiresOnShift(t *testing.T) {
 			s[i] = uint32(rttUs)
 		}
 		return alert.Input{
-			TargetID: leafID, AgentID: store.LocalAgentID,
+			TargetID: leafID, AgentID: store.LocalAgentID, Family: tree.FamilyV4,
 			TS: int64(1_756_400_000 + step*60), Sent: 20, Received: 20,
 			Samples: s, LossTrusted: true, RTTTrusted: true,
 		}
@@ -349,7 +349,7 @@ func TestGoldenBaselineNeedsACaptureAndThenFires(t *testing.T) {
 			s[i] = uint32(rttUs)
 		}
 		return alert.Input{
-			TargetID: leafID, AgentID: store.LocalAgentID,
+			TargetID: leafID, AgentID: store.LocalAgentID, Family: tree.FamilyV4,
 			TS: int64(1_756_400_000 + step*60), Sent: 20, Received: 20,
 			Samples: s, LossTrusted: true, RTTTrusted: true,
 		}
@@ -384,7 +384,7 @@ func TestGoldenBaselineNeedsACaptureAndThenFires(t *testing.T) {
 	}
 
 	// The reference is what the UI overlays, and it is the captured one.
-	ref := m.ShapeReferenceDetail(rule.ID, leafID, store.LocalAgentID)
+	ref := m.ShapeReferenceDetail(rule.ID, leafID, store.LocalAgentID, tree.FamilyV4)
 	if !ref.OK || ref.Kind != "golden" || len(ref.Samples) != len(good) {
 		t.Fatalf("ShapeReferenceDetail = (%d samples, %q, %v), want the captured golden reference", len(ref.Samples), ref.Kind, ref.OK)
 	}
@@ -393,7 +393,7 @@ func TestGoldenBaselineNeedsACaptureAndThenFires(t *testing.T) {
 	if ok, err := m.ClearBaseline(ctx, rule.ID); err != nil || !ok {
 		t.Fatalf("ClearBaseline = %v, %v", ok, err)
 	}
-	if m.ShapeReferenceDetail(rule.ID, leafID, store.LocalAgentID).OK {
+	if m.ShapeReferenceDetail(rule.ID, leafID, store.LocalAgentID, tree.FamilyV4).OK {
 		t.Fatal("reference still available after clearing it")
 	}
 }
@@ -520,7 +520,7 @@ func TestAcknowledgeTiesToEpisode(t *testing.T) {
 	}
 
 	// Acknowledge it.
-	changed, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, true, "tim@example.org")
+	changed, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, tree.FamilyV4, true, "tim@example.org")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,15 +576,15 @@ func TestAcknowledgeUnackAndMiss(t *testing.T) {
 	}
 
 	// Nothing firing yet: an ack changes nothing and says so.
-	if changed, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, true, "x"); err != nil || changed {
+	if changed, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, tree.FamilyV4, true, "x"); err != nil || changed {
 		t.Fatalf("ack of a non-firing alert should be a no-op, got changed=%v err=%v", changed, err)
 	}
 
 	m.Observe(ctx, []alert.Input{input(leafID, 0, 10, 0)})
-	if _, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, true, "x"); err != nil {
+	if _, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, tree.FamilyV4, true, "x"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, false, ""); err != nil {
+	if _, err := m.Acknowledge(ctx, rule.ID, leafID, store.LocalAgentID, tree.FamilyV4, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if f := m.Firing(); len(f) != 1 || f[0].Acked {

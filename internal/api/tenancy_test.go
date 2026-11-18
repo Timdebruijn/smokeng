@@ -898,8 +898,10 @@ type staleProvenance struct {
 	stale []alert.Baselined
 }
 
-func (s staleProvenance) ShapeReferenceDetail(int64, int64, int64) alert.ShapeRef { return s.ref }
-func (s staleProvenance) Baselines() []alert.Baselined                            { return s.stale }
+func (s staleProvenance) ShapeReferenceDetail(int64, int64, int64, tree.Family) alert.ShapeRef {
+	return s.ref
+}
+func (s staleProvenance) Baselines() []alert.Baselined { return s.stale }
 
 // A golden reference and the series it came from are read together. The source
 // used to be looked up afterwards, and a recapture or a clear between the two

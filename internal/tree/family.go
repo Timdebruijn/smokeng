@@ -1,5 +1,11 @@
 package tree
 
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+)
+
 // Family is the address family a series was measured over. It is part of a
 // series' identity: one target can be measured over both families, and the two
 // are different series that must never be pooled.
@@ -49,6 +55,28 @@ func ParseFamily(s string) (Family, bool) {
 		return FamilyUnknown, true
 	}
 	return 0, false
+}
+
+// MarshalJSON and UnmarshalJSON make JSON carry a family the way the API's
+// family parameter spells it ("v4"), not as the number it is stored as.
+// UnmarshalJSON refuses anything ParseFamily refuses, a number included, so a
+// body that misspells a family is an error and not another series.
+func (f Family) MarshalJSON() ([]byte, error) { return json.Marshal(f.String()) }
+
+func (f *Family) UnmarshalJSON(b []byte) error {
+	var s string
+	if string(b) == "null" {
+		return nil // by convention, as for any type: null leaves the value as it is
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return errors.New("family must be v4, v6 or unknown")
+	}
+	p, ok := ParseFamily(s)
+	if !ok {
+		return fmt.Errorf("family must be v4, v6 or unknown, got %q", s)
+	}
+	*f = p
+	return nil
 }
 
 // Family is the family the target is measured over now; unknown for a group

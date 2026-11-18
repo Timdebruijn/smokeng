@@ -51,6 +51,9 @@ func (s *server) handleListSilences(w http.ResponseWriter, r *http.Request) {
 		if sl.RuleID != nil {
 			item["rule_id"] = *sl.RuleID
 		}
+		if sl.Family != nil {
+			item["family"] = sl.Family.String()
+		}
 		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"silences": out})

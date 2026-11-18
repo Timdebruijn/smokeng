@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // Alert is one outgoing notification.
@@ -19,6 +21,7 @@ type Alert struct {
 	Rule       *Rule
 	TargetID   int64
 	AgentID    int64
+	Family     tree.Family
 	TargetPath string
 	TargetHost string
 	AgentName  string
@@ -83,6 +86,7 @@ func (w *Webhook) Notify(ctx context.Context, alerts []Alert) error {
 				"target":    a.TargetPath,
 				"host":      a.TargetHost,
 				"agent":     a.AgentName,
+				"family":    a.Family.String(),
 				"metric":    string(a.Rule.Metric),
 				"severity":  string(a.Rule.Severity),
 			},

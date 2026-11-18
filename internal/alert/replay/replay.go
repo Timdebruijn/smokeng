@@ -75,22 +75,24 @@ type Report struct {
 	Notes    []string       `json:"notes"`
 }
 
-// SeriesReport is one rule on one (target, agent) series.
+// SeriesReport is one rule on one (target, agent, family) series.
 type SeriesReport struct {
-	Rule           string    `json:"rule"`
-	RuleNode       string    `json:"rule_node"`
-	Condition      string    `json:"condition"`
-	Target         string    `json:"target"`
-	TargetID       int64     `json:"target_id"`
-	Vantage        string    `json:"vantage"`
-	AgentID        int64     `json:"agent_id"`
-	Intervals      int       `json:"intervals"`
-	Fired          int       `json:"fired"`
-	Resolved       int       `json:"resolved"`
-	FiringSeconds  int64     `json:"firing_seconds"`
-	LongestSeconds int64     `json:"longest_seconds"`
-	Episodes       []Episode `json:"episodes"`
-	Warnings       []string  `json:"warnings"`
+	Rule      string `json:"rule"`
+	RuleNode  string `json:"rule_node"`
+	Condition string `json:"condition"`
+	Target    string `json:"target"`
+	TargetID  int64  `json:"target_id"`
+	Vantage   string `json:"vantage"`
+	AgentID   int64  `json:"agent_id"`
+	// Family is the family the series was read over: the target's current one.
+	Family         tree.Family `json:"family"`
+	Intervals      int         `json:"intervals"`
+	Fired          int         `json:"fired"`
+	Resolved       int         `json:"resolved"`
+	FiringSeconds  int64       `json:"firing_seconds"`
+	LongestSeconds int64       `json:"longest_seconds"`
+	Episodes       []Episode   `json:"episodes"`
+	Warnings       []string    `json:"warnings"`
 }
 
 // Episode is one firing period.
@@ -391,6 +393,7 @@ func Run(ctx context.Context, src Source, opts Options) (*Report, error) {
 			o.rep.RuleNode = paths[o.ruleNode]
 			o.rep.Target, o.rep.TargetID = sr.app.Path, sr.leaf
 			o.rep.Vantage, o.rep.AgentID = names[sr.agent], sr.agent
+			o.rep.Family = sr.family
 			rep.Series = append(rep.Series, o.rep)
 			rep.Totals.Suppressed += o.suppressed
 		}
@@ -415,7 +418,7 @@ func Run(ctx context.Context, src Source, opts Options) (*Report, error) {
 	return rep, nil
 }
 
-// seriesRun is the replay of the selected rules over one (target, agent).
+// seriesRun is the replay of the selected rules over one (target, agent, family).
 type seriesRun struct {
 	src       Source
 	opts      Options
@@ -564,7 +567,7 @@ func (sr *seriesRun) silencedAt(ts, ruleID int64) bool {
 		return false
 	}
 	for i := range sr.silences {
-		if sr.silences[i].Covers(ts, ruleID, sr.agent, sr.ancestors) {
+		if sr.silences[i].Covers(ts, ruleID, sr.agent, sr.family, sr.ancestors) {
 			return true
 		}
 	}

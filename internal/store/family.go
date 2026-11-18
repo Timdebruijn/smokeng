@@ -155,3 +155,68 @@ ALTER TABLE resolutions_new RENAME TO resolutions;
 DROP TABLE family_backfill;
 `
 }
+
+// alertFamilyMigration is schema v29: alerting learns the family. A rule on a
+// target measured over both families needs a standing, a history and a silence
+// scope per family.
+//
+//   - alert_state is about now, so its row gets the target's current family
+//     (0 for a gone target or a group), and the key grows, so the table is
+//     rebuilt as v28 rebuilt the series tables. It keeps the foreign key to
+//     alert_rules; nothing references alert_state, so unlike v17 it can be
+//     dropped with the rules in place. A state whose rule is gone is not copied:
+//     the foreign key forbids one and the manager discards it on load, so only a
+//     database written with foreign keys off can hold one, and it would stop
+//     this insert, and with it the start of the server.
+//   - alert_events and alert_baselines are history at a timestamp (an event's ts,
+//     a baseline's from_ts), so they get the family v28 gave a measurement row
+//     of that agent at that time, by the same backfill and rule. UPDATE ... FROM
+//     only touches rows that have a backfill row; the rest keep the default 0,
+//     which is what familyOfRow says for a gone target. Their family is not part
+//     of a key, so a column is added rather than the table rebuilt.
+//   - silences get a nullable family; NULL means every family, so every existing
+//     silence keeps covering what it covered.
+func alertFamilyMigration() string {
+	return familyBackfillSQL + `
+CREATE TABLE alert_state_new (
+  rule_id     INTEGER NOT NULL REFERENCES alert_rules(id),
+  target_id   INTEGER NOT NULL,
+  agent_id    INTEGER NOT NULL,
+  family      INTEGER NOT NULL,
+  firing      INTEGER NOT NULL DEFAULT 0,
+  since       INTEGER,
+  streak      INTEGER NOT NULL DEFAULT 0,
+  last_ts     INTEGER,
+  value       REAL NOT NULL DEFAULT 0,
+  acked_since INTEGER,
+  acked_at    INTEGER,
+  acked_by    TEXT,
+  PRIMARY KEY (rule_id, target_id, agent_id, family)
+) WITHOUT ROWID;
+INSERT INTO alert_state_new
+  (rule_id, target_id, agent_id, family, firing, since, streak, last_ts, value, acked_since, acked_at, acked_by)
+  SELECT s.rule_id, s.target_id, s.agent_id, COALESCE(b.family, 0), s.firing, s.since, s.streak, s.last_ts,
+         s.value, s.acked_since, s.acked_at, s.acked_by
+  FROM alert_state s
+  JOIN alert_rules r ON r.id = s.rule_id
+  LEFT JOIN family_backfill b ON b.target_id = s.target_id;
+DROP TABLE alert_state;
+ALTER TABLE alert_state_new RENAME TO alert_state;
+
+ALTER TABLE alert_events ADD COLUMN family INTEGER NOT NULL DEFAULT 0;
+UPDATE alert_events AS x SET family = ` + familyOfRow + `
+  FROM (SELECT id, target_id, agent_id, ts FROM alert_events) m
+  JOIN family_backfill b ON b.target_id = m.target_id
+  WHERE x.id = m.id;
+
+ALTER TABLE alert_baselines ADD COLUMN family INTEGER NOT NULL DEFAULT 0;
+UPDATE alert_baselines AS x SET family = ` + familyOfRow + `
+  FROM (SELECT rule_id, target_id, agent_id, from_ts AS ts FROM alert_baselines) m
+  JOIN family_backfill b ON b.target_id = m.target_id
+  WHERE x.rule_id = m.rule_id;
+
+ALTER TABLE silences ADD COLUMN family INTEGER;
+
+DROP TABLE family_backfill;
+`
+}

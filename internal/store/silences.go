@@ -8,7 +8,7 @@ import (
 
 func (s *SQLite) ListSilences(ctx context.Context) ([]alert.Silence, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, target_id, agent_id, rule_id, starts_at, ends_at, reason, created_by, created_at
+		SELECT id, target_id, agent_id, rule_id, family, starts_at, ends_at, reason, created_by, created_at
 		FROM silences ORDER BY starts_at DESC`)
 	if err != nil {
 		return nil, err
@@ -17,7 +17,7 @@ func (s *SQLite) ListSilences(ctx context.Context) ([]alert.Silence, error) {
 	var out []alert.Silence
 	for rows.Next() {
 		var sil alert.Silence
-		if err := rows.Scan(&sil.ID, &sil.TargetID, &sil.AgentID, &sil.RuleID,
+		if err := rows.Scan(&sil.ID, &sil.TargetID, &sil.AgentID, &sil.RuleID, &sil.Family,
 			&sil.StartsAt, &sil.EndsAt, &sil.Reason, &sil.CreatedBy, &sil.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -29,9 +29,9 @@ func (s *SQLite) ListSilences(ctx context.Context) ([]alert.Silence, error) {
 // CreateSilence inserts a silence and assigns its ID.
 func (s *SQLite) CreateSilence(ctx context.Context, sil *alert.Silence) error {
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO silences (target_id, agent_id, rule_id, starts_at, ends_at, reason, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		sil.TargetID, sil.AgentID, sil.RuleID,
+		INSERT INTO silences (target_id, agent_id, rule_id, family, starts_at, ends_at, reason, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sil.TargetID, sil.AgentID, sil.RuleID, sil.Family,
 		sil.StartsAt, sil.EndsAt, sil.Reason, sil.CreatedBy, sil.CreatedAt)
 	if err != nil {
 		return err
