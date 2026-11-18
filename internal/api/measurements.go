@@ -15,6 +15,7 @@ import (
 
 	"github.com/timdebruijn/smokeng/internal/losspattern"
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 const batchRows = 8192
@@ -94,7 +95,7 @@ const (
 )
 
 func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
-	targetID, agentID, from, to, ok := s.seriesQuery(w, r)
+	targetID, agentID, family, from, to, ok := s.seriesQuery(w, r)
 	if !ok {
 		return
 	}
@@ -104,7 +105,7 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 			badRequestMsg(w, fmt.Sprintf("columns must be between 1 and %d", maxColumns))
 			return
 		}
-		s.handlePooled(w, r, targetID, agentID, from, to, n)
+		s.handlePooled(w, r, targetID, agentID, family, from, to, n)
 		return
 	}
 	// QueryRange materialises every row, samples decoded, before a byte is
@@ -117,7 +118,7 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 			rows, maxRowsPerRequest))
 		return
 	}
-	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, from, to)
+	ms, err := s.st.QueryRange(r.Context(), targetID, agentID, family, from, to)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -133,8 +134,8 @@ func (s *server) handleMeasurements(w http.ResponseWriter, r *http.Request) {
 // above does not apply: what it returns is bounded by n, what it holds in memory
 // by one column's samples, and the time it takes by the intervals the store
 // will walk (see store.QueryColumns), all three counted rather than guessed.
-func (s *server) handlePooled(w http.ResponseWriter, r *http.Request, targetID, agentID, from, to int64, n int) {
-	raw, cols, err := s.st.QueryColumns(r.Context(), targetID, agentID, from, to, n)
+func (s *server) handlePooled(w http.ResponseWriter, r *http.Request, targetID, agentID int64, family tree.Family, from, to int64, n int) {
+	raw, cols, err := s.st.QueryColumns(r.Context(), targetID, agentID, family, from, to, n)
 	if err != nil {
 		internalError(w, err)
 		return

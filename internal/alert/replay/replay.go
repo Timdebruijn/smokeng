@@ -29,7 +29,7 @@ type Source interface {
 	ListAlertBaselines(ctx context.Context) ([]alert.Baselined, error)
 	ListSilences(ctx context.Context) ([]alert.Silence, error)
 	AgentNames(ctx context.Context) (map[int64]string, error)
-	QueryRange(ctx context.Context, targetID, agentID, from, to int64) ([]store.Measurement, error)
+	QueryRange(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64) ([]store.Measurement, error)
 }
 
 // Mode says what a replay does with silences.
@@ -354,7 +354,7 @@ func Run(ctx context.Context, src Source, opts Options) (*Report, error) {
 		for _, agent := range agentIDs {
 			jobs = append(jobs, &seriesRun{
 				src: src, opts: opts, mode: mode, silences: silences, golden: goldenOf,
-				ancestors: ancestors[leaf], leaf: leaf, agent: agent, app: app, rules: rules,
+				ancestors: ancestors[leaf], leaf: leaf, family: tr.FamilyOf(leaf), agent: agent, app: app, rules: rules,
 			})
 		}
 	}
@@ -424,6 +424,7 @@ type seriesRun struct {
 	golden    map[int64]alert.Baselined
 	ancestors map[int64]bool
 	leaf      int64
+	family    tree.Family // the target's current one
 	agent     int64
 	app       alert.Applicable
 	rules     []*alert.Rule
@@ -597,7 +598,7 @@ func (sr *seriesRun) read(ctx context.Context, from, to int64, fn func(*store.Me
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	ms, err := sr.src.QueryRange(ctx, sr.leaf, sr.agent, from, to)
+	ms, err := sr.src.QueryRange(ctx, sr.leaf, sr.agent, sr.family, from, to)
 	if errors.Is(err, store.ErrRangeTooLarge) && to-from > 1 {
 		mid := from + (to-from)/2
 		a, err := sr.read(ctx, from, mid, fn)

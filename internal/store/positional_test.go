@@ -61,7 +61,7 @@ func TestDetectionFlagsFromTheTwelfthTailInterval(t *testing.T) {
 			t.Errorf("interval %d: flagged in the slice = %v, want %v", i+1, got, want)
 		}
 	}
-	got, err := s.QueryRange(ctx, 1, 0, 0, 1<<40)
+	got, err := s.QueryRange(ctx, 1, 0, 0, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestDetectionOffLeavesNoTrace(t *testing.T) {
 	if n := positionalRows(t, s); n != 0 {
 		t.Errorf("%d rows with detection off", n)
 	}
-	got, _ := s.QueryRange(t.Context(), 1, 0, 0, 1<<40)
+	got, _ := s.QueryRange(t.Context(), 1, 0, 0, 0, 1<<40)
 	for _, m := range got {
 		if m.Positional != nil {
 			t.Fatal("QueryRange flagged with detection off")
@@ -275,7 +275,7 @@ func TestQueryColumnsCountsFlaggedIntervals(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Two columns of ten intervals: [1000,1600) and [1600,2200).
-	raw, cols, err := s.QueryColumns(ctx, 1, 0, 1000, 2200, 2)
+	raw, cols, err := s.QueryColumns(ctx, 1, 0, 0, 1000, 2200, 2)
 	if err != nil || raw != nil || len(cols) != 2 {
 		t.Fatalf("raw=%v cols=%d err=%v", raw, len(cols), err)
 	}
@@ -283,7 +283,7 @@ func TestQueryColumnsCountsFlaggedIntervals(t *testing.T) {
 		t.Errorf("flagged per column = %d, %d; want 0, 9", cols[0].Positional, cols[1].Positional)
 	}
 	// And in the unpooled case the intervals themselves say so.
-	raw, _, err = s.QueryColumns(ctx, 1, 0, 1000, 2200, 100)
+	raw, _, err = s.QueryColumns(ctx, 1, 0, 0, 1000, 2200, 100)
 	if err != nil || len(raw) != 20 || raw[19].Positional == nil || raw[0].Positional != nil {
 		t.Errorf("raw read: %d rows, err %v", len(raw), err)
 	}
@@ -329,7 +329,7 @@ func TestV26AddsTableAndIndexAndFlagsNothing(t *testing.T) {
 	if n := positionalRows(t, s); n != 0 {
 		t.Errorf("%d rows flagged retroactively", n)
 	}
-	got, err := s.QueryRange(context.Background(), 1, 0, 0, 1<<40)
+	got, err := s.QueryRange(context.Background(), 1, 0, 0, 0, 1<<40)
 	if err != nil || len(got) != 15 || got[14].Positional != nil || got[14].LossMask == nil {
 		t.Errorf("rows after v26: %d, %v", len(got), err)
 	}
@@ -340,7 +340,7 @@ func TestV26AddsTableAndIndexAndFlagsNothing(t *testing.T) {
 // scan of a day of rows, and this is the test that notices.
 func TestHistoryQueryUsesTheMaskedIndex(t *testing.T) {
 	s := openTemp(t)
-	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+historyQuery, 1, 0, 2000, 1000, 60)
+	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+historyQuery, 1, 0, 0, 2000, 1000, 60)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func TestHistoryQueryUsesTheMaskedIndex(t *testing.T) {
 	// the index looks like. What matters is that the series is sought, not
 	// scanned for, and that the order comes from the index.
 	p := strings.Join(plan, "; ")
-	if !strings.Contains(p, "SEARCH measurements USING INDEX measurements_masked (target_id=? AND agent_id=? AND ts>? AND ts<?)") ||
+	if !strings.Contains(p, "SEARCH measurements USING INDEX measurements_masked (target_id=? AND agent_id=? AND family=? AND ts>? AND ts<?)") ||
 		strings.Contains(p, "TEMP B-TREE") || strings.Contains(p, "SCAN") {
 		t.Errorf("plan = %s", p)
 	}
@@ -416,7 +416,7 @@ func TestStaleAndDamagedFlagsAreNotServed(t *testing.T) {
 	if _, err := s.db.Exec("UPDATE positional_loss SET counts = x'01' WHERE ts = ?", last); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.QueryRange(ctx, 1, 0, 0, 1<<40)
+	got, err := s.QueryRange(ctx, 1, 0, 0, 0, 1<<40)
 	if err != nil {
 		t.Fatalf("a damaged flag made the range unreadable: %v", err)
 	}

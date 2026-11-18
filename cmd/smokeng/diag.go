@@ -201,7 +201,7 @@ func diagLossPattern(args []string, now time.Time, stdout io.Writer) error {
 		From: time.Unix(a.from, 0).UTC(), To: time.Unix(a.to, 0).UTC(), Series: []lossPatternSeries{}}
 	for _, id := range agents {
 		acc := lossPatternSeries{Vantage: names[id], AgentID: id}
-		if err := eachRow(ctx, st, leaf.ID, id, a.from, a.to, acc.add); err != nil {
+		if err := eachRow(ctx, st, leaf.ID, id, leaf.Family(), a.from, a.to, acc.add); err != nil {
 			return err
 		}
 		if acc.Intervals == 0 {
@@ -225,10 +225,10 @@ func diagLossPattern(args []string, now time.Time, stdout io.Writer) error {
 // eachRow hands fn the series' rows oldest first, a day at a time, so that a
 // long window is neither one read that crosses the store's limit nor a window
 // held in memory; a day that still crosses the limit is halved.
-func eachRow(ctx context.Context, st *store.SQLite, target, agent, from, to int64, fn func(*store.Measurement)) error {
+func eachRow(ctx context.Context, st *store.SQLite, target, agent int64, family tree.Family, from, to int64, fn func(*store.Measurement)) error {
 	var read func(from, to int64) error
 	read = func(from, to int64) error {
-		ms, err := st.QueryRange(ctx, target, agent, from, to)
+		ms, err := st.QueryRange(ctx, target, agent, family, from, to)
 		if errors.Is(err, store.ErrRangeTooLarge) && to-from > 1 {
 			mid := from + (to-from)/2
 			if err := read(from, mid); err != nil {

@@ -112,7 +112,7 @@ func tenants(t *testing.T) tenancy {
 	rows := func(target, agent int64, v uint32) []store.Measurement {
 		var ms []store.Measurement
 		for i := range 5 {
-			ms = append(ms, store.Measurement{TargetID: target, AgentID: agent, TS: f.now - 600 + int64(i)*60,
+			ms = append(ms, store.Measurement{TargetID: target, AgentID: agent, Family: tree.FamilyV4, TS: f.now - 600 + int64(i)*60,
 				Sent: 1, Received: 1, Samples: []uint32{v}})
 		}
 		return ms
@@ -128,10 +128,10 @@ func tenants(t *testing.T) tenancy {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordPath(ctx, f.hostA, 0, f.now-600, "10.99.0.1"); err != nil {
+	if err := st.RecordPath(ctx, f.hostA, 0, tree.FamilyV4, f.now-600, "10.99.0.1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordPath(ctx, f.hostB, f.agentB, f.now-600, "10.99.0.2"); err != nil {
+	if err := st.RecordPath(ctx, f.hostB, f.agentB, tree.FamilyV4, f.now-600, "10.99.0.2"); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -1005,7 +1005,7 @@ func TestCaptureRefusesAWindowThatHoldsTooManySamples(t *testing.T) {
 		}
 		var ms []store.Measurement
 		for i := range rows {
-			ms = append(ms, store.Measurement{TargetID: f.hostA, AgentID: 0, TS: base + int64(i)*60,
+			ms = append(ms, store.Measurement{TargetID: f.hostA, AgentID: 0, Family: tree.FamilyV4, TS: base + int64(i)*60,
 				Sent: 65535, Received: 65535, Samples: samples})
 		}
 		if err := f.st.WriteMeasurements(ctx, ms); err != nil {

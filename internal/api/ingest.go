@@ -101,12 +101,14 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	var skipped []int64
 	var future int
 	for _, m := range measurements {
+		family, ok := assigned[m.TargetID]
 		switch {
-		case !assigned[m.TargetID]:
+		case !ok:
 			skipped = append(skipped, m.TargetID)
 		case m.TS > horizon:
 			future++
 		default:
+			m.Family = family
 			kept = append(kept, m)
 		}
 	}
@@ -243,8 +245,10 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"targets": out, "ca_certificates": cas})
 }
 
-// assignedTargets is the set a given agent may submit for.
-func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int64]bool, error) {
+// assignedTargets is the set a given agent may submit for, with the family each
+// is measured over now. A submission does not say which family it was measured
+// over, so what it is stored under is the family the target has today.
+func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int64]tree.Family, error) {
 	targets, err := s.st.ListTargets(ctx)
 	if err != nil {
 		return nil, err
@@ -253,7 +257,7 @@ func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int
 	if err != nil {
 		return nil, err
 	}
-	out := map[int64]bool{}
+	out := map[int64]tree.Family{}
 	for i := range targets {
 		n := &targets[i]
 		if n.Host == nil {
@@ -264,7 +268,7 @@ func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int
 			return nil, err
 		}
 		if assignedTo(res.Agents.Effective, agentName) {
-			out[n.ID] = true
+			out[n.ID] = n.Family()
 		}
 	}
 	return out, nil
@@ -389,11 +393,12 @@ func (s *server) handleAgentPaths(w http.ResponseWriter, r *http.Request) {
 	var kept []store.PathChange
 	var dropped int
 	for _, p := range sub.Paths {
-		if !assigned[p.TargetID] || p.TS > horizon || !validHops(p.Hops) {
+		family, ok := assigned[p.TargetID]
+		if !ok || p.TS > horizon || !validHops(p.Hops) {
 			dropped++
 			continue
 		}
-		kept = append(kept, store.PathChange{TargetID: p.TargetID, TS: p.TS, Hops: strings.Join(p.Hops, ",")})
+		kept = append(kept, store.PathChange{TargetID: p.TargetID, Family: family, TS: p.TS, Hops: strings.Join(p.Hops, ",")})
 	}
 	if dropped > 0 {
 		log.Printf("ingest: agent %q submitted %d path change(s) for a target not assigned to it, "+

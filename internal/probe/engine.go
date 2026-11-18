@@ -357,7 +357,7 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			if lastAddr != "" {
 				log.Printf("probe: target %d (%q): address changed %s -> %s", spec.TargetID, spec.Host, lastAddr, a)
 			}
-			if err := e.st.RecordResolution(ctx, spec.TargetID, time.Now().Unix(), a); err != nil {
+			if err := e.st.RecordResolution(ctx, spec.TargetID, tree.FamilyOf(spec.Family), time.Now().Unix(), a); err != nil {
 				log.Printf("probe: target %d: record resolution: %v", spec.TargetID, err)
 			}
 			lastAddr = a
@@ -625,7 +625,7 @@ func (e *Engine) traceOnce(ctx context.Context, spec TargetSpec) {
 	}
 	hops := path.String()
 
-	last, err := e.st.LastPath(ctx, spec.TargetID, store.LocalAgentID)
+	last, err := e.st.LastPath(ctx, spec.TargetID, store.LocalAgentID, tree.FamilyOf(spec.Family))
 	if err != nil {
 		log.Printf("probe: target %d: read last path: %v", spec.TargetID, err)
 		return
@@ -633,7 +633,7 @@ func (e *Engine) traceOnce(ctx context.Context, spec TargetSpec) {
 	if last == hops {
 		return
 	}
-	if err := e.st.RecordPath(ctx, spec.TargetID, store.LocalAgentID, time.Now().Unix(), hops); err != nil {
+	if err := e.st.RecordPath(ctx, spec.TargetID, store.LocalAgentID, tree.FamilyOf(spec.Family), time.Now().Unix(), hops); err != nil {
 		log.Printf("probe: target %d: record path: %v", spec.TargetID, err)
 		return
 	}

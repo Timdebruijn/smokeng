@@ -72,7 +72,7 @@ func diagDB(t *testing.T, series map[string][]store.Measurement) string {
 			id = rec.ID
 		}
 		for i := range rows {
-			rows[i].TargetID, rows[i].AgentID = leaf.ID, id
+			rows[i].TargetID, rows[i].AgentID, rows[i].Family = leaf.ID, id, tree.FamilyV4
 		}
 		if err := st.WriteMeasurements(ctx, rows); err != nil {
 			t.Fatal(err)

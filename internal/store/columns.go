@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/timdebruijn/smokeng/internal/store/enc"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // ColumnQuantiles is how many values a pooled column carries when its pool
@@ -60,14 +61,14 @@ type Column struct {
 // are more than n (or hold more samples than QueryRange returns), and then
 // turned into columns. Counting first would read the
 // window twice, since a count over this table walks the same pages.
-func (s *SQLite) QueryColumns(ctx context.Context, targetID, agentID, from, to int64, n int) (raw []Measurement, cols []Column, err error) {
+func (s *SQLite) QueryColumns(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64, n int) (raw []Measurement, cols []Column, err error) {
 	if n < 1 {
 		return nil, nil, fmt.Errorf("store: %d columns", n)
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts, sent, received, flags, samples, icmp_error, send_error FROM measurements
-		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?
-		ORDER BY ts`, targetID, agentID, from, to)
+		WHERE target_id = ? AND agent_id = ? AND family = ? AND ts >= ? AND ts < ?
+		ORDER BY ts`, targetID, agentID, family, from, to)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -79,7 +80,7 @@ func (s *SQLite) QueryColumns(ctx context.Context, targetID, agentID, from, to i
 		if read++; read > maxPooledRows {
 			return nil, nil, tooLarge("intervals", maxPooledRows)
 		}
-		m := Measurement{TargetID: targetID, AgentID: agentID}
+		m := Measurement{TargetID: targetID, AgentID: agentID, Family: family}
 		var blob []byte
 		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &m.ICMPErr, &m.SendErr); err != nil {
 			return nil, nil, err
@@ -112,18 +113,18 @@ func (s *SQLite) QueryColumns(ctx context.Context, targetID, agentID, from, to i
 	}
 	if p != nil {
 		cols := p.finish()
-		if err := s.poolSeries(ctx, targetID, agentID, from, to, p, cols, read); err != nil {
+		if err := s.poolSeries(ctx, targetID, agentID, family, from, to, p, cols, read); err != nil {
 			return nil, nil, err
 		}
-		if err := s.poolPositional(ctx, targetID, agentID, from, to, p, cols); err != nil {
+		if err := s.poolPositional(ctx, targetID, agentID, family, from, to, p, cols); err != nil {
 			return nil, nil, err
 		}
 		return nil, cols, nil
 	}
-	if err := s.attachSeries(ctx, targetID, agentID, from, to, raw); err != nil {
+	if err := s.attachSeries(ctx, targetID, agentID, family, from, to, raw); err != nil {
 		return nil, nil, err
 	}
-	if err := s.attachPositional(ctx, targetID, agentID, from, to, raw); err != nil {
+	if err := s.attachPositional(ctx, targetID, agentID, family, from, to, raw); err != nil {
 		return nil, nil, err
 	}
 	return raw, nil, nil
@@ -211,11 +212,11 @@ func (p *pooler) finish() []Column {
 // some probes write them. The rows walked count against the same bound as the
 // measurements, starting from those already read. A series row whose column
 // holds no measurement belongs to none and is skipped.
-func (s *SQLite) poolSeries(ctx context.Context, targetID, agentID, from, to int64, p *pooler, cols []Column, read int) error {
+func (s *SQLite) poolSeries(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64, p *pooler, cols []Column, read int) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts, series, samples FROM measurement_series
-		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?
-		ORDER BY ts`, targetID, agentID, from, to)
+		WHERE target_id = ? AND agent_id = ? AND family = ? AND ts >= ? AND ts < ?
+		ORDER BY ts`, targetID, agentID, family, from, to)
 	if err != nil {
 		return err
 	}
@@ -286,10 +287,10 @@ func (s *SQLite) poolSeries(ctx context.Context, targetID, agentID, from, to int
 // poolPositional counts the flagged intervals into the columns already built.
 // Only the timestamps are read: the counts are not pooled. A flag whose column
 // holds no measurement belongs to none and is skipped.
-func (s *SQLite) poolPositional(ctx context.Context, targetID, agentID, from, to int64, p *pooler, cols []Column) error {
+func (s *SQLite) poolPositional(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64, p *pooler, cols []Column) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts FROM positional_loss
-		WHERE target_id = ? AND agent_id = ? AND ts >= ? AND ts < ?`, targetID, agentID, from, to)
+		WHERE target_id = ? AND agent_id = ? AND family = ? AND ts >= ? AND ts < ?`, targetID, agentID, family, from, to)
 	if err != nil {
 		return err
 	}

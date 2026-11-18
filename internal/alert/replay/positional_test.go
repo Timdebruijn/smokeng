@@ -8,6 +8,7 @@ import (
 	"github.com/timdebruijn/smokeng/internal/alert"
 	"github.com/timdebruijn/smokeng/internal/alert/replay"
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // A replay goes through the same step as the live manager, so the positional
@@ -46,7 +47,7 @@ func TestReplayFollowsThePositionalLossPolicy(t *testing.T) {
 			for k := range sm {
 				sm[k] = 5000
 			}
-			m := store.Measurement{TargetID: target, TS: at(i), Sent: sent, Received: recv, Samples: sm}
+			m := store.Measurement{TargetID: target, Family: tree.FamilyV4, TS: at(i), Sent: sent, Received: recv, Samples: sm}
 			if len(lostAt) > 0 {
 				m.LossMask = store.EncodeLossMask(false, mask)
 			}
@@ -63,7 +64,7 @@ func TestReplayFollowsThePositionalLossPolicy(t *testing.T) {
 
 	// How many intervals the detector flagged, so the test knows its premise held.
 	flagged := func(target int64) int {
-		ms, err := e.st.QueryRange(ctx, target, 0, at(0), at(n))
+		ms, err := e.st.QueryRange(ctx, target, 0, tree.FamilyV4, at(0), at(n))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,7 +152,7 @@ func TestReplayResolvesOnceTheLimiterIsRecognised(t *testing.T) {
 		for k := range sm {
 			sm[k] = 5000
 		}
-		ms = append(ms, store.Measurement{TargetID: e.web, TS: at(i), Sent: sent, Received: sent - 3,
+		ms = append(ms, store.Measurement{TargetID: e.web, Family: tree.FamilyV4, TS: at(i), Sent: sent, Received: sent - 3,
 			Samples: sm, LossMask: store.EncodeLossMask(false, mask)})
 	}
 	if err := e.st.WriteMeasurements(ctx, ms); err != nil {

@@ -156,7 +156,7 @@ func TestDeletingATargetTakesItsRulesAndTheirStateAlong(t *testing.T) {
 		t.Errorf("%d rule(s) and %d state row(s) outlived their target", rules, states)
 	}
 	// History outlives the target, as it always has.
-	got, err := s.QueryRange(ctx, target, 0, 0, 1<<40)
+	got, err := s.QueryRange(ctx, target, 0, 0, 0, 1<<40)
 	if err != nil || len(got) != 1 {
 		t.Errorf("the target's measurements went with it: %d rows, %v", len(got), err)
 	}

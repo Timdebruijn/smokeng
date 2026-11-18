@@ -70,23 +70,23 @@ func TestAgentPathChangesReachTheMasterUnderItsID(t *testing.T) {
 		{mine, now - 200, "10.0.0.1,not-an-address"},
 		{mine, now + 3600, "10.0.0.1,192.0.2.9"}, // from the future
 	} {
-		if err := buf.RecordPath(ctx, p.target, store.LocalAgentID, p.ts, p.hops); err != nil {
+		if err := buf.RecordPath(ctx, p.target, store.LocalAgentID, tree.FamilyV4, p.ts, p.hops); err != nil {
 			t.Fatal(err)
 		}
 	}
 	a.push(ctx)
 
-	got, err := master.PathChanges(ctx, mine, rec.ID, 0, now+7200)
+	got, err := master.PathChanges(ctx, mine, rec.ID, tree.FamilyV4, 0, now+7200)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[0].Hops != "10.0.0.1,*,192.0.2.9" || got[1].Hops != "10.0.0.1,10.9.9.9,192.0.2.9" {
 		t.Errorf("master holds %+v for the agent's own target, want the two valid changes", got)
 	}
-	if got, _ := master.PathChanges(ctx, other, rec.ID, 0, now+7200); len(got) != 0 {
+	if got, _ := master.PathChanges(ctx, other, rec.ID, tree.FamilyV4, 0, now+7200); len(got) != 0 {
 		t.Errorf("master stored %+v for a target not assigned to the agent", got)
 	}
-	if local, _ := master.PathChanges(ctx, mine, store.LocalAgentID, 0, now+7200); len(local) != 0 {
+	if local, _ := master.PathChanges(ctx, mine, store.LocalAgentID, tree.FamilyV4, 0, now+7200); len(local) != 0 {
 		t.Errorf("the agent's changes landed under the master's own prober: %+v", local)
 	}
 
@@ -94,16 +94,16 @@ func TestAgentPathChangesReachTheMasterUnderItsID(t *testing.T) {
 		t.Errorf("still pending after the master confirmed: %+v", pending)
 	}
 	// The last path survives, so the next run compares against it.
-	if last, _ := buf.LastPath(ctx, mine, store.LocalAgentID); last != "10.0.0.1,192.0.2.9" {
+	if last, _ := buf.LastPath(ctx, mine, store.LocalAgentID, tree.FamilyV4); last != "10.0.0.1,192.0.2.9" {
 		t.Errorf("LastPath = %q, want the latest recorded (the future one is the latest here)", last)
 	}
 
 	// First write wins: a replay changes nothing.
-	dup, err := master.IngestPaths(ctx, rec.ID, []store.PathChange{{TargetID: mine, TS: now - 600, Hops: "1.2.3.4"}})
+	dup, err := master.IngestPaths(ctx, rec.ID, []store.PathChange{{TargetID: mine, Family: tree.FamilyV4, TS: now - 600, Hops: "1.2.3.4"}})
 	if err != nil || dup != 1 {
 		t.Errorf("a replayed change: %d duplicates, %v; want 1", dup, err)
 	}
-	if got, _ := master.PathChanges(ctx, mine, rec.ID, 0, now+7200); got[0].Hops != "10.0.0.1,*,192.0.2.9" {
+	if got, _ := master.PathChanges(ctx, mine, rec.ID, tree.FamilyV4, 0, now+7200); got[0].Hops != "10.0.0.1,*,192.0.2.9" {
 		t.Errorf("a replay rewrote a reported change: %+v", got[0])
 	}
 }
@@ -114,7 +114,7 @@ func TestAgentPathChangesReachTheMasterUnderItsID(t *testing.T) {
 func TestPathChangesStayBufferedWhenTheMasterHasNoRoute(t *testing.T) {
 	a, st, _ := newTestAgent(t, http.NotFoundHandler())
 	ctx := context.Background()
-	if err := st.RecordPath(ctx, 42, store.LocalAgentID, 1000, "10.0.0.1"); err != nil {
+	if err := st.RecordPath(ctx, 42, store.LocalAgentID, 0, 1000, "10.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
 	a.pushPaths(ctx)

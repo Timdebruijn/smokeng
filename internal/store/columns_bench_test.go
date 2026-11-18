@@ -48,7 +48,7 @@ func BenchmarkQueryColumns(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				raw, cols, err := s.QueryColumns(b.Context(), 1, 0, 0, to, 1000)
+				raw, cols, err := s.QueryColumns(b.Context(), 1, 0, 0, 0, to, 1000)
 				if err != nil || raw != nil || len(cols) != 1000 {
 					b.Fatalf("raw %d, cols %d, %v", len(raw), len(cols), err)
 				}

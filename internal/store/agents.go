@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/timdebruijn/smokeng/internal/store/enc"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // AgentRecord is an enrolled measurement node. The master stores only the
@@ -196,7 +197,7 @@ func (s *SQLite) TouchAgent(ctx context.Context, id, at int64, version string) e
 // confirmed by the master, oldest first so a backlog drains in order.
 func (s *SQLite) PendingMeasurements(ctx context.Context, limit int) ([]Measurement, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT target_id, agent_id, ts, sent, received, flags, samples, icmp_error, send_error, loss_mask
+		SELECT target_id, agent_id, family, ts, sent, received, flags, samples, icmp_error, send_error, loss_mask
 		FROM measurements WHERE submitted = 0 ORDER BY ts LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -206,7 +207,7 @@ func (s *SQLite) PendingMeasurements(ctx context.Context, limit int) ([]Measurem
 	for rows.Next() {
 		var m Measurement
 		var blob []byte
-		if err := rows.Scan(&m.TargetID, &m.AgentID, &m.TS, &m.Sent, &m.Received,
+		if err := rows.Scan(&m.TargetID, &m.AgentID, &m.Family, &m.TS, &m.Sent, &m.Received,
 			&m.Flags, &blob, &m.ICMPErr, &m.SendErr, &m.LossMask); err != nil {
 			return nil, err
 		}
@@ -231,25 +232,29 @@ func (s *SQLite) PendingMeasurements(ctx context.Context, limit int) ([]Measurem
 // is precisely the kind of difference nobody notices for months.
 //
 // The rows are read in one query rather than one per measurement, scoped to the
-// (target, agent) pairs the page actually holds so the primary key can serve
+// (target, agent, family) series the page actually holds so the primary key can serve
 // it. The exact key match below discards anything else inside those spans.
 func (s *SQLite) attachPendingSeries(ctx context.Context, ms []Measurement) error {
 	if len(ms) == 0 {
 		return nil
 	}
-	type key = struct{ target, agent, ts int64 }
+	type key = struct {
+		target, agent int64
+		family        tree.Family
+		ts            int64
+	}
 	type span = struct{ lo, hi int64 }
 	byKey := make(map[key]*Measurement, len(ms))
-	// One time span per (target, agent), not one for the whole page. The
-	// primary key leads with target_id and agent_id, so a bare ts range
+	// One time span per series, not one for the whole page. The
+	// primary key leads with target_id, agent_id and family, so a bare ts range
 	// matches no index and scans the table — which is what migration v10 was
 	// written to stop happening on the outbox, for the same reason: an agent
 	// drains this every fifteen seconds, and a week offline leaves tens of
 	// thousands of rows to scan on each of them.
-	spans := make(map[[2]int64]span, 8)
+	spans := make(map[seriesKey]span, 8)
 	for i := range ms {
-		byKey[key{ms[i].TargetID, ms[i].AgentID, ms[i].TS}] = &ms[i]
-		pair := [2]int64{ms[i].TargetID, ms[i].AgentID}
+		byKey[key{ms[i].TargetID, ms[i].AgentID, ms[i].Family, ms[i].TS}] = &ms[i]
+		pair := seriesKey{ms[i].TargetID, ms[i].AgentID, ms[i].Family}
 		sp, seen := spans[pair]
 		if !seen {
 			spans[pair] = span{ms[i].TS, ms[i].TS}
@@ -278,35 +283,49 @@ func (s *SQLite) attachPendingSeries(ctx context.Context, ms []Measurement) erro
 	return nil
 }
 
-// pendingSeriesChunk is how many (target, agent) pairs go into one statement.
+// seriesKey names a series: what a primary key leads with.
+type seriesKey struct {
+	target, agent int64
+	family        tree.Family
+}
+
+// pendingSeriesChunk is how many series go into one statement.
 // Well under the depth ceiling: a thousand pairs is where SQLite refuses, and
 // there is nothing to gain from crowding it.
 const pendingSeriesChunk = 100
 
-func (s *SQLite) readPendingSeriesChunk(ctx context.Context, pairs [][2]int64,
-	spans map[[2]int64]struct{ lo, hi int64 }, byKey map[struct{ target, agent, ts int64 }]*Measurement) error {
+func (s *SQLite) readPendingSeriesChunk(ctx context.Context, pairs []seriesKey,
+	spans map[seriesKey]struct{ lo, hi int64 }, byKey map[struct {
+		target, agent int64
+		family        tree.Family
+		ts            int64
+	}]*Measurement) error {
 	var where strings.Builder
-	args := make([]any, 0, len(pairs)*4)
+	args := make([]any, 0, len(pairs)*5)
 	for _, pair := range pairs {
 		if where.Len() > 0 {
 			where.WriteString(" OR ")
 		}
-		where.WriteString("(target_id = ? AND agent_id = ? AND ts >= ? AND ts <= ?)")
+		where.WriteString("(target_id = ? AND agent_id = ? AND family = ? AND ts >= ? AND ts <= ?)")
 		sp := spans[pair]
-		args = append(args, pair[0], pair[1], sp.lo, sp.hi)
+		args = append(args, pair.target, pair.agent, pair.family, sp.lo, sp.hi)
 	}
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT target_id, agent_id, ts, series, samples FROM measurement_series WHERE "+
+		"SELECT target_id, agent_id, family, ts, series, samples FROM measurement_series WHERE "+
 			where.String(), args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var k struct{ target, agent, ts int64 }
+		var k struct {
+			target, agent int64
+			family        tree.Family
+			ts            int64
+		}
 		var name string
 		var blob []byte
-		if err := rows.Scan(&k.target, &k.agent, &k.ts, &name, &blob); err != nil {
+		if err := rows.Scan(&k.target, &k.agent, &k.family, &k.ts, &name, &blob); err != nil {
 			return err
 		}
 		m := byKey[k]
@@ -346,7 +365,7 @@ func (s *SQLite) DropSubmitted(ctx context.Context, ms []Measurement) error {
 	}
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(ctx,
-		"DELETE FROM measurements WHERE target_id = ? AND agent_id = ? AND ts = ?")
+		"DELETE FROM measurements WHERE target_id = ? AND agent_id = ? AND family = ? AND ts = ?")
 	if err != nil {
 		return err
 	}
@@ -354,16 +373,16 @@ func (s *SQLite) DropSubmitted(ctx context.Context, ms []Measurement) error {
 	// The outbox drops the series with the measurement it belongs to. An agent
 	// that kept them would grow the table it was rewritten to stop growing.
 	delSeries, err := tx.PrepareContext(ctx,
-		"DELETE FROM measurement_series WHERE target_id = ? AND agent_id = ? AND ts = ?")
+		"DELETE FROM measurement_series WHERE target_id = ? AND agent_id = ? AND family = ? AND ts = ?")
 	if err != nil {
 		return err
 	}
 	defer delSeries.Close()
 	for _, m := range ms {
-		if _, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
+		if _, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.Family, m.TS); err != nil {
 			return err
 		}
-		if _, err := delSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.TS); err != nil {
+		if _, err := delSeries.ExecContext(ctx, m.TargetID, m.AgentID, m.Family, m.TS); err != nil {
 			return err
 		}
 	}
@@ -372,16 +391,18 @@ func (s *SQLite) DropSubmitted(ctx context.Context, ms []Measurement) error {
 
 // PathChange is a recorded route to a target at a moment in time.
 type PathChange struct {
-	TargetID, AgentID, TS int64
-	Hops                  string
+	TargetID, AgentID int64
+	Family            tree.Family
+	TS                int64
+	Hops              string
 }
 
 // LastPath returns the most recently recorded path, or "" if none.
-func (s *SQLite) LastPath(ctx context.Context, targetID, agentID int64) (string, error) {
+func (s *SQLite) LastPath(ctx context.Context, targetID, agentID int64, family tree.Family) (string, error) {
 	var hops string
 	err := s.db.QueryRowContext(ctx,
-		"SELECT hops FROM paths WHERE target_id = ? AND agent_id = ? ORDER BY ts DESC LIMIT 1",
-		targetID, agentID).Scan(&hops)
+		"SELECT hops FROM paths WHERE target_id = ? AND agent_id = ? AND family = ? ORDER BY ts DESC LIMIT 1",
+		targetID, agentID, family).Scan(&hops)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
@@ -391,10 +412,10 @@ func (s *SQLite) LastPath(ctx context.Context, targetID, agentID int64) (string,
 // RecordPath appends a path change. Callers write only when the path differs
 // from the last one: a route is stable for days and then is not, so storing
 // every run would be the same list thousands of times over.
-func (s *SQLite) RecordPath(ctx context.Context, targetID, agentID, ts int64, hops string) error {
+func (s *SQLite) RecordPath(ctx context.Context, targetID, agentID int64, family tree.Family, ts int64, hops string) error {
 	_, err := s.db.ExecContext(ctx,
-		"INSERT OR REPLACE INTO paths (target_id, agent_id, ts, hops) VALUES (?, ?, ?, ?)",
-		targetID, agentID, ts, hops)
+		"INSERT OR REPLACE INTO paths (target_id, agent_id, family, ts, hops) VALUES (?, ?, ?, ?, ?)",
+		targetID, agentID, family, ts, hops)
 	return err
 }
 
@@ -402,7 +423,7 @@ func (s *SQLite) RecordPath(ctx context.Context, targetID, agentID, ts int64, ho
 // the master, oldest first.
 func (s *SQLite) PendingPaths(ctx context.Context, limit int) ([]PathChange, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT target_id, agent_id, ts, hops FROM paths
+		SELECT target_id, agent_id, family, ts, hops FROM paths
 		WHERE submitted = 0 ORDER BY ts LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -411,7 +432,7 @@ func (s *SQLite) PendingPaths(ctx context.Context, limit int) ([]PathChange, err
 	var out []PathChange
 	for rows.Next() {
 		var c PathChange
-		if err := rows.Scan(&c.TargetID, &c.AgentID, &c.TS, &c.Hops); err != nil {
+		if err := rows.Scan(&c.TargetID, &c.AgentID, &c.Family, &c.TS, &c.Hops); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -420,7 +441,7 @@ func (s *SQLite) PendingPaths(ctx context.Context, limit int) ([]PathChange, err
 }
 
 // PathsSubmitted records that the master confirmed these changes, and forgets
-// every confirmed change but the latest per target. Unlike a measurement, the
+// every confirmed change but the latest per series. Unlike a measurement, the
 // latest is kept: the agent decides whether a traceroute found a change by
 // comparing it with the last path it recorded (LastPath), and with that gone
 // every next run would look like one, and arrive at the master as a mark where
@@ -433,14 +454,14 @@ func (s *SQLite) PathsSubmitted(ctx context.Context, cs []PathChange) error {
 	defer tx.Rollback()
 	for _, c := range cs {
 		if _, err := tx.ExecContext(ctx,
-			"UPDATE paths SET submitted = 1 WHERE target_id = ? AND agent_id = ? AND ts = ?",
-			c.TargetID, c.AgentID, c.TS); err != nil {
+			"UPDATE paths SET submitted = 1 WHERE target_id = ? AND agent_id = ? AND family = ? AND ts = ?",
+			c.TargetID, c.AgentID, c.Family, c.TS); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM paths WHERE target_id = ? AND agent_id = ? AND submitted = 1
-			  AND ts < (SELECT MAX(ts) FROM paths WHERE target_id = ? AND agent_id = ?)`,
-			c.TargetID, c.AgentID, c.TargetID, c.AgentID); err != nil {
+			DELETE FROM paths WHERE target_id = ? AND agent_id = ? AND family = ? AND submitted = 1
+			  AND ts < (SELECT MAX(ts) FROM paths WHERE target_id = ? AND agent_id = ? AND family = ?)`,
+			c.TargetID, c.AgentID, c.Family, c.TargetID, c.AgentID, c.Family); err != nil {
 			return err
 		}
 	}
@@ -459,8 +480,8 @@ func (s *SQLite) IngestPaths(ctx context.Context, agentID int64, cs []PathChange
 	defer tx.Rollback()
 	for _, c := range cs {
 		res, err := tx.ExecContext(ctx,
-			"INSERT OR IGNORE INTO paths (target_id, agent_id, ts, hops, submitted) VALUES (?, ?, ?, ?, 1)",
-			c.TargetID, agentID, c.TS, c.Hops)
+			"INSERT OR IGNORE INTO paths (target_id, agent_id, family, ts, hops, submitted) VALUES (?, ?, ?, ?, ?, 1)",
+			c.TargetID, agentID, c.Family, c.TS, c.Hops)
 		if err != nil {
 			return 0, err
 		}
@@ -474,20 +495,20 @@ func (s *SQLite) IngestPaths(ctx context.Context, agentID int64, cs []PathChange
 // PathChanges returns the changes for one series over [from, to), plus the
 // one in force when the window opened — without it a window that contains no
 // change would look as though the path were unknown.
-func (s *SQLite) PathChanges(ctx context.Context, targetID, agentID, from, to int64) ([]PathChange, error) {
+func (s *SQLite) PathChanges(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64) ([]PathChange, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ts, hops FROM paths
-		WHERE target_id = ? AND agent_id = ? AND ts < ?
+		WHERE target_id = ? AND agent_id = ? AND family = ? AND ts < ?
 		  AND ts >= COALESCE((SELECT MAX(ts) FROM paths
-		                      WHERE target_id = ? AND agent_id = ? AND ts <= ?), 0)
-		ORDER BY ts`, targetID, agentID, to, targetID, agentID, from)
+		                      WHERE target_id = ? AND agent_id = ? AND family = ? AND ts <= ?), 0)
+		ORDER BY ts`, targetID, agentID, family, to, targetID, agentID, family, from)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []PathChange
 	for rows.Next() {
-		c := PathChange{TargetID: targetID, AgentID: agentID}
+		c := PathChange{TargetID: targetID, AgentID: agentID, Family: family}
 		if err := rows.Scan(&c.TS, &c.Hops); err != nil {
 			return nil, err
 		}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // bucketStart returns the wall-clock-aligned interval start containing t
@@ -293,6 +294,7 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	m := store.Measurement{
 		TargetID: spec.TargetID,
 		AgentID:  store.LocalAgentID,
+		Family:   tree.FamilyOf(spec.Family),
 		TS:       bucket,
 	}
 	if cond.rawSocket {

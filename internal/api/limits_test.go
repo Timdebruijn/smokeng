@@ -368,13 +368,13 @@ type rangeStore struct {
 	err error
 }
 
-func (r rangeStore) QueryRange(context.Context, int64, int64, int64, int64) ([]store.Measurement, error) {
+func (r rangeStore) QueryRange(context.Context, int64, int64, tree.Family, int64, int64) ([]store.Measurement, error) {
 	return nil, r.err
 }
-func (r rangeStore) AvailabilitySeries(context.Context, int64, int64, int64, int64) ([]report.Point, error) {
+func (r rangeStore) AvailabilitySeries(context.Context, int64, int64, tree.Family, int64, int64) ([]report.Point, error) {
 	return nil, r.err
 }
-func (r rangeStore) PathChanges(context.Context, int64, int64, int64, int64) ([]store.PathChange, error) {
+func (r rangeStore) PathChanges(context.Context, int64, int64, tree.Family, int64, int64) ([]store.PathChange, error) {
 	return nil, r.err
 }
 

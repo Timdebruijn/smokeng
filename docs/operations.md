@@ -358,6 +358,15 @@ Migrations run in one transaction (`internal/store/sqlite.go`), so a failed migr
 leaves the database at its old version rather than half-changed. The Ansible role does not
 take a backup before an upgrade; do it first.
 
+The upgrade to schema 28 rewrites the stored history once, because the address family joins
+the key of every series. Measured on a 2-vCPU VM, a database of 2.16 million intervals
+(50 series, 30 days, 165 MB) took 5 to 6 seconds, during which the service is not yet
+listening. It needs free disk space of about twice the size of the database: the file
+itself grew to 308 MB and the write-ahead log peaked at 176 MB beside it. The file does not
+shrink back afterwards. The space the old tables held is reused by new measurements; run
+`sqlite3 /var/lib/smokeng/smokeng.db VACUUM` with the service stopped if you want it
+returned to the filesystem.
+
 ### Rollback
 
 Downgrades are not supported. To go back, stop the service, put the previous binary back,

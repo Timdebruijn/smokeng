@@ -102,7 +102,7 @@ func TestIngestStoresMeasurements(t *testing.T) {
 		t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
 	}
 
-	got, err := st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	got, err := st.QueryRange(t.Context(), mine, agentID, tree.FamilyV4, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestIngestStoresLossMask(t *testing.T) {
 	if rec := submit(t, h, agentID, key, []store.Measurement{m}, time.Now()); rec.Code != http.StatusOK {
 		t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
 	}
-	got, err := st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	got, err := st.QueryRange(t.Context(), mine, agentID, tree.FamilyV4, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestIngestIsIdempotent(t *testing.T) {
 			t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
 		}
 	}
-	got, err := st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	got, err := st.QueryRange(t.Context(), mine, agentID, tree.FamilyV4, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestIngestDiscardsUnassignedTargetsButKeepsTheRest(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("a batch with one unassigned target = %d, want it accepted: %s", rec.Code, rec.Body)
 	}
-	got, err := st.QueryRange(t.Context(), theirs, agentID, 0, 1<<40)
+	got, err := st.QueryRange(t.Context(), theirs, agentID, tree.FamilyV4, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestIngestDiscardsUnassignedTargetsButKeepsTheRest(t *testing.T) {
 	}
 	// …and the assigned one in the same batch still landed, which is the
 	// property that keeps the outbox draining.
-	got, err = st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	got, err = st.QueryRange(t.Context(), mine, agentID, tree.FamilyV4, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestIngestKeepsWhatIsAlreadyStored(t *testing.T) {
 		t.Errorf("response = %+v, want 0 accepted and 1 duplicate", resp)
 	}
 
-	got, err := st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	got, err := st.QueryRange(t.Context(), mine, agentID, tree.FamilyV4, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestIngestDropsFutureRowsButKeepsTheRest(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("a batch with a future row = %d, want it accepted: %s", rec.Code, rec.Body)
 	}
-	got, err := st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	got, err := st.QueryRange(t.Context(), mine, agentID, tree.FamilyV4, 0, 1<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestIngestDoesNotEvaluateARowThatArrivesLate(t *testing.T) {
 			t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
 		}
 	}
-	got, err := st.QueryRange(t.Context(), mine, agentID, 0, 1<<40)
+	got, err := st.QueryRange(t.Context(), mine, agentID, tree.FamilyV4, 0, 1<<40)
 	if err != nil || len(got) != 2 {
 		t.Fatalf("stored %d measurements, %v; the late one must still be kept", len(got), err)
 	}

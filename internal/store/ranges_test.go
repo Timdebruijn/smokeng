@@ -37,15 +37,15 @@ func TestQueryRangeRefusesMoreSamplesThanOneReadReturns(t *testing.T) {
 		}
 	}
 	write(10, 10) // exactly 100 samples
-	if got, err := s.QueryRange(ctx, 1, 0, 0, 1<<40); err != nil || len(got) != 10 {
+	if got, err := s.QueryRange(ctx, 1, 0, 0, 0, 1<<40); err != nil || len(got) != 10 {
 		t.Fatalf("a range of exactly the limit = %d rows, %v", len(got), err)
 	}
 	write(11, 10) // 110: replaces the same timestamps with one more row
-	if _, err := s.QueryRange(ctx, 1, 0, 0, 1<<40); !errors.Is(err, ErrRangeTooLarge) {
+	if _, err := s.QueryRange(ctx, 1, 0, 0, 0, 1<<40); !errors.Is(err, ErrRangeTooLarge) {
 		t.Fatalf("a range one row over the limit: err = %v, want ErrRangeTooLarge", err)
 	}
 	// A narrower window over the same data is fine.
-	if got, err := s.QueryRange(ctx, 1, 0, 0, 1000+60*5); err != nil || len(got) != 5 {
+	if got, err := s.QueryRange(ctx, 1, 0, 0, 0, 1000+60*5); err != nil || len(got) != 5 {
 		t.Errorf("a narrower window = %d rows, %v", len(got), err)
 	}
 }
@@ -64,7 +64,7 @@ func TestTheRowThatCrossesTheLimitIsNotDecoded(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE measurements SET samples = X'01FFFFFFFFFFFFFFFFFFFF' WHERE ts = 1060`); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.QueryRange(ctx, 1, 0, 0, 1<<40)
+	_, err := s.QueryRange(ctx, 1, 0, 0, 0, 1<<40)
 	if !errors.Is(err, ErrRangeTooLarge) {
 		t.Fatalf("err = %v, want ErrRangeTooLarge: the corrupt row was decoded before it was counted", err)
 	}
@@ -81,13 +81,13 @@ func TestAvailabilitySeriesRefusesMoreRowsThanOneReadReturns(t *testing.T) {
 	if err := s.WriteMeasurements(ctx, ms[:50]); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.AvailabilitySeries(ctx, 1, 0, 0, 1<<40); err != nil || len(got) != 50 {
+	if got, err := s.AvailabilitySeries(ctx, 1, 0, 0, 0, 1<<40); err != nil || len(got) != 50 {
 		t.Fatalf("exactly the limit = %d rows, %v", len(got), err)
 	}
 	if err := s.WriteMeasurements(ctx, ms[50:]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AvailabilitySeries(ctx, 1, 0, 0, 1<<40); !errors.Is(err, ErrRangeTooLarge) {
+	if _, err := s.AvailabilitySeries(ctx, 1, 0, 0, 0, 1<<40); !errors.Is(err, ErrRangeTooLarge) {
 		t.Fatalf("one row over: err = %v, want ErrRangeTooLarge", err)
 	}
 }
@@ -97,17 +97,17 @@ func TestPathChangesRefusesMoreRowsThanOneReadReturns(t *testing.T) {
 	s := openTemp(t)
 	ctx := t.Context()
 	for i := range 5 {
-		if err := s.RecordPath(ctx, 1, 0, int64(1000+i*60), "10.0.0.1"); err != nil {
+		if err := s.RecordPath(ctx, 1, 0, 0, int64(1000+i*60), "10.0.0.1"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got, err := s.PathChanges(ctx, 1, 0, 0, 1<<40); err != nil || len(got) != 5 {
+	if got, err := s.PathChanges(ctx, 1, 0, 0, 0, 1<<40); err != nil || len(got) != 5 {
 		t.Fatalf("exactly the limit = %d rows, %v", len(got), err)
 	}
-	if err := s.RecordPath(ctx, 1, 0, 2000, "10.0.0.2"); err != nil {
+	if err := s.RecordPath(ctx, 1, 0, 0, 2000, "10.0.0.2"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PathChanges(ctx, 1, 0, 0, 1<<40); !errors.Is(err, ErrRangeTooLarge) {
+	if _, err := s.PathChanges(ctx, 1, 0, 0, 0, 1<<40); !errors.Is(err, ErrRangeTooLarge) {
 		t.Fatalf("one row over: err = %v, want ErrRangeTooLarge", err)
 	}
 }

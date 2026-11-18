@@ -11,6 +11,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 func readTable(t *testing.T, b []byte) arrow.Table {
@@ -49,14 +50,14 @@ func TestPositionalLossReachesTheBrowser(t *testing.T) {
 	for i := range n {
 		lost := make([]bool, 20)
 		lost[17], lost[18], lost[19] = true, true, true
-		m := store.Measurement{TargetID: 1, TS: 1000 + 60*int64(i), Sent: 20, Received: 17, Samples: make([]uint32, 17)}
+		m := store.Measurement{TargetID: 1, Family: tree.FamilyV4, TS: 1000 + 60*int64(i), Sent: 20, Received: 17, Samples: make([]uint32, 17)}
 		m.LossMask = store.EncodeLossMask(false, lost)
 		if err := st.WriteMeasurements(ctx, []store.Measurement{m}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	ms, err := st.QueryRange(ctx, 1, 0, 1000, 1000+60*n)
+	ms, err := st.QueryRange(ctx, 1, 0, tree.FamilyV4, 1000, 1000+60*n)
 	if err != nil || len(ms) != n {
 		t.Fatalf("%d rows, err %v", len(ms), err)
 	}
@@ -80,7 +81,7 @@ func TestPositionalLossReachesTheBrowser(t *testing.T) {
 
 	// Pooled into two columns of seven intervals each, the flagged 12th to 14th
 	// all fall in the second.
-	_, cols, err := st.QueryColumns(ctx, 1, 0, 1000, 1000+60*n, 2)
+	_, cols, err := st.QueryColumns(ctx, 1, 0, tree.FamilyV4, 1000, 1000+60*n, 2)
 	if err != nil || len(cols) != 2 {
 		t.Fatalf("%d columns, err %v", len(cols), err)
 	}

@@ -41,7 +41,7 @@ func TestIngestMeasurementsKeepsTheFirstWrite(t *testing.T) {
 		t.Fatalf("resubmission: stored=%d err=%v, want nothing stored", len(stored), err)
 	}
 
-	got, err := s.QueryRange(ctx, 1, 4, 0, 1<<40)
+	got, err := s.QueryRange(ctx, 1, 4, 0, 0, 1<<40)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("QueryRange = %d rows, %v", len(got), err)
 	}
@@ -66,7 +66,7 @@ func TestIngestMeasurementsReturnsOnlyWhatItStored(t *testing.T) {
 	if err != nil || len(stored) != 3 || stored[0].TS != 1120 || stored[2].TS != 1240 {
 		t.Fatalf("stored=%+v err=%v, want the 3 new rows among 5", stored, err)
 	}
-	got, err := s.QueryRange(ctx, 1, 4, 0, 1<<40)
+	got, err := s.QueryRange(ctx, 1, 4, 0, 0, 1<<40)
 	if err != nil || len(got) != 5 {
 		t.Fatalf("stored %d rows, want 5 (%v)", len(got), err)
 	}
@@ -83,7 +83,7 @@ func TestWriteMeasurementsStillReplaces(t *testing.T) {
 	if err := s.WriteMeasurements(ctx, []Measurement{rowAt(1000, 9, []uint32{77}, nil)}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.QueryRange(ctx, 1, 4, 0, 1<<40)
+	got, err := s.QueryRange(ctx, 1, 4, 0, 0, 1<<40)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("QueryRange = %d rows, %v", len(got), err)
 	}

@@ -208,7 +208,7 @@ func TestAlertsReplayEndToEnd(t *testing.T) {
 		for k := range sm {
 			sm[k] = 5000
 		}
-		ms = append(ms, store.Measurement{TargetID: leaf.ID, TS: now - int64(60-i)*60, Sent: 10, Received: recv, Samples: sm})
+		ms = append(ms, store.Measurement{TargetID: leaf.ID, Family: tree.FamilyV4, TS: now - int64(60-i)*60, Sent: 10, Received: recv, Samples: sm})
 	}
 	if err := st.WriteMeasurements(ctx, ms); err != nil {
 		t.Fatal(err)
