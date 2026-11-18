@@ -80,14 +80,18 @@ func Availability(points []Point, intervalS int, from, to int64, downThresholdPc
 	}
 
 	var cur *Episode
-	for i, p := range points {
+	var last int64 // start of the previous interval that had data
+	for _, p := range points {
 		if p.Sent <= 0 {
-			// A measurement that sent nothing tells us nothing about reachability.
+			// A measurement that sent nothing tells us nothing about reachability:
+			// the host could not ask, so the interval is unknown, neither up nor
+			// down, and not covered time. It is skipped as a missing one is, and
+			// `last` is not moved, so it ends an open episode like any gap.
 			continue
 		}
-		// A gap since the previous point ends any open episode: the missing
-		// intervals are unknown, not part of the outage.
-		if cur != nil && i > 0 && p.TS-points[i-1].TS > gapTol {
+		// A gap since the previous point with data ends any open episode: the
+		// missing intervals are unknown, not part of the outage.
+		if cur != nil && p.TS-last > gapTol {
 			r.Downtime = append(r.Downtime, *cur)
 			cur = nil
 		}
@@ -106,6 +110,7 @@ func Availability(points []Point, intervalS int, from, to int64, downThresholdPc
 				cur = nil
 			}
 		}
+		last = p.TS
 	}
 	if cur != nil {
 		r.Downtime = append(r.Downtime, *cur)

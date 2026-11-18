@@ -15,6 +15,13 @@ import "github.com/timdebruijn/smokeng/internal/tree"
 func step(r *Rule, st *State, ss *shapeState, m *Input, golden []uint32, app *Applicable) Transition {
 	intervalS := app.IntervalS
 	if r.Metric.IsShape() {
+		// An interval that sent nothing has no shape, and pushing it would put an
+		// empty distribution into the rolling baseline in place of a real one.
+		// Like any interval without a value it breaks continuity and counts
+		// neither way.
+		if m.Sent == 0 {
+			return EvaluateValue(r, st, 0, false, m.RTTTrusted, m.TS, intervalS)
+		}
 		// Shape metrics are computed from history, not from one interval: the
 		// baseline and divergence buffers live in ss, and the value feeds the
 		// same hysteresis every other rule uses.

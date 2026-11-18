@@ -66,7 +66,7 @@ func probeDNS(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 		// connect, or the write itself failed (a firewall REJECT on OUTPUT,
 		// ENOBUFS, an oversized query). That is smokeng's side, not the
 		// resolver's, so it must not read as a healthy resolver going lossy.
-		col.markSendFailed(idx, sendReasonFor(err))
+		col.markSendError(idx, sendReasonFor(err), err)
 		if idx == 0 {
 			log.Printf("probe: target %d (%s): dns query to %s never sent: %v",
 				spec.TargetID, spec.Host, server, err)

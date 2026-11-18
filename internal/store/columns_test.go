@@ -272,3 +272,41 @@ func TestTheSeriesCountTowardsTheWalkBound(t *testing.T) {
 		t.Errorf("10 intervals and 10 series rows against 15: err = %v, want ErrRangeTooLarge", err)
 	}
 }
+
+// Protects a pooled read from turning intervals that sent nothing (no data,
+// with a reason) into loss or coverage: a column made only of them has no
+// probes and no rounds, so it draws as a gap, while its flags and Flagged still
+// say that intervals were stored and not sent; one mixed with real intervals
+// keeps the loss of the probes that were sent and counts only those as rounds.
+func TestQueryColumnsNoDataIsAGapThatKeepsItsFlag(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	reason := SendReasonUnreachable
+	var ms []Measurement
+	for i := range 10 { // 100 s each, two columns of five
+		m := Measurement{TargetID: 1, TS: int64(i * 100)}
+		switch {
+		case i < 5: // the first column: no data throughout
+			m.Flags, m.SendErr = FlagSendFailed, &reason
+		case i == 5: // the second column: one no-data interval among four real ones
+			m.Flags, m.SendErr = FlagSendFailed, &reason
+		default:
+			m.Sent, m.Received, m.Samples = 10, 5, []uint32{1, 2, 3, 4, 5}
+		}
+		ms = append(ms, m)
+	}
+	if err := s.WriteMeasurements(ctx, ms); err != nil {
+		t.Fatal(err)
+	}
+	raw, cols, err := s.QueryColumns(ctx, 1, 0, 0, 0, 1000, 2)
+	if err != nil || raw != nil || len(cols) != 2 {
+		t.Fatalf("raw=%v cols=%d err=%v, want two columns", raw, len(cols), err)
+	}
+	if c := cols[0]; c.Rounds != 0 || c.Sent != 0 || c.Received != 0 || len(c.Quantiles) != 0 ||
+		c.Flags != FlagSendFailed || c.Flagged != 5 {
+		t.Errorf("all no data: %+v, want no rounds or probes, five flagged", c)
+	}
+	if c := cols[1]; c.Rounds != 4 || c.Sent != 40 || c.Received != 20 || c.Flagged != 1 {
+		t.Errorf("mixed: %+v, want 4 rounds, 20/40 replies, one flagged", c)
+	}
+}

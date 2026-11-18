@@ -32,8 +32,11 @@ const (
 // effective agent list includes "local", probes it per bucket, and batches
 // finalized measurements into the store (single writer, DESIGN.md §6).
 type Engine struct {
-	st      store.Store
-	dns     *dnscache.Cache
+	st  store.Store
+	dns *dnscache.Cache
+	// lookup resolves a target's host. It is dns.Lookup, and a field so a test
+	// can make resolution fail without a network.
+	lookup  func(ctx context.Context, host, family string) (netip.Addr, error)
 	alerter *alert.Manager
 
 	results   chan store.Measurement
@@ -79,6 +82,7 @@ func NewEngine(st store.Store, alerter *alert.Manager) (*Engine, error) {
 	return &Engine{
 		st:      st,
 		dns:     dns,
+		lookup:  dns.Lookup,
 		alerter: alerter,
 		results: make(chan store.Measurement, 1024),
 		conns:   map[connKey]*conn{},
@@ -342,12 +346,15 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			return
 		}
 
-		addr, err := e.dns.Lookup(ctx, spec.Host, spec.Family)
+		addr, err := e.lookup(ctx, spec.Host, spec.Family)
 		if err != nil {
-			// No address, no measurement: the gap in the data is the honest
-			// representation (DESIGN.md §8.2).
+			// No address of the target's family: nothing could be asked of it,
+			// which says nothing about the target. The interval is stored as no
+			// data with that reason, through the same path as a finalized one so
+			// alerting and an agent's outbox see it (DESIGN.md §8.2).
 			log.Printf("probe: target %d (%q): resolve: %v", spec.TargetID, spec.Host, err)
 			e.dnsErrs.Add(1)
+			e.emit(noDataRow(spec, bucket, store.SendReasonNoAddress))
 			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
 				return
 			}
@@ -455,16 +462,22 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			if c != nil {
 				c.forget(col)
 			}
-			select {
-			case e.results <- m:
-			default:
-				log.Printf("probe: results backlog full, dropping measurement for target %d", spec.TargetID)
-				e.dropped.Add(1)
-			}
+			e.emit(m)
 		})
 		if aborted {
 			return
 		}
+	}
+}
+
+// emit hands a finalized measurement to the writer, or drops it when the
+// backlog is full.
+func (e *Engine) emit(m store.Measurement) {
+	select {
+	case e.results <- m:
+	default:
+		log.Printf("probe: results backlog full, dropping measurement for target %d", m.TargetID)
+		e.dropped.Add(1)
 	}
 }
 

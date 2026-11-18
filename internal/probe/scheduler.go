@@ -170,6 +170,10 @@ type ping struct {
 	// Why this probe could not be sent, when it could not. See
 	// store.SendReason*; zero means it was not recorded.
 	sendReason uint8
+	// noRoute: this probe failed to send with ENETUNREACH. It is separate from
+	// sendFailed because the tcp and http probes count that error as ordinary
+	// loss unless the whole interval had no route.
+	noRoute bool
 }
 
 func newCollector(n int, late *atomic.Int64) *collector {
@@ -212,6 +216,25 @@ func (c *collector) markSendFailed(idx int, reason uint8) {
 	c.pings[idx].sent = true
 	c.pings[idx].sendFailed = true
 	c.pings[idx].sendReason = reason
+}
+
+// markSendError is markSendFailed for a failure that has an error behind it, so
+// that ENETUNREACH is remembered for finalize.
+func (c *collector) markSendError(idx int, reason uint8, err error) {
+	c.markSendFailed(idx, reason)
+	if isNoRoute(err) {
+		c.markNoRoute(idx)
+	}
+}
+
+// markNoRoute records ENETUNREACH on a probe that was otherwise measured as
+// before: a tcp or http probe counts it as plain loss, and only an interval in
+// which every probe got it becomes no data (see finalize).
+func (c *collector) markNoRoute(idx int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pings[idx].sent = true
+	c.pings[idx].noRoute = true
 }
 
 func (c *collector) onRX(idx int, t time.Time, kernel bool) {
@@ -327,6 +350,7 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	// the loop that builds Samples, so the two cannot disagree: a position is
 	// lost exactly when it was counted in Sent and contributed nothing.
 	lost := make([]bool, len(c.pings))
+	noRoute := 0 // counted probes that failed to send with ENETUNREACH
 	for i := range c.pings {
 		p := &c.pings[i]
 		if !p.sent {
@@ -337,13 +361,16 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 		// already set above; this only decides not to count the probe.)
 		// Counting it as attempted would report loss that never happened, and
 		// a service restart would look like an outage.
-		if cond.truncated && p.rx.IsZero() && !p.sendFailed && p.txUser.After(deadline) {
+		if cond.truncated && p.rx.IsZero() && !p.sendFailed && !p.noRoute && p.txUser.After(deadline) {
 			continue
 		}
 		// A probe the kernel refused to transmit was still attempted, and is
 		// lost. Dropping it from the count would render an unreachable target
 		// as no data at all rather than as total loss.
 		m.Sent++
+		if p.noRoute {
+			noRoute++
+		}
 		lost[i] = true
 		if p.sendFailed {
 			m.Flags |= store.FlagSendFailed
@@ -399,6 +426,15 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 		}
 		m.Samples = append(m.Samples, uint32(us))
 		lost[i] = false
+	}
+	// Every probe of the interval found no route for this family: the host
+	// could not ask the target anything, so the interval says nothing about the
+	// target and is stored as no data rather than as total loss. One probe that
+	// went out, or failed for another reason, keeps the interval as it is. A dead
+	// gateway or lost carrier keeps the routes, so the sends succeed and the
+	// interval is ordinary loss by timeout, which is not this case.
+	if m.Sent > 0 && noRoute == m.Sent {
+		return noDataRow(spec, bucket, store.SendReasonUnreachable)
 	}
 	slices.Sort(m.Samples)
 	m.Received = len(m.Samples)

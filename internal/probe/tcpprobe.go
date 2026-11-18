@@ -35,12 +35,18 @@ func probeTCP(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 		// the target failing — recording it as loss would draw an outage on a
 		// service that may be answering fine. Flag it as ours instead.
 		if isLocalResourceError(err) {
-			col.markSendFailed(idx, sendReasonFor(err))
+			col.markSendError(idx, sendReasonFor(err), err)
 			if idx == 0 {
 				log.Printf("probe: target %d (%s): tcp/%d dial failed locally: %v; "+
 					"counted as sent and lost, flagged not sent", spec.TargetID, spec.Host, spec.ProbePort, err)
 			}
 			return
+		}
+		// ENETUNREACH is this host having no route. It stays loss here, like any
+		// other failed dial, unless every probe of the interval got it; finalize
+		// then stores the interval as no data.
+		if isNoRoute(err) {
+			col.markNoRoute(idx)
 		}
 		// A refusal is a completed round trip to the host, but not to the
 		// service — and the service is what a tcp probe is pointed at, so it

@@ -9,6 +9,7 @@ import (
 	"github.com/heistp/irtt"
 
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // sendReasonFor classifies a failed send.
@@ -21,6 +22,30 @@ import (
 // not enough to tell a network fault from a bug in this prober.
 func sendReasonFor(err error) uint8 {
 	return sendReasonOr(err, store.SendReasonSocket)
+}
+
+// isNoRoute reports ENETUNREACH: the prober's own host has no route for the
+// family. It is kept apart from EHOSTUNREACH, which both map to
+// SendReasonUnreachable in storage, because only the first is a statement about
+// this host. EHOSTUNREACH can be sent back by a router on the path, so it says
+// something about the network and stays loss.
+func isNoRoute(err error) bool {
+	return errors.Is(err, syscall.ENETUNREACH)
+}
+
+// noDataRow is an interval in which the prober could not ask the target
+// anything, for a reason that lies with its own host. Sent is 0, which is what
+// tells it from "N probes attempted, all failed locally": a reader treats it as
+// no data, neither loss nor a clean interval. The flag and reason say why.
+func noDataRow(spec TargetSpec, bucket int64, reason uint8) store.Measurement {
+	return store.Measurement{
+		TargetID: spec.TargetID,
+		AgentID:  store.LocalAgentID,
+		Family:   tree.FamilyOf(spec.Family),
+		TS:       bucket,
+		Flags:    store.FlagSendFailed,
+		SendErr:  &reason,
+	}
 }
 
 // sendReasonOr is sendReasonFor with a caller-chosen answer for an error it

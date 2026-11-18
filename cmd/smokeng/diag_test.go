@@ -505,3 +505,18 @@ func TestLossPatternReadsAnotherFamily(t *testing.T) {
 		t.Errorf("json = %+v", rep)
 	}
 }
+
+// Protects the loss-pattern count from reading an interval that sent nothing
+// (no data, with a reason) as one the target was measured in.
+func TestLossPatternIgnoresNoData(t *testing.T) {
+	reason := store.SendReasonUnreachable
+	rows := tailSeries(5)
+	want := lossPatternOf("local", 0, rows)
+	rows = append(rows, store.Measurement{TargetID: rows[0].TargetID, TS: rows[len(rows)-1].TS + 60,
+		Flags: store.FlagSendFailed, SendErr: &reason})
+	got := lossPatternOf("local", 0, rows)
+	if got.Intervals != want.Intervals || got.WithLoss != want.WithLoss || got.Recorded != want.Recorded {
+		t.Errorf("with a no-data row: %d/%d/%d intervals/with loss/recorded, want %d/%d/%d",
+			got.Intervals, got.WithLoss, got.Recorded, want.Intervals, want.WithLoss, want.Recorded)
+	}
+}
