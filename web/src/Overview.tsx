@@ -15,7 +15,7 @@ import { Stat, ErrorText } from './shared'
 import {
   afterName,
   alertKey,
-  filterByFamily,
+  showsFamily,
   minMax,
   seriesKey,
   seriesLabel,
@@ -61,7 +61,10 @@ export default function Overview({
   family: FamilyChoice
   onOpenDetail: (id: number) => void
 }) {
-  const [rows, setRows] = useState<Row[] | null>(null)
+  // Every series, whatever the family filter says: the filter is applied to
+  // what is drawn, so changing it shows the other rows at once instead of the
+  // old ones until a refetch returns.
+  const [all, setAll] = useState<Row[] | null>(null)
   // Targets that would have a row but for the family filter, to tell an empty
   // overview from one the filter emptied.
   const [targetCount, setTargetCount] = useState(0)
@@ -96,10 +99,7 @@ export default function Overview({
         // from two places, or over two families, is two measurements, and collapsing them here would hide
         // exactly the disagreement a second vantage point exists to reveal —
         // including its quality flags.
-        const series = filterByFamily(
-          leaves.flatMap((t) => resolveSeries(t, byName, ', ')),
-          family,
-        )
+        const series = leaves.flatMap((t) => resolveSeries(t, byName, ', '))
 
         const built = await Promise.all(
           series.map(async (x) => {
@@ -114,7 +114,7 @@ export default function Overview({
           }),
         )
         if (!cancelled) {
-          setRows(built)
+          setAll(built)
           setTargetCount(leaves.length)
         }
       } catch (e) {
@@ -137,8 +137,9 @@ export default function Overview({
     return () => {
       cancelled = true
     }
-  }, [refreshTick, family])
+  }, [refreshTick])
 
+  const rows = all && all.filter((r) => showsFamily(family, r.target, r.family))
   const worst = rows?.reduce((a, r) => Math.max(a, r.loss), 0) ?? 0
   const flagged = rows?.filter((r) => r.flags !== 0).length ?? 0
   const measured = rows?.filter((r) => r.spark.length > 0).length ?? 0

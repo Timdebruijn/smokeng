@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import Plot from './Plot'
 import SeriesPlot from './SeriesPlot'
 import {
@@ -450,10 +450,18 @@ function AvailabilityPanel({ target, families }: { target: Target; families: (Fa
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const familiesKey = families.map(familyKey).join()
+  const reportOf = useRef(familiesKey)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    // When the families shown change, the report on screen is of the ones
+    // shown a moment ago: drop it. For another period or threshold the old
+    // report stays up until the new one is in, as it always did.
+    if (reportOf.current !== familiesKey) {
+      reportOf.current = familiesKey
+      setData(null)
+    }
     const to = Math.floor(Date.now() / 1000)
     const from = to - periodS
     Promise.all(
