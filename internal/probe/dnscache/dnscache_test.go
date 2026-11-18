@@ -114,14 +114,20 @@ func TestRefreshForgetsADefinitivelyMissingRecord(t *testing.T) {
 	}
 }
 
-// Protects the other half: a resolver that fails, times out or answers SERVFAIL
-// or REFUSED says nothing about the name, so the stale address keeps being
-// served.
+// Protects the other half: a resolver that fails, times out, answers SERVFAIL or
+// REFUSED, or sends a truncated answer says nothing about the name, so the
+// stale address keeps being served.
 func TestRefreshKeepsTheStaleAddressWhenResolversFail(t *testing.T) {
 	for name, reply := range map[string]func() (*dns.Msg, error){
 		"timeout":  fail,
 		"SERVFAIL": rcode(dns.RcodeServerFailure),
 		"REFUSED":  rcode(dns.RcodeRefused),
+		// NOERROR with nothing in it, but cut off: not an answer about the name.
+		"truncated": func() (*dns.Msg, error) {
+			m := &dns.Msg{}
+			m.Rcode, m.Truncated = dns.RcodeSuccess, true
+			return m, nil
+		},
 	} {
 		f := newFake("s1")
 		f.reply["s1"] = answerA("192.0.2.1")

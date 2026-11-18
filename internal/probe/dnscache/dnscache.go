@@ -168,6 +168,13 @@ func (c *Cache) resolve(ctx context.Context, host, family string) (netip.Addr, t
 			lastErr = fmt.Errorf("resolver %s answered rcode %d", server, r.Rcode)
 			continue
 		}
+		// A truncated answer is cut off, not complete: its answer section may
+		// be empty for a name that has the record. Read as "no record" it would
+		// now make the cache forget a good address, so it is a failure too.
+		if r.Truncated {
+			lastErr = fmt.Errorf("resolver %s answered truncated", server)
+			continue
+		}
 		for _, rr := range r.Answer {
 			switch a := rr.(type) {
 			case *dns.A:
