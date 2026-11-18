@@ -253,3 +253,56 @@ func TestShapeMemoryIsPerFamily(t *testing.T) {
 		t.Error("v6 was never measured and has a rolling reference: the two families share a shape memory")
 	}
 }
+
+// Protects against an alert that can never clear. A target's family is changed
+// while a rule is firing on it: the old family gets no more intervals, and
+// keyed on the family nothing would ever advance that state again, so it would
+// fire, and be repeated to the webhook, until the rule was deleted. The reload
+// that sees the change ends it, in memory and in the store, so that a restart
+// does not bring it back; the new family then starts clean.
+func TestChangingATargetsFamilyEndsWhatWasFiringOnTheOldOne(t *testing.T) {
+	ctx := context.Background()
+	st, m, leaf, _ := familyManager(t, nil)
+	for step := range 2 {
+		m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV4, step, 10, 0)})
+	}
+	if got := firingBy(m); len(got) != 1 {
+		t.Fatalf("setup: %d alerts firing on v4, want 1", len(got))
+	}
+
+	targets, err := st.ListTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range targets {
+		if targets[i].ID == leaf {
+			targets[i].Host, targets[i].AddressFamily = ptr("2001:db8::1"), ptr("v6")
+			if err := st.UpsertTarget(ctx, &targets[i]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Firing(); len(got) != 0 {
+		t.Errorf("after the family changed, still firing: %+v", got)
+	}
+	// A restart reads the store, and must not find it firing there either.
+	m2 := alert.NewManager(st, nil)
+	if err := m2.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := m2.Firing(); len(got) != 0 {
+		t.Errorf("after a restart the ended alert is back: %+v", got)
+	}
+	// The new family is a series of its own and fires on its own evidence.
+	m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, 2, 10, 0)})
+	if got := m.Firing(); len(got) != 0 {
+		t.Errorf("one bad v6 interval fired a rule that needs two: %+v", got)
+	}
+	m.Observe(ctx, []alert.Input{inputOf(leaf, tree.FamilyV6, 3, 10, 0)})
+	if got := firingBy(m); len(got) != 1 || got[tree.FamilyV6].Family != tree.FamilyV6 {
+		t.Errorf("two bad v6 intervals: firing %+v, want the v6 alert alone", got)
+	}
+}

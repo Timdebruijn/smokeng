@@ -157,6 +157,33 @@ func (m *Manager) Reload(ctx context.Context) error {
 			kept[key] = live
 		}
 	}
+	// A target whose family was changed is no longer measured over the old one,
+	// so no interval will ever arrive to clear what was firing there: keyed on
+	// the family, that alert would fire, and be repeated to the webhook, for
+	// good. Its series has ended; so does its state. No resolve is sent, since
+	// nothing recovered: Alertmanager expires an alert it stops hearing about.
+	//
+	// This sees a change made while the manager runs, by comparing with what the
+	// last reload resolved. One made while the master is stopped it cannot see,
+	// and that alert stays until its rule is removed; telling a family a target
+	// is no longer measured over from one it is, as a standing rule, has to wait
+	// until a target can say it has two.
+	var ended []State
+	for key, st := range kept {
+		was, known := m.byTarget[key.targetID]
+		now, still := resolved[key.targetID]
+		if !known || !still || was.Family == now.Family || key.family != was.Family {
+			continue
+		}
+		if st.Firing {
+			e := *st
+			e.Firing, e.Since, e.Streak = false, 0, 0
+			e.AckedSince, e.AckedAt, e.AckedBy = 0, 0, ""
+			ended = append(ended, e)
+		}
+		delete(kept, key)
+		delete(m.shapes, key)
+	}
 	// Drop the shape memory of rules that no longer exist, so it does not grow
 	// without bound as rules come and go.
 	for key := range m.shapes {
@@ -173,6 +200,13 @@ func (m *Manager) Reload(ctx context.Context) error {
 	// database. It is safe because a create or delete also writes through here.
 	m.silences = silences
 	m.mu.Unlock()
+	// Stored as cleared rather than left as it was: a row still marked firing
+	// would come back as a firing alert at the next restart.
+	if len(ended) > 0 {
+		if err := m.st.SaveAlertStates(ctx, ended); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

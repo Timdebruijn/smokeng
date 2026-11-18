@@ -329,6 +329,13 @@ matching. Adding a label makes Alertmanager see every alert as a new one once: a
 firing across the upgrade shows up a second time, and the old one expires after Alertmanager's
 resolve timeout.
 
+Changing a target's `address_family` ends whatever was firing on the old family: that series
+gets no more intervals, so nothing could ever clear it. No resolve is sent, since nothing
+recovered; Alertmanager expires the alert when it stops being repeated. The new family starts
+clean. This is done by the running master when it sees the change. If the family is changed
+while the master is stopped (an offline `config import`), an alert that was firing then stays
+listed until its rule is deleted and created again.
+
 **Where the URL lives.** A webhook URL is often the credential: a token in the path, a key
 in the query, a user and password before the host. `--alert-webhook` puts it in the
 process list, readable by every local user, so smokeng warns when it is used; put the URL
