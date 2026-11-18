@@ -53,14 +53,21 @@ func TestAnAgentMeasuresATargetExactlyAsTheMasterWould(t *testing.T) {
 	if err := master.UpsertTarget(ctx, &group); err != nil {
 		t.Fatal(err)
 	}
-	leaf := func(name, host string, s tree.Settings) int64 {
+	leafOf := func(name, host, family string, s tree.Settings) int64 {
 		t.Helper()
-		n := tree.Target{ParentID: &group.ID, Name: name, Host: new(host), AddressFamily: new("v4"), Enabled: true, Settings: s}
+		n := tree.Target{ParentID: &group.ID, Name: name, Host: new(host), AddressFamily: new(family), Enabled: true, Settings: s}
 		if err := master.UpsertTarget(ctx, &n); err != nil {
 			t.Fatal(err)
 		}
 		return n.ID
 	}
+	leaf := func(name, host string, s tree.Settings) int64 {
+		t.Helper()
+		return leafOf(name, host, "v4", s)
+	}
+	// A target measured over both: the agent has the feature (it is new), so it
+	// must measure the same two series, field by field, as the master.
+	bothID := leafOf("both", "dual.example.net", "both", tree.Settings{PingsPerInterval: new(9), TimeoutMS: new(700)})
 	ids := []int64{
 		leaf("icmp", "192.0.2.1", tree.Settings{
 			PingsPerInterval: new(7), ProbeMode: new("spread"), BurstGapMS: new(25),
@@ -94,20 +101,26 @@ func TestAnAgentMeasuresATargetExactlyAsTheMasterWould(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range ids {
-		w, ok := want[probe.SpecKey{TargetID: id, Family: "v4"}]
+	check := func(id int64, family string) {
+		t.Helper()
+		w, ok := want[probe.SpecKey{TargetID: id, Family: family}]
 		if !ok {
-			t.Fatalf("target %d: the master would not measure it", id)
+			t.Fatalf("target %d %s: the master would not measure it", id, family)
 		}
-		g, ok := got[probe.SpecKey{TargetID: id, Family: "v4"}]
+		g, ok := got[probe.SpecKey{TargetID: id, Family: family}]
 		if !ok {
-			t.Errorf("target %d: the agent would not measure it", id)
-			continue
+			t.Errorf("target %d %s: the agent would not measure it", id, family)
+			return
 		}
 		if !reflect.DeepEqual(g, w) {
-			t.Errorf("target %d: the agent would measure\n%+v\nwhere the master would measure\n%+v", id, g, w)
+			t.Errorf("target %d %s: the agent would measure\n%+v\nwhere the master would measure\n%+v", id, family, g, w)
 		}
 	}
+	for _, id := range ids {
+		check(id, "v4")
+	}
+	check(bothID, "v4")
+	check(bothID, "v6")
 
 	// Every field of a spec is away from its zero value on some target, so
 	// each one was actually carried rather than agreeing by both being empty.

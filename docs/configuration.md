@@ -91,8 +91,9 @@ them would hide exactly the problem you are looking for. A target set to `both` 
 series, each stored, graphed and alerted on by itself; two targets, one `v4` and one `v6`,
 remain possible and mean the same.
 
-`both` is measured by the master's own prober. A remote agent measures a `both` target over
-IPv4 only (see [Agents](agents.md#versions)). On a host with no route for one family, or a name
+`both` is measured by the master's own prober, and by a remote agent of the version that added
+`X-Agent-Features` or later; an older agent measures it over IPv4 only (see
+[Agents](agents.md#versions)). On a host with no route for one family, or a name
 with no record of it, that family's series is no data, which is the expected result and not an
 error (see [What loss means](probes.md#what-loss-means)). A `both` target is probed twice, once
 per family, and counts twice against the [limits](#limits).

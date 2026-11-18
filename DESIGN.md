@@ -173,8 +173,10 @@ Notes:
 - Address families are separate series, never averaged or pooled. A dual-stack host is one
   target with `address_family = 'both'` (schema v30; it needs a hostname, since a literal
   address has one family) or two targets, one per family. A `both` target is measured by the
-  master's prober as two series with the same target id. Remote agents measure it over IPv4
-  only, and the assignment endpoint sends it to them as `v4`.
+  master's prober as two series with the same target id. A remote agent measures it
+  over both families when its target request carries `X-Agent-Features: both` (not signed, like
+  `X-Agent-Version`), and the assignment endpoint then sends `both`; to any other agent it sends
+  `v4`, since an older agent refuses a family it does not know and drops its whole target sync.
 - `received` is deliberately denormalized (derivable from the blob) so loss queries never
   decode blobs. On any discrepancy the blob is authoritative.
 - 100% loss still writes a row (`received = 0`, empty sample section) — the loss rail
@@ -996,7 +998,8 @@ contact with 100 agents. Note that SmokePing's version of this feature is genuin
 horrifying — slaves have no local config at all and *eval Perl code sent by the master*
 (remote code execution as a design pattern) — and is presumably what the ban is aimed at.
 The proposed narrow version shares none of that: agents poll
-`GET /api/v1/agent/targets` (authenticated with the same Ed25519 request signing) and
+`GET /api/v1/agent/targets` (authenticated with the same Ed25519 request signing; an optional
+`X-Agent-Features` header lists what the agent can measure, today `both`) and
 receive pure data — their assigned targets with resolved effective settings, nothing
 else, never code, pull-only, master remains the single source of truth. Decision
 (2026-08-29): exactly this is allowed; the ban stands for everything beyond it.

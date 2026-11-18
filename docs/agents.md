@@ -217,11 +217,23 @@ an older agent says nothing and its rows go under the target's current family. R
 other than the ones the target is measured over are stored and can be read with `family=`, but
 alert rules do not evaluate them.
 
-An agent measures a target with `address_family = "both"` over IPv4 only, for now. The master's
-assignment sends such a target as `v4`: an agent of any released version refuses a value it does
-not know and then drops its whole target sync. Its rows are v4, and the v6 series of that target
-has data from the master's own prober only.
-Downgrades are not supported.
+An agent asks for its targets with the request header `X-Agent-Features: both`, a comma-separated
+list of feature words (a master ignores a word it does not know). The header is not covered by the
+signature, like `X-Agent-Version`: a wrong value only changes what that same agent is sent. The
+master sends a target with `address_family = "both"` as `both` to an agent that said so, and as
+`v4` to any other: an older agent refuses a value it does not know and then drops its whole target
+sync.
+
+An agent of this version or later therefore measures a `both` target over both families, as two
+series whose rows and path changes state their family. An older agent measures it over IPv4 only,
+and the v6 series of that target has data from the master's own prober only. An agent on a host
+without a route for one family stores and submits that family as intervals without data, with
+the send reason the master shows as `no route to the target`; they are drawn as a gap and count
+as neither loss nor a clean interval ([Probes](probes.md#what-loss-means)).
+
+Downgrades are not supported. An agent put back to an older version while its local store holds
+a `both` target measures nothing until its first successful pull, which replaces the target by
+what the master sends that version: `v4`.
 
 ## How the protocol works
 
