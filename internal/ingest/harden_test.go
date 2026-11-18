@@ -33,6 +33,7 @@ func oneRow(t *testing.T, seriesLen int, opts ...ipc.Option) []byte {
 	field[*array.Uint16Builder](t, rb, "icmp_error").AppendNull()
 	field[*array.Uint8Builder](t, rb, "send_error").AppendNull()
 	field[*array.BinaryBuilder](t, rb, "loss_mask").AppendNull()
+	field[*array.Uint8Builder](t, rb, "family").AppendNull()
 	for i, name := range store.KnownSeries {
 		sl := field[*array.ListBuilder](t, rb, name)
 		if i > 0 || seriesLen < 0 {
@@ -188,6 +189,7 @@ func TestDecodeBatchNormalisesUnsortedValues(t *testing.T) {
 	field[*array.Uint16Builder](t, rb, "icmp_error").AppendNull()
 	field[*array.Uint8Builder](t, rb, "send_error").AppendNull()
 	field[*array.BinaryBuilder](t, rb, "loss_mask").AppendNull()
+	field[*array.Uint8Builder](t, rb, "family").AppendNull()
 	sl := field[*array.ListBuilder](t, rb, store.SeriesIPDVSend)
 	sl.Append(true)
 	sl.ValueBuilder().(*array.Int32Builder).AppendValues([]int32{5, -3, 1}, nil)
@@ -262,6 +264,7 @@ func TestDecodeBatchRefusesOversizedDecompression(t *testing.T) {
 		field[*array.Uint16Builder](t, rb, "icmp_error").AppendNull()
 		field[*array.Uint8Builder](t, rb, "send_error").AppendNull()
 		field[*array.BinaryBuilder](t, rb, "loss_mask").AppendNull()
+		field[*array.Uint8Builder](t, rb, "family").AppendNull()
 		for _, name := range store.KnownSeries {
 			field[*array.ListBuilder](t, rb, name).AppendNull()
 		}

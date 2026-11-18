@@ -108,7 +108,13 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		case m.TS > horizon:
 			future++
 		default:
-			m.Family = family
+			// A row that says which family it was measured over keeps it, so a
+			// backlog delivered after the target changed family is filed where it
+			// belongs. One that does not (an older agent, or history the agent could
+			// not place) is the target's family today, as it always was.
+			if m.Family == tree.FamilyUnknown {
+				m.Family = family
+			}
 			kept = append(kept, m)
 		}
 	}
@@ -132,7 +138,20 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	s.evaluate(r.Context(), stored)
+	// The rules run on what the target is measured over now. A row of another
+	// family is true and stays readable, but a state kept for it would have no
+	// later interval to clear it, so it is stored and not evaluated.
+	current := make([]store.Measurement, 0, len(stored))
+	for _, m := range stored {
+		if m.Family == assigned[m.TargetID] {
+			current = append(current, m)
+		}
+	}
+	s.evaluate(r.Context(), current)
+	if n := len(stored) - len(current); n > 0 {
+		log.Printf("ingest: agent %q submitted %d measurement(s) of a family other than their target's current one; "+
+			"those were stored without being evaluated by alert rules", agent.Name, n)
+	}
 	dup := len(measurements) - len(stored)
 	if dup > 0 {
 		log.Printf("ingest: agent %q resubmitted %d measurement(s) already stored; kept as they were",
@@ -246,8 +265,9 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 }
 
 // assignedTargets is the set a given agent may submit for, with the family each
-// is measured over now. A submission does not say which family it was measured
-// over, so what it is stored under is the family the target has today.
+// is measured over now. A submission that does not say which family a row was
+// measured over is stored under that, and a row that does is judged against it
+// to decide whether alert rules see it.
 func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int64]tree.Family, error) {
 	targets, err := s.st.ListTargets(ctx)
 	if err != nil {
@@ -377,6 +397,9 @@ func (s *server) handleAgentPaths(w http.ResponseWriter, r *http.Request) {
 			TargetID int64    `json:"target_id"`
 			TS       int64    `json:"ts"`
 			Hops     []string `json:"hops"`
+			// Optional "v4" or "v6". Raw, so that a value of the wrong type is read
+			// as none stated rather than failing the whole submission.
+			Family json.RawMessage `json:"family"`
 		} `json:"paths"`
 	}
 	if err := json.Unmarshal(body, &sub); err != nil || len(sub.Paths) > maxPathsPerSubmission {
@@ -398,6 +421,9 @@ func (s *server) handleAgentPaths(w http.ResponseWriter, r *http.Request) {
 			dropped++
 			continue
 		}
+		if stated := pathFamily(p.Family); stated != tree.FamilyUnknown {
+			family = stated
+		}
 		kept = append(kept, store.PathChange{TargetID: p.TargetID, Family: family, TS: p.TS, Hops: strings.Join(p.Hops, ",")})
 	}
 	if dropped > 0 {
@@ -411,6 +437,21 @@ func (s *server) handleAgentPaths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": len(kept) - dup, "duplicates": dup})
+}
+
+// pathFamily reads a path change's optional family: "v4" and "v6" are
+// themselves, and anything else (absent, null, a misspelling, a number) is
+// none stated, so the master decides, as it does for a measurement whose
+// family column it cannot read. The change is kept either way.
+func pathFamily(raw json.RawMessage) tree.Family {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return tree.FamilyUnknown
+	}
+	if f, _ := tree.ParseFamily(s); f == tree.FamilyV4 || f == tree.FamilyV6 {
+		return f
+	}
+	return tree.FamilyUnknown
 }
 
 // validHops is a hop list as trace.Path.String writes one: at least one hop,

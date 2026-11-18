@@ -392,6 +392,12 @@ less (`loss_mask` is one more such column: agents older than the release that ad
 send none). Both are pinned by tests, because this is the kind of property that is easy to
 believe and easy to break.
 
+`family` is one more optional column: the address family (4 or 6) a row was measured over,
+null when the agent cannot say. A newer agent with an older master: the master ignores the
+column and files the rows under the target's current family, as before. An older agent with
+a newer master: no column, the same. Both new: the row's own family. Path changes follow the
+same rule with an optional `"family": "v4"|"v6"` in each change.
+
 The rule that keeps it true is that **a column added to the batch format must be
 optional**. Making one required would refuse every older agent's batch, and an
 agent discards a batch the master calls undecodable — that is deliberate, since

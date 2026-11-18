@@ -931,7 +931,12 @@ to a target assigned to this agent and not be timestamped later than the skew al
 A row that fails those last two, or that claims more replies than probes, is dropped and
 the rest accepted — a 400 makes the agent discard its whole batch, so one bad row must not
 cost the rest. The batch carries `loss_mask` (§3.4) as an optional nullable `Binary` column
-beside `send_error`; the master checks each mask against its row's `sent` and `received`,
+beside `send_error`. So does `family` (`Uint8`, 4 or 6, null when the agent's store holds the
+row as unknown): the master files a row under the family it states, and under the target's current
+family when it states none or a value that is not a family; the row is kept either way, as it is
+when a mask does not fit. A row of a family other
+than the target's current one is stored but not handed to alerting, since a state kept for it
+would have no later interval to clear it. The master checks each mask against its row's `sent` and `received`,
 and against the part of the prober's rule a row can show (its flags, and that the loss is
 partial), and drops a mask that fails either, keeping the row and logging one line per
 batch. It cannot check the rest: the probe type and the configured number of probes are
@@ -999,7 +1004,8 @@ timeline, and the smoke is left to speak for itself.
 **From every vantage point (v0.26.0).** A remote agent discovers paths as the master's
 prober does (the parity rule, §9) and sends the changes on a route of their own,
 `POST /api/v1/agent/paths`, as signed JSON; the master stores them under the agent's id,
-so each series carries its own marks. A separate message rather than a column in the
+so each series carries its own marks, filed under the optional `"family"` (`"v4"` or `"v6"`) of
+each change, or the target's current family without one or with a value that is neither. A separate message rather than a column in the
 measurement batch: changes are rare and small, and a second message type would widen
 what the batch's frame screen accepts. The rules are the batch's — assigned targets only,
 nothing from the future, a bad row dropped, first write wins. The agent keeps the last
