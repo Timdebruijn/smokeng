@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useState } from 'react'
 import { useAction, ErrorText } from './shared'
-import { alertKey, seriesLabel } from './util'
+import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
   deleteAlertRule,
@@ -121,8 +121,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                     <td>
                       <code>{a.target}</code>
                       <span className="hint small" style={{ whiteSpace: 'nowrap' }}>
-                        {' '}
-                        · {seriesLabel(a.agent, a.family)}
+                        {afterName(seriesLabel(a.agent, a.family))}
                       </span>
                     </td>
                     <td>
@@ -160,14 +159,14 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                               ? 'Un-acknowledge'
                               : 'Acknowledge — the alert keeps firing, it just stops demanding attention'
                           }
-                          aria-label={`${a.acked ? 'Un-acknowledge' : 'Acknowledge'} ${a.rule} on ${a.target}, ${seriesLabel(a.agent, a.family)}`}
+                          aria-label={`${a.acked ? 'Un-acknowledge' : 'Acknowledge'} ${alertName(a)}`}
                           onClick={() => void ackAlert(a)}
                         >
                           {a.acked ? 'un-acknowledge' : 'acknowledge'}
                         </button>
                         {!a.silenced && (
                           <SilenceQuick
-                            label={`${a.rule} on ${a.target}, ${seriesLabel(a.agent, a.family)}`}
+                            label={alertName(a)}
                             onSilence={(duration_s) =>
                               void run(() =>
                                 createSilence({
@@ -655,7 +654,7 @@ function AlertHistory() {
                 <td className="hint">{e.describes}</td>
                 <td>
                   <code>{e.target}</code>
-                  <span className="hint small"> · {e.family}</span>
+                  <span className="hint small">{afterName(e.family)}</span>
                 </td>
                 <td className="mono">{new Date(e.ts * 1000).toLocaleString()}</td>
               </tr>

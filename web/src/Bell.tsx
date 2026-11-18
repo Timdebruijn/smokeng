@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { alertKey, seriesLabel } from './util'
+import { afterName, alertKey, alertName, seriesLabel } from './util'
 import { acknowledgeAlert, fetchFiringAlerts, type FiringAlert } from './api'
 
 /**
@@ -105,7 +105,8 @@ export default function Bell({
                       {a.rule} — {a.describes}
                     </span>
                     <span className="hint small mono">
-                      {a.target} · {seriesLabel(a.agent, a.family)}
+                      {a.target}
+                      {afterName(seriesLabel(a.agent, a.family))}
                       {a.since ? ` · since ${new Date(a.since * 1000).toLocaleTimeString()}` : ''}
                       {a.silenced ? ' · silenced' : a.acked && a.acked_by ? ` · ack ${a.acked_by}` : ''}
                     </span>
@@ -116,7 +117,7 @@ export default function Bell({
                     <button
                       className="pill small"
                       title={a.acked ? 'Un-acknowledge' : 'Acknowledge — still fires, just stops nagging'}
-                      aria-label={`${a.acked ? 'Un-acknowledge' : 'Acknowledge'} ${a.rule} on ${a.target}, ${seriesLabel(a.agent, a.family)}`}
+                      aria-label={`${a.acked ? 'Unacknowledge' : 'Acknowledge'} ${alertName(a)}`}
                       onClick={() => void ack(a)}
                     >
                       {a.acked ? 'unack' : 'ack'}

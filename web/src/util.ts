@@ -208,3 +208,18 @@ export function alertKey(a: {
 export function seriesLabel(agent: string | undefined, family: string | undefined): string {
   return [agent, family].filter((x) => x).join(' · ')
 }
+
+/**
+ * A label as what follows a name, " · local · v4", and nothing at all when
+ * there is no label, so that a row never ends in a separator with nothing
+ * after it.
+ */
+export function afterName(label: string | undefined): string {
+  return label ? ` · ${label}` : ''
+}
+
+/** "loss on /Production/web, local · v4": one alert, named for a control that acts on it. */
+export function alertName(a: { rule: string; target: string; agent?: string; family?: string }): string {
+  const series = seriesLabel(a.agent, a.family)
+  return `${a.rule} on ${a.target}${series ? `, ${series}` : ''}`
+}

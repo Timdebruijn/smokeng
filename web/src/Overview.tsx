@@ -12,7 +12,7 @@ import {
 } from './api'
 import { fmtLoss, fmtUs } from './format'
 import { Stat, ErrorText } from './shared'
-import { alertKey, minMax, seriesLabel, REFRESH_MS, resolveSeries, summarise } from './util'
+import { afterName, alertKey, minMax, seriesLabel, REFRESH_MS, resolveSeries, summarise } from './util'
 
 const WINDOW_S = 3600
 
@@ -266,7 +266,8 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
                     {a.rule}
                   </span>
                   <span className="hint small">
-                    {a.describes} on <code>{a.target}</code> · {seriesLabel(a.agent, a.family)}
+                    {a.describes} on <code>{a.target}</code>
+                    {afterName(seriesLabel(a.agent, a.family))}
                   </span>
                 </div>
               ))
@@ -288,7 +289,8 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
                   />
                   <span className="activity-what">
                     <strong>{e.firing ? 'fired' : 'cleared'}</strong> · {e.rule} on{' '}
-                    <code>{e.target}</code> · {e.family}
+                    <code>{e.target}</code>
+                    {afterName(e.family)}
                   </span>
                   <span className="activity-when">{rel(e.ts)}</span>
                 </div>
