@@ -4,10 +4,13 @@ import { setCursor, subscribeCursor } from './crosshair'
 import { fmtUs } from './format'
 import { AXIS_W, fmtClock, fmtSigned, fmtWhen, inferSpan, rowAt } from './layout'
 import { useRenderWorker, useWidth } from './shared'
+import type { Family } from './util'
 
 interface Props {
   targetId: number
   agentId: number
+  /** Which of a both target's two series; unset for any other. */
+  family?: Family
   name: SeriesName
   from: number
   to: number
@@ -30,6 +33,7 @@ const HEIGHT = 150
 export default function SeriesPlot({
   targetId,
   agentId,
+  family,
   name,
   from,
   to,
@@ -54,7 +58,7 @@ export default function SeriesPlot({
   // stretched it to the new width, so an excursion sat visually at one time
   // while the crosshair, which measures the live element, reported another.
   const width = useWidth(wrapRef)
-  const workerRef = useRenderWorker(canvasRef, `series ${targetId}/${name}`)
+  const workerRef = useRenderWorker(canvasRef, `series ${targetId}${family ? `/${family}` : ''}/${name}`)
   const label = SERIES_LABELS[name]
 
   useEffect(() => {
@@ -67,7 +71,7 @@ export default function SeriesPlot({
     const cssW = wrapRef.current?.clientWidth || width
     const columns = Math.round(cssW * dpr) - Math.round(AXIS_W * dpr)
     if (cssW === 0 || columns <= 0) return
-    fetchSeries(targetId, agentId, from, to, columns)
+    fetchSeries(targetId, agentId, from, to, columns, family)
       .then((s) => {
         if (cancelled || !workerRef.current) return
         const ex = s.extra[name]
@@ -132,7 +136,7 @@ export default function SeriesPlot({
       })
       .catch((e: Error) => {
         if (cancelled) return
-        console.error(`series ${targetId}/${name}:`, e)
+        console.error(`series ${targetId}${family ? `/${family}` : ''}/${name}:`, e)
         rowsRef.current = null
         setReadout(null)
         setState('error')
@@ -141,7 +145,7 @@ export default function SeriesPlot({
     return () => {
       cancelled = true
     }
-  }, [targetId, agentId, name, from, to, width])
+  }, [targetId, agentId, family, name, from, to, width])
 
   // The shared cursor: one crosshair across every stacked plot.
   useEffect(() => {
@@ -223,6 +227,7 @@ export default function SeriesPlot({
     <figure className="series-plot">
       <figcaption>
         <strong>{label?.title ?? name}</strong>
+        {family && <span className="agent">{family}</span>}
         <span className="series-help">{label?.help}</span>
         {readout && <span className="series-readout">{readout}</span>}
       </figcaption>

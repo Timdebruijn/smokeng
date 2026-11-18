@@ -9,10 +9,21 @@ import Palette from './Palette'
 import A11yMenu, { useA11y, type A11yState } from './A11y'
 import Bell from './Bell'
 import Compare, { type CompareSeries } from './Compare'
+import FamilyFilter, { useFamilyChoice } from './Family'
 import Grants from './Grants'
 import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
-import { RANGES, fromLocalInput, resolveSeries, toLocalInput, type PlotSeries } from './util'
+import {
+  RANGES,
+  filterByFamily,
+  fromLocalInput,
+  resolveSeries,
+  seriesKey,
+  seriesLabel,
+  toLocalInput,
+  type FamilyChoice,
+  type PlotSeries,
+} from './util'
 import { ErrorText, useTimeWindow } from './shared'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
@@ -24,6 +35,7 @@ export default function App() {
   // and the one underneath cannot be reached without closing the other.
   const [menu, setMenu] = useState<HeaderMenu>(null)
   const [a11y, toggleA11y] = useA11y()
+  const [family, setFamily] = useFamilyChoice()
   // Which target the detail screen is showing. Detail is reached from a plot,
   // never from the tab bar, so it is not one of the tabs.
   const [detailId, setDetailId] = useState<number | null>(null)
@@ -75,6 +87,8 @@ export default function App() {
         onMenu={setMenu}
         a11y={a11y}
         onToggleA11y={toggleA11y}
+        family={family}
+        onFamily={setFamily}
         onOpenPalette={() => setPaletteOpen(true)}
       />
       {paletteOpen && (
@@ -93,15 +107,16 @@ export default function App() {
       {/* Keyed by what is shown, so after a failure the next screen starts clean. */}
       <ErrorBoundary key={view === 'detail' ? `detail-${detailId}` : view} what={view === 'detail' ? 'this target' : `the ${view} screen`}>
       {view === 'overview' ? (
-        <Overview onOpenDetail={openDetail} />
+        <Overview family={family} onOpenDetail={openDetail} />
       ) : view === 'detail' && detailId !== null ? (
         <DetailRoute
           targetId={detailId}
+          family={family}
           onBack={() => setView('graphs')}
           onEdit={() => setView('targets')}
         />
       ) : view === 'graphs' ? (
-        <Graphs onOpenDetail={openDetail} />
+        <Graphs family={family} onOpenDetail={openDetail} />
       ) : view === 'targets' ? (
         <Admin readOnly={!isAdmin} />
       ) : view === 'alerts' ? (
@@ -154,6 +169,8 @@ function AppHeader({
   onOpenPalette,
   a11y,
   onToggleA11y,
+  family,
+  onFamily,
   menu,
   onMenu,
 }: {
@@ -164,6 +181,8 @@ function AppHeader({
   onOpenPalette: () => void
   a11y: A11yState
   onToggleA11y: (k: keyof A11yState) => void
+  family: FamilyChoice
+  onFamily: (c: FamilyChoice) => void
   menu: HeaderMenu
   onMenu: (m: HeaderMenu) => void
 }) {
@@ -211,6 +230,7 @@ function AppHeader({
           <span>Search</span>
           <kbd>⌘K</kbd>
         </button>
+        <FamilyFilter choice={family} onChange={onFamily} />
         <A11yMenu
           state={a11y}
           onToggle={onToggleA11y}
@@ -257,7 +277,7 @@ function AppHeader({
   )
 }
 
-function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
+function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: (id: number) => void }) {
   const [targets, setTargets] = useState<Target[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -319,17 +339,24 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
   const spanLabel = `${fmtSpan(to - from)} · ${when(from)} → ${when(to)}`
 
   const byName = new Map(agents.map((a) => [a.name, a.id]))
-  const series = shown.flatMap((t) => resolveSeries(t, byName))
+  // The filter decides which families are drawn; it never changes what is measured.
+  const series = filterByFamily(
+    shown.flatMap((t) => resolveSeries(t, byName)),
+    family,
+  )
 
   // A series with no enrolled agent has nothing to draw, and a legend entry
   // for an empty line would be a target that looks compared and is not.
   const comparable: CompareSeries[] = series
     .filter((s): s is PlotSeries & { agentId: number } => s.agentId !== null)
     .map((s) => ({
-      key: `${s.target.id}-${s.agentId}`,
-      label: (s.target.title ?? s.target.name) + (s.agentName ? ` (${s.agentName})` : ''),
+      key: seriesKey(s.target.id, s.agentId, s.family),
+      label:
+        (s.target.title ?? s.target.name) +
+        (seriesLabel(s.agentName, s.family) ? ` (${seriesLabel(s.agentName, s.family)})` : ''),
       targetId: s.target.id,
       agentId: s.agentId,
+      family: s.family,
     }))
 
   return (
@@ -430,8 +457,11 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
             with <code>smokeng config import-smokeping</code>.
           </p>
         )}
-        {!error && leaves.length > 0 && series.length === 0 && (
+        {!error && leaves.length > 0 && shown.length === 0 && (
           <div className="card empty">No targets selected — check some in the target list.</div>
+        )}
+        {!error && shown.length > 0 && series.length === 0 && (
+          <div className="card empty">The selected targets are hidden by the family filter.</div>
         )}
         {compareOn && comparable.length > 0 && (
           <Compare
@@ -458,10 +488,11 @@ function Graphs({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
             />
           ) : (
             <Plot
-              key={`${s.target.id}-${s.agentId}`}
+              key={seriesKey(s.target.id, s.agentId, s.family)}
               target={s.target}
               agentId={s.agentId}
               agentName={s.agentName}
+              family={s.family}
               from={from}
               to={to}
               refreshKey={refreshKey}
@@ -594,10 +625,12 @@ function TargetSidebar({
 // does; loading them here keeps it reachable by id alone.
 function DetailRoute({
   targetId,
+  family,
   onBack,
   onEdit,
 }: {
   targetId: number
+  family: FamilyChoice
   onBack: () => void
   onEdit: () => void
 }) {
@@ -609,7 +642,7 @@ function DetailRoute({
   }, [])
   const target = targets.find((t) => t.id === targetId)
   if (!target) return <p className="hint">Loading…</p>
-  return <Detail target={target} agents={agents} onBack={onBack} onEdit={onEdit} />
+  return <Detail target={target} agents={agents} family={family} onBack={onBack} onEdit={onEdit} />
 }
 
 function fmtSpan(seconds: number): string {

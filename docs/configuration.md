@@ -98,8 +98,9 @@ with no record of it, that family's series is no data, which is the expected res
 error (see [What loss means](probes.md#what-loss-means)). A `both` target is probed twice, once
 per family, and counts twice against the [limits](#limits).
 
-For now the web UI's graphs show the IPv4 series of a `both` target. The IPv6 series is read
-through the API (`family=v6`, see [api.md](api.md)) or the CLI (`--family v6`).
+The web UI's graphs show both series of a `both` target, v4 above v6 (see
+[Reading the graphs](reading-graphs.md#a-target-measured-over-both-families)). The API reads one
+with `family=v6` (see [api.md](api.md)) and the CLI with `--family v6`.
 
 ## Inheritance
 

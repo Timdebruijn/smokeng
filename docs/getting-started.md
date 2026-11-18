@@ -82,7 +82,14 @@ address_family = "v4"
 [targets."Internet/quad9-v4"]
 host = "9.9.9.9"
 address_family = "v4"
+
+[targets."Internet/cloudflare-dns"]
+host = "one.one.one.one"
+address_family = "both"
 ```
+
+`one.one.one.one` is a hostname measured over IPv4 and over IPv6 as two series, which the graphs
+draw as two plots, v4 above v6.
 
 Load it into the database:
 

@@ -7,6 +7,7 @@ import {
   type PathChange,
   type Target,
 } from './api'
+import type { Family } from './util'
 import { setCursor, subscribeCursor } from './crosshair'
 import { positionalTitle, replyLines } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt } from './layout'
@@ -18,6 +19,8 @@ interface Props {
   agentId: number
   /** Shown only when more than one agent measures the target. */
   agentName?: string
+  /** Which of a both target's two series this is; unset for any other. */
+  family?: Family
   from: number
   to: number
   refreshKey?: number
@@ -199,6 +202,7 @@ export default function Plot({
   target,
   agentId,
   agentName,
+  family,
   from,
   to,
   refreshKey,
@@ -359,7 +363,7 @@ export default function Plot({
     const cssW = stackRef.current?.clientWidth || width
     const columns = Math.round(cssW * dpr) - Math.round(AXIS_W * dpr)
     if (cssW === 0 || columns <= 0) return
-    fetchSeries(target.id, agentId, from, to, columns)
+    fetchSeries(target.id, agentId, from, to, columns, family)
       .then((series) => {
         if (cancelled || !workerRef.current) return
         setFetchError(null)
@@ -428,7 +432,7 @@ export default function Plot({
 
     // Route changes are a separate, much smaller fetch; a failure here must
     // not stop the smoke rendering.
-    fetchPathChanges(target.id, agentId, from, to)
+    fetchPathChanges(target.id, agentId, from, to, family)
       .then((changes) => {
         if (cancelled) return
         pathsRef.current = changes
@@ -440,7 +444,7 @@ export default function Plot({
     return () => {
       cancelled = true
     }
-  }, [target.id, target.path, agentId, from, to, refreshKey, logScale, width, drawOverlay])
+  }, [target.id, target.path, agentId, family, from, to, refreshKey, logScale, width, drawOverlay])
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -492,6 +496,8 @@ export default function Plot({
         <span className="host">
           {target.host} · {target.address_family}
         </span>
+        {/* As text, next to the host: the two plots of a both target look alike. */}
+        {family && <span className="agent">{family}</span>}
         {agentName && <span className="agent">from {agentName}</span>}
         {quality.map((q) => (
           <span key={q.label} className="quality" title={q.title}>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import Plot from './Plot'
 import SeriesPlot from './SeriesPlot'
 import {
@@ -16,12 +16,23 @@ import {
 } from './api'
 import { fmtLoss, fmtUs } from './format'
 import { Stat, ErrorText, useTimeWindow } from './shared'
-import { RANGES, csvCell, summarise } from './util'
+import {
+  RANGES,
+  csvCell,
+  seriesLabel,
+  shownFamilies,
+  summarise,
+  type Family,
+  type FamilyChoice,
+} from './util'
 
 // `types` limits a row to the probe types it means something for, the same way
 // the admin form does. A packet size on an http target is not a setting with
 // an unusual value; it is a setting that does nothing, and listing it under
 // "effective settings" would claim otherwise.
+// The key of one family's figures: empty for the one series of a single-family target.
+const familyKey = (f?: Family) => f ?? ''
+
 const SETTING_LABELS: {
   key: keyof Target['settings']
   label: string
@@ -87,16 +98,19 @@ const SETTING_LABELS: {
 export default function Detail({
   target,
   agents,
+  family,
   onBack,
   onEdit,
 }: {
   target: Target
   agents: AgentInfo[]
+  family: FamilyChoice
   onBack: () => void
   onEdit: () => void
 }) {
   const { rangeS, from, to, refreshKey, live, zoom, setZoom, pickRange, toggleLive } = useTimeWindow()
-  const [stats, setStats] = useState<ReturnType<typeof summarise> | null>(null)
+  // Per family, under the key familyKey gives: a both target has two sets of figures.
+  const [stats, setStats] = useState<Record<string, ReturnType<typeof summarise> | null>>({})
   const [rules, setRules] = useState<AlertRule[]>([])
 
   const probeType = String(target.settings.probe_type.effective || 'icmp')
@@ -105,22 +119,27 @@ export default function Detail({
   // Null rather than 0: falling back to the local prober would show one
   // vantage point's measurements under another's name.
   const agentId = byName.get(agentNames[0]) ?? null
+  // One entry (family unset) for a single-family target; v4 then v6 for a both
+  // target, less what the filter hides.
+  const families = shownFamilies(target, family)
+  const familiesKey = families.map(familyKey).join()
 
   useEffect(() => {
-    if (agentId === null) {
-      setStats(null)
-      return
-    }
+    if (agentId === null) return
     let cancelled = false
-    // One column: the server pools the whole window, so these are taken over
-    // every sample in it (its 256 quantiles past that many), at any length.
-    fetchSeries(target.id, agentId, from, to, 1)
-      .then((s) => !cancelled && setStats(summarise(s)))
-      .catch(() => !cancelled && setStats(null))
+    for (const f of families) {
+      // One column: the server pools the whole window, so these are taken over
+      // every sample in it (its 256 quantiles past that many), at any length.
+      fetchSeries(target.id, agentId, from, to, 1, f)
+        .then((s) => !cancelled && setStats((o) => ({ ...o, [familyKey(f)]: summarise(s) })))
+        .catch(() => !cancelled && setStats((o) => ({ ...o, [familyKey(f)]: null })))
+    }
     return () => {
       cancelled = true
     }
-  }, [target.id, agentId, from, to])
+    // familiesKey stands for families, which is a new array on every render.
+  }, [target.id, agentId, familiesKey, from, to])
+  const shownStats = agentId === null ? [] : families.map((f) => stats[familyKey(f)]).filter((s) => s != null)
 
   useEffect(() => {
     fetchAlertRules()
@@ -141,7 +160,13 @@ export default function Detail({
       <div className="detail-head">
         <span
           className="dot"
-          style={{ background: stats && stats.sent > 0 ? (stats.loss > 0 ? 'var(--warn)' : 'var(--good)') : 'var(--dim)' }}
+          style={{
+            background: shownStats.some((s) => s.sent > 0)
+              ? shownStats.some((s) => s.loss > 0)
+                ? 'var(--warn)'
+                : 'var(--good)'
+              : 'var(--dim)',
+          }}
         />
         <h1>{target.title ?? target.path}</h1>
         {/* The probe type belongs on the identity line, not buried in the
@@ -166,23 +191,36 @@ export default function Detail({
         </p>
       )}
 
-      <div className="stat-grid">
-        <Stat label="Median" value={stats?.median != null ? fmtUs(stats.median) : '—'} />
-        <Stat label="p95" value={stats?.p95 != null ? fmtUs(stats.p95) : '—'} />
-        <Stat
-          label="Spread (p95−p5)"
-          value={stats?.spread != null ? fmtUs(stats.spread) : '—'}
-          title="The width of the distribution. A link whose median is unchanged but whose spread has tripled is degrading."
-        />
-        <Stat
-          label="Loss"
-          // Nothing sent in the window (no address, no route) is no data, not a
-          // loss of 0%.
-          value={stats && stats.sent > 0 ? fmtLoss(stats.loss) : '—'}
-          tone={stats && stats.loss > 0 ? 'bad' : undefined}
-        />
-      </div>
+      {families.length === 0 ? (
+        <p className="hint">This target's series are hidden by the family filter.</p>
+      ) : (
+        families.map((f) => {
+          const st = agentId === null ? null : stats[familyKey(f)]
+          return (
+            <Fragment key={familyKey(f)}>
+              {f && <p className="family-label">{f}</p>}
+              <div className="stat-grid">
+                <Stat label="Median" value={st?.median != null ? fmtUs(st.median) : '—'} />
+                <Stat label="p95" value={st?.p95 != null ? fmtUs(st.p95) : '—'} />
+                <Stat
+                  label="Spread (p95−p5)"
+                  value={st?.spread != null ? fmtUs(st.spread) : '—'}
+                  title="The width of the distribution. A link whose median is unchanged but whose spread has tripled is degrading."
+                />
+                <Stat
+                  label="Loss"
+                  // Nothing sent in the window (no address, no route) is no data, not a
+                  // loss of 0%.
+                  value={st && st.sent > 0 ? fmtLoss(st.loss) : '—'}
+                  tone={st && st.loss > 0 ? 'bad' : undefined}
+                />
+              </div>
+            </Fragment>
+          )
+        })
+      )}
 
+      {families.length > 0 && (
       <div className="card detail-plot">
         <div className="detail-plot-head">
           <span className="hint small">
@@ -218,30 +256,39 @@ export default function Detail({
             measuring this target.
           </p>
         ) : (
-          <Plot
-            target={target}
-            agentId={agentId}
-            from={from}
-            to={to}
-            refreshKey={refreshKey}
-            logScale
-            onZoom={(f, t) => setZoom({ from: f, to: t })}
-          />
+          // The families one under the other, v4 first, each with its own
+          // extra series and route marks; they share the window and, through
+          // the crosshair bus, the cursor.
+          families.map((f) => (
+            <Fragment key={familyKey(f)}>
+              <Plot
+                target={target}
+                agentId={agentId}
+                family={f}
+                from={from}
+                to={to}
+                refreshKey={refreshKey}
+                logScale
+                onZoom={(zf, zt) => setZoom({ from: zf, to: zt })}
+              />
+              {selectedSeries(target).map((name) => (
+                <SeriesPlot
+                  key={name}
+                  targetId={target.id}
+                  agentId={agentId}
+                  family={f}
+                  name={name}
+                  from={from}
+                  to={to}
+                />
+              ))}
+            </Fragment>
+          ))
         )}
-        {agentId !== null &&
-          selectedSeries(target).map((name) => (
-            <SeriesPlot
-              key={name}
-              targetId={target.id}
-              agentId={agentId}
-              name={name}
-              from={from}
-              to={to}
-            />
-          ))}
       </div>
+      )}
 
-      <AvailabilityPanel target={target} />
+      {families.length > 0 && <AvailabilityPanel target={target} families={families} />}
 
       <div className="detail-columns">
         <div className="card panel">
@@ -391,19 +438,25 @@ function selectedSeries(target: Target): SeriesName[] {
   return SERIES_NAMES.filter((n) => want.has(n))
 }
 
-function AvailabilityPanel({ target }: { target: Target }) {
+function AvailabilityPanel({ target, families }: { target: Target; families: (Family | undefined)[] }) {
   const [periodS, setPeriodS] = useState(7 * 86400)
   const [strict, setStrict] = useState(true) // strict = down only at 100% loss
-  const [data, setData] = useState<AvailabilityResponse | null>(null)
+  // One response per family: a single unset one for a single-family target.
+  const [data, setData] = useState<{ family?: Family; res: AvailabilityResponse }[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const familiesKey = families.map(familyKey).join()
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     const to = Math.floor(Date.now() / 1000)
     const from = to - periodS
-    fetchAvailability(target.id, from, to, strict ? 100 : 50)
+    Promise.all(
+      families.map((family) =>
+        fetchAvailability(target.id, from, to, strict ? 100 : 50, family).then((res) => ({ family, res })),
+      ),
+    )
       .then((d) => {
         if (cancelled) return
         setData(d)
@@ -414,27 +467,34 @@ function AvailabilityPanel({ target }: { target: Target }) {
     return () => {
       cancelled = true
     }
-  }, [target.id, periodS, strict])
+    // familiesKey stands for families, which is a new array on every render.
+  }, [target.id, periodS, strict, familiesKey])
 
   const exportCSV = () => {
     if (!data) return
+    // A family column only where there is more than one family to tell apart,
+    // so the file of a single-family target is what it always was.
+    const withFamily = data.some((d) => d.family)
     const rows: (string | number)[][] = [
-      ['target', 'agent', 'availability', 'coverage', 'up_s', 'down_s', 'unknown_s', 'outages'],
+      ['target', ...(withFamily ? ['family'] : []), 'agent', 'availability', 'coverage', 'up_s', 'down_s', 'unknown_s', 'outages'],
     ]
-    for (const a of data.agents) {
-      const r = a.report
-      rows.push([
-        data.target,
-        a.agent,
-        r.availability,
-        r.coverage,
-        r.up_s,
-        r.down_s,
-        r.unknown_s,
-        r.downtime.length,
-      ])
+    for (const { family, res } of data) {
+      for (const a of res.agents) {
+        const r = a.report
+        rows.push([
+          res.target,
+          ...(withFamily ? [family ?? ''] : []),
+          a.agent,
+          r.availability,
+          r.coverage,
+          r.up_s,
+          r.down_s,
+          r.unknown_s,
+          r.downtime.length,
+        ])
+      }
     }
-    const name = `availability-${data.target.replace(/[^\w-]+/g, '_')}.csv`
+    const name = `availability-${data[0].res.target.replace(/[^\w-]+/g, '_')}.csv`
     downloadCSV(name, rows)
   }
 
@@ -460,7 +520,7 @@ function AvailabilityPanel({ target }: { target: Target }) {
           >
             down: {strict ? '100% loss' : '>50% loss'}
           </button>
-          <button className="pill" onClick={exportCSV} disabled={!data}>
+          <button className="pill" onClick={exportCSV} disabled={!data || data.length === 0}>
             Download CSV
           </button>
         </span>
@@ -469,15 +529,17 @@ function AvailabilityPanel({ target }: { target: Target }) {
       {error && <ErrorText>{error}</ErrorText>}
       {loading && !data ? (
         <p className="hint">Loading…</p>
-      ) : !data || data.agents.length === 0 ? (
+      ) : !data || data.every((d) => d.res.agents.length === 0) ? (
         <p className="hint">No vantage point is measuring this target.</p>
       ) : (
-        data.agents.map((a) => {
+        data.flatMap(({ family, res }) =>
+          res.agents.map((a) => ({ family, a })),
+        ).map(({ family, a }) => {
           const r = a.report
           return (
-            <div key={a.agent_id} className="avail-agent">
+            <div key={`${a.agent_id}${family ? `-${family}` : ''}`} className="avail-agent">
               <div className="avail-head">
-                <span className="agent">{a.agent}</span>
+                <span className="agent">{seriesLabel(a.agent, family)}</span>
                 {!r.has_data && <span className="hint small">no data in this period</span>}
               </div>
               {r.has_data && (

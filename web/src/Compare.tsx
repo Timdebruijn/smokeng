@@ -3,6 +3,7 @@ import { fetchSeries, type Series } from './api'
 import { fmtUs } from './format'
 import { gapsBefore } from './layout'
 import { useWidth } from './shared'
+import type { Family } from './util'
 
 /**
  * Several series' pooled medians on one axis.
@@ -47,6 +48,7 @@ export interface CompareSeries {
   label: string
   targetId: number
   agentId: number
+  family?: Family
 }
 
 /**
@@ -110,7 +112,7 @@ export default function Compare({
     if (columns <= 0) return
     Promise.all(
       series.map((s) =>
-        fetchSeries(s.targetId, s.agentId, from, to, columns)
+        fetchSeries(s.targetId, s.agentId, from, to, columns, s.family)
           .then((r) => [s.key, medians(r)] as const)
           .catch(() => [s.key, null] as const),
       ),

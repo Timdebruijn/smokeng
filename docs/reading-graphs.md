@@ -159,11 +159,29 @@ that says so; ask for less.
 Whatever protects the UI protects the API, and there are no API tokens. See
 [Authentication](authentication.md).
 
+## A target measured over both families
+
+A target with `address_family = "both"` is two series per vantage point, and the graphs draw
+them as two plots, v4 directly above v6. Each plot names its family in its title row. They
+share the time axis and the crosshair, so a point in time reads the same on both.
+
+The **family** buttons in the header, `v4`, `v6` and `v4 + v6`, choose which series are shown.
+`v6` hides every IPv4 series, including those of targets that are only measured over IPv4, and
+`v4` the other way round; `v4 + v6` is the default. The choice applies to the graphs, the
+overview, the detail view and the compare overlay, not to the alert views or the Targets page,
+and it is remembered in this browser. When it hides everything a page would show, the page says
+so.
+
+A host or network without one of the families shows that family as no data: a gap in the smoke
+with the `not sent` badge, not an empty plot and not loss.
+
 ## The detail view
 
 Clicking a target opens it at length: the pooled median, p95 and spread (p95 − p5) over the
 window on screen, computed from the same samples the plot draws, above a full-height smoke
-plot and the target's effective settings, alert rules and vantage points.
+plot and the target's effective settings, alert rules and vantage points. For a target
+measured over both families the figures, the plot, any extra plots, the route-change marks and
+the availability are shown once per family, each labelled `v4` or `v6`.
 
 ![A target's detail page: median, p95 and spread figures above a large density-smoke plot of
 a target whose latency keeps splitting into two bands](images/detail.png)
@@ -191,7 +209,8 @@ Beneath them is the list of **outages**: each contiguous run of down intervals, 
 start, end and duration — the evidence, not just the headline. **Download CSV** exports the
 per-vantage-point summary for a report.
 
-The CSV has one row per vantage point: target, agent, availability, coverage, and up, down
+The CSV has one row per vantage point (per vantage point and family, with a family column, for
+a target measured over both): target, agent, availability, coverage, and up, down
 and unknown seconds, plus the number of outages. It does not list the outages; those are on
 the page and in the API response.
 
@@ -221,7 +240,8 @@ is worse". Only the median is drawn; the distribution stays in the plots below.
 shared axis in distinct colours, with a legend naming them](images/compare.png)
 
 *Compare. Vantage points are never averaged — a target measured from two agents is two
-lines, exactly as it is two plots.*
+lines, exactly as it is two plots. The two families of a target measured over both are two
+lines too, each labelled `v4` or `v6` in the legend.*
 
 ## Quality badges
 
