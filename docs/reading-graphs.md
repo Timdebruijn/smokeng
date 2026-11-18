@@ -255,7 +255,8 @@ The dot before a plot's target name is yellow when a badge is there and green wh
 two exceptions that are shown and do not turn it yellow: `positional loss`, which says
 something about the target and not about the measurement, and `userspace TX` / `userspace RX`
 on a `tcp`, `http(s)` or `irtt` target, where they are on every interval that got a reply.
-The overview's "Flagged" figure counts series the same way.
+On the overview a row's dot is red on loss and grey without data first, and otherwise follows
+the same rule; its "Flagged" figure counts series by it too.
 
 | Badge | Meaning | What to do |
 | --- | --- | --- |
