@@ -6,6 +6,7 @@ import {
   afterName,
   alertKey,
   alertName,
+  countedFlags,
   csvCell,
   filterByFamily,
   parseFamilyChoice,
@@ -265,4 +266,20 @@ test('the two families of one window are two in-flight requests', async () => {
     globalThis.fetch = real
   }
   assert.equal(urls.length, 2)
+})
+
+test('countedFlags leaves out the userspace pair only where the probe type always carries it', () => {
+  // irtt, tcp and http(s) are timed in userspace on every interval.
+  for (const type of ['irtt', 'tcp', 'http', 'https']) {
+    assert.equal(countedFlags(0b11, type), 0, type)
+    assert.equal(countedFlags(0b01, type), 0, type)
+    // Anything else on the same interval still counts: dropped replies, a clock step.
+    assert.equal(countedFlags(0b11 | (1 << 3), type), 1 << 3, type)
+    assert.equal(countedFlags(1 << 5, type), 1 << 5, type)
+  }
+  // icmp and dns are stamped by the kernel, so there the pair means that failed.
+  for (const type of ['icmp', 'dns', '', undefined, null]) {
+    assert.equal(countedFlags(0b11, type), 0b11, String(type))
+    assert.equal(countedFlags(0b10, type), 0b10, String(type))
+  }
 })

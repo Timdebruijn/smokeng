@@ -15,6 +15,7 @@ import { Stat, ErrorText } from './shared'
 import {
   afterName,
   alertKey,
+  countedFlags,
   showsFamily,
   minMax,
   seriesKey,
@@ -141,7 +142,10 @@ export default function Overview({
 
   const rows = all && all.filter((r) => showsFamily(family, r.target, r.family))
   const worst = rows?.reduce((a, r) => Math.max(a, r.loss), 0) ?? 0
-  const flagged = rows?.filter((r) => r.flags !== 0).length ?? 0
+  // The userspace pair on tcp, http(s) and irtt is not counted: see countedFlags.
+  const counted = (r: { flags: number; target: Target }) =>
+    countedFlags(r.flags, r.target.settings.probe_type.effective)
+  const flagged = rows?.filter((r) => counted(r) !== 0).length ?? 0
   const measured = rows?.filter((r) => r.spark.length > 0).length ?? 0
 
   return (
@@ -224,7 +228,7 @@ export default function Overview({
                           ? 'var(--dim)'
                           : r.loss > 0
                             ? 'var(--bad)'
-                            : r.flags !== 0
+                            : counted(r) !== 0
                               ? 'var(--warn)'
                               : 'var(--good)',
                       }}
@@ -339,7 +343,7 @@ export default function Overview({
             <h2>Measurement quality</h2>
             <p className="hint small">
               A number is only worth the conditions it was taken under. Series carrying flags in the
-              last hour:
+              last hour, not counting the userspace timing every tcp, http(s) and irtt probe has:
             </p>
             {flagged === 0 ? (
               <p className="quiet-line">
