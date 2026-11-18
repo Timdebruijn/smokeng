@@ -8,6 +8,7 @@ package dnscache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -24,6 +25,12 @@ const (
 	queryTimeout = 5 * time.Second
 )
 
+// ErrNoRecord is a resolver's definitive answer that the name has no record of
+// the wanted type: NOERROR or NXDOMAIN with nothing of that type in the answer.
+// A resolver that failed, timed out or answered SERVFAIL or REFUSED says
+// nothing about the name and is not this.
+var ErrNoRecord = errors.New("no record")
+
 type key struct {
 	host   string
 	family string
@@ -39,6 +46,9 @@ type entry struct {
 type Cache struct {
 	client  *dns.Client
 	servers []string
+	// exchange asks one server. It is client.Exchange, and a field so a test can
+	// give the resolver an answer without a network.
+	exchange func(ctx context.Context, m *dns.Msg, server string) (*dns.Msg, error)
 
 	mu      sync.Mutex
 	entries map[key]*entry
@@ -61,9 +71,14 @@ func New() (*Cache, error) {
 	for _, s := range conf.Servers {
 		servers = append(servers, net.JoinHostPort(s, port))
 	}
+	client := dns.NewClient()
 	return &Cache{
-		client:  dns.NewClient(),
+		client:  client,
 		servers: servers,
+		exchange: func(ctx context.Context, m *dns.Msg, server string) (*dns.Msg, error) {
+			r, _, err := client.Exchange(ctx, m, "udp", server)
+			return r, err
+		},
 		entries: map[key]*entry{},
 	}, nil
 }
@@ -113,8 +128,16 @@ func (c *Cache) refresh(k key) {
 	defer c.mu.Unlock()
 	e := c.entries[k]
 	e.refreshing = false
+	if errors.Is(err, ErrNoRecord) {
+		// The record is gone. Serving the old address would probe something the
+		// name no longer points at, so forget it: the next Lookup resolves
+		// again and returns the error.
+		delete(c.entries, k)
+		return
+	}
 	if err != nil {
-		// Keep serving the stale address; retry after the minimum TTL.
+		// No resolver gave an answer about the name: keep serving the stale
+		// address and retry after the minimum TTL.
 		e.expires = time.Now().Add(minTTL)
 		return
 	}
@@ -133,10 +156,16 @@ func (c *Cache) resolve(ctx context.Context, host, family string) (netip.Addr, t
 	var lastErr error
 	for _, server := range c.servers {
 		qctx, cancel := context.WithTimeout(ctx, queryTimeout)
-		r, _, err := c.client.Exchange(qctx, m, "udp", server)
+		r, err := c.exchange(qctx, m, server)
 		cancel()
 		if err != nil {
 			lastErr = err
+			continue
+		}
+		// Only NOERROR and NXDOMAIN answer the question. SERVFAIL, REFUSED and
+		// the rest are this server failing, so the next one is tried.
+		if r.Rcode != dns.RcodeSuccess && r.Rcode != dns.RcodeNameError {
+			lastErr = fmt.Errorf("resolver %s answered rcode %d", server, r.Rcode)
 			continue
 		}
 		for _, rr := range r.Answer {
@@ -151,7 +180,7 @@ func (c *Cache) resolve(ctx context.Context, host, family string) (netip.Addr, t
 				}
 			}
 		}
-		return netip.Addr{}, 0, fmt.Errorf("dnscache: no %s record for %s", recordName(family), host)
+		return netip.Addr{}, 0, fmt.Errorf("dnscache: %w: no %s record for %s", ErrNoRecord, recordName(family), host)
 	}
 	return netip.Addr{}, 0, fmt.Errorf("dnscache: all resolvers failed for %s: %w", host, lastErr)
 }
