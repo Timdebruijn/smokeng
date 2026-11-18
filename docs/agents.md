@@ -211,6 +211,11 @@ master records it and does not check it. Master and agents may be upgraded in ei
 the master reads batch columns by name, and the agent discards a column the master does not
 know. Path changes need a master of v0.26.0 or later: an older one does not ask for them, and
 an agent then discovers none. See [Upgrades](operations.md#compatibility-between-master-and-agents).
+Each measurement and path change carries the address family it was measured over, so a backlog
+delivered after a target's family was changed is filed under the family it was measured over;
+an older agent says nothing and its rows go under the target's current family. Rows of a family
+other than the target's current one are stored and can be read with `family=`, but alert rules
+do not evaluate them.
 Downgrades are not supported.
 
 ## How the protocol works

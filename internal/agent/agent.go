@@ -372,14 +372,22 @@ func (a *Agent) pushPaths(ctx context.Context) {
 		if len(batch) == 0 {
 			return
 		}
+		// Family is the one the change was recorded under: "v4" or "v6", left
+		// out when the store holds it as unknown, so the master files it under
+		// the target's current family as it does for an older agent.
 		type wire struct {
 			TargetID int64    `json:"target_id"`
 			TS       int64    `json:"ts"`
 			Hops     []string `json:"hops"`
+			Family   string   `json:"family,omitempty"`
 		}
 		out := make([]wire, 0, len(batch))
 		for _, c := range batch {
-			out = append(out, wire{TargetID: c.TargetID, TS: c.TS, Hops: strings.Split(c.Hops, ",")})
+			w := wire{TargetID: c.TargetID, TS: c.TS, Hops: strings.Split(c.Hops, ",")}
+			if c.Family == tree.FamilyV4 || c.Family == tree.FamilyV6 {
+				w.Family = c.Family.String()
+			}
+			out = append(out, w)
 		}
 		body, err := json.Marshal(map[string]any{"paths": out})
 		if err != nil {

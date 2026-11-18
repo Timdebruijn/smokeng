@@ -12,6 +12,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 
 	"github.com/timdebruijn/smokeng/internal/store"
+	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
 // BatchSchema is the wire format for a submission: the measurement schema the
@@ -32,6 +33,11 @@ var BatchSchema = arrow.NewSchema([]arrow.Field{
 	// Which probes of the interval were lost, in send order (store.LossMask).
 	// Optional on the wire for the same reason; null when none was recorded.
 	{Name: "loss_mask", Type: arrow.BinaryTypes.Binary, Nullable: true},
+	// The address family the row was measured over: 4 or 6, null when the agent's
+	// store cannot say (history its v28 migration could not place). Optional on
+	// the wire like the two above; absent or null leaves the choice to the master,
+	// which then files the row under the target's current family.
+	{Name: "family", Type: arrow.PrimitiveTypes.Uint8, Nullable: true},
 	// The extra per-packet series, one nullable column each. Null means the
 	// probe did not measure it — an irtt peer that returns no timestamps, or
 	// any other probe type, for which these are simply not a thing. An empty
@@ -63,10 +69,11 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 	icmpB := rb.Field(6).(*array.Uint16Builder)
 	sendErrB := rb.Field(7).(*array.Uint8Builder)
 	maskB := rb.Field(8).(*array.BinaryBuilder)
+	familyB := rb.Field(9).(*array.Uint8Builder)
 	seriesB := make([]*array.ListBuilder, len(seriesColumns))
 	seriesV := make([]*array.Int32Builder, len(seriesColumns))
 	for i := range seriesColumns {
-		seriesB[i] = rb.Field(9 + i).(*array.ListBuilder)
+		seriesB[i] = rb.Field(10 + i).(*array.ListBuilder)
 		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
 	}
 
@@ -92,6 +99,11 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 			maskB.Append(m.LossMask)
 		} else {
 			maskB.AppendNull()
+		}
+		if m.Family == tree.FamilyV4 || m.Family == tree.FamilyV6 {
+			familyB.Append(uint8(m.Family))
+		} else {
+			familyB.AppendNull()
 		}
 		for i, name := range seriesColumns {
 			vals, ok := m.Series[name]
@@ -241,6 +253,13 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 				return nil, fmt.Errorf("ingest: column \"loss_mask\" is not binary")
 			}
 		}
+		var families *array.Uint8
+		if c := col("family"); c != nil {
+			var ok bool
+			if families, ok = c.(*array.Uint8); !ok {
+				return nil, fmt.Errorf("ingest: column \"family\" is not uint8")
+			}
+		}
 		// IsNull indexes the validity bitmap without checking its length, and
 		// the reader does not check it either, so a bitmap shorter than its
 		// column is an out-of-range panic on the first row.
@@ -254,6 +273,11 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 		}
 		if masks != nil {
 			if err := checkValidity("loss_mask", masks); err != nil {
+				return nil, err
+			}
+		}
+		if families != nil {
+			if err := checkValidity("family", families); err != nil {
 				return nil, err
 			}
 		}
@@ -326,6 +350,18 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 			}
 			if sendErrs != nil && !sendErrs.IsNull(i) {
 				m.SendErr = new(sendErrs.Value(i))
+			}
+			// Only 4 and 6 are families. Anything else is not a row to guess at: the
+			// batch is refused, as for any column that is not what the schema says,
+			// and the column and value are named.
+			if families != nil && !families.IsNull(i) {
+				switch f := tree.Family(families.Value(i)); f {
+				case tree.FamilyV4, tree.FamilyV6:
+					m.Family = f
+				default:
+					return nil, fmt.Errorf("ingest: target %d at %d: column \"family\" is %d, want 4 or 6",
+						m.TargetID, m.TS, families.Value(i))
+				}
 			}
 			// A mask comes from another machine and is checked against this row's
 			// own counts. One that does not fit is dropped and the row kept:
