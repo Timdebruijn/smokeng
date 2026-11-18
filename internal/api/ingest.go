@@ -112,8 +112,8 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 			// backlog delivered after the target changed family is filed where it
 			// belongs. One that does not (an older agent, or history the agent could
 			// not place) is the target's default family today, as it always was:
-			// v4 for a target measured over both, which is all an agent measures
-			// of one for now.
+			// v4 for a target measured over both, which is all an older agent
+			// measures of one.
 			if m.Family == tree.FamilyUnknown {
 				m.Family = families[0]
 			}
@@ -213,6 +213,9 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	// The header is not covered by the request signature, as X-Agent-Version is
+	// not: a wrong value only changes what this same agent is sent.
+	canBoth := agentFeatures(r.Header, "both")
 	out := []map[string]any{}
 	for i := range targets {
 		n := &targets[i]
@@ -232,11 +235,11 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 			"target_id": n.ID,
 			"path":      path,
 			"host":      *n.Host,
-			// A target measured over both goes out as v4. An agent of any released
-			// version refuses an address_family it does not know and then drops its
-			// whole target sync, and no agent can measure two families yet; the
-			// master's own prober measures both.
-			"address_family": n.Family().String(),
+			// A target measured over both goes out as both only to an agent that
+			// said it can measure it. An agent of an older version refuses an
+			// address_family it does not know and then drops its whole target
+			// sync, so everything else gets v4, as before.
+			"address_family": assignedFamily(n, canBoth),
 			"interval_s":     res.IntervalS.Effective,
 			"pings":          res.PingsPerInterval.Effective,
 			"probe_mode":     res.ProbeMode.Effective,
@@ -268,6 +271,27 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 		cas = append(cas, string(pem))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"targets": out, "ca_certificates": cas})
+}
+
+// agentFeatures reports whether the comma-separated X-Agent-Features header
+// lists word. Other words are ignored, so a later feature can join the list
+// without an older master misreading it.
+func agentFeatures(h http.Header, word string) bool {
+	for _, f := range strings.Split(strings.Join(h.Values("X-Agent-Features"), ","), ",") {
+		if strings.TrimSpace(f) == word {
+			return true
+		}
+	}
+	return false
+}
+
+// assignedFamily is the address_family sent to an agent: both only for an
+// agent that can measure it, the target's default family otherwise.
+func assignedFamily(n *tree.Target, canBoth bool) string {
+	if canBoth && n.AddressFamily != nil && *n.AddressFamily == tree.AddressFamilyBoth {
+		return tree.AddressFamilyBoth
+	}
+	return n.Family().String()
 }
 
 // assignedTargets is the set a given agent may submit for, with the families

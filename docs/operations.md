@@ -421,6 +421,20 @@ answers 400, and the agent discards that batch (`agent: master could not decode 
 in the agent's log) instead of retrying it forever. Those measurements are lost. When a
 release changes the batch format, upgrade the master first.
 
+**A `both` target needs both sides to be new.** An agent says it can measure one with the
+request header `X-Agent-Features: both` when it asks for its targets, and the master sends the
+target as `both` only to such an agent:
+
+| Master | Agent | A `both` target is measured by the agent over |
+|---|---|---|
+| new | new | IPv4 and IPv6, as two series |
+| new | old | IPv4 only: no header, so the master sends `v4` |
+| old | new | IPv4 only: the master ignores the header and sends `v4` |
+| old | old | IPv4 only |
+
+No combination refuses an assignment, so either side may be upgraded first. The master's own
+prober measures both families in every case.
+
 **Path changes need both sides at v0.26.0.** The master asks for them through
 `trace_interval_s` in the assignments, and an agent discovers paths only when its master
 asked. An older master never asks, so a newer agent traces nothing; a newer master asks an

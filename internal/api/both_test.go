@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -66,30 +67,71 @@ func TestBothWithAHostnameRoundTrips(t *testing.T) {
 	}
 }
 
-// Protects the agents against a value they cannot read. An agent of any
-// released version refuses an address_family it does not know and then drops
-// its whole target sync, so a target measured over both is sent as v4, the one
-// family an agent measures of it.
-func TestAgentAssignmentSendsABothTargetAsV4(t *testing.T) {
-	h, st, agentID, key, mine, _ := ingestFixture(t)
-	tg := tree.Target{ID: mine, ParentID: new(int64(1)), Name: "mine", Enabled: true,
-		Host: new("mine.example.net"), AddressFamily: new("both"), Settings: tree.Settings{Agents: new("ams")}}
-	if err := st.UpsertTarget(t.Context(), &tg); err != nil {
+// assignedFamilies asks for the agent's targets, sending the given
+// X-Agent-Features headers (none when empty), and returns each target's
+// address_family by id.
+func assignedFamilies(t *testing.T, h http.Handler, id int64, key ed25519.PrivateKey, features ...string) map[int64]string {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/v1/agent/targets", nil)
+	if err := ingest.Sign(req, id, key, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest("GET", "/api/v1/agent/targets", nil)
-	if err := ingest.Sign(req, agentID, key, nil, time.Now()); err != nil {
-		t.Fatal(err)
+	for _, f := range features {
+		req.Header.Add("X-Agent-Features", f)
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	var body struct {
-		Targets []map[string]any `json:"targets"`
+		Targets []struct {
+			ID     int64  `json:"target_id"`
+			Family string `json:"address_family"`
+		} `json:"targets"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Targets) != 1 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("assignments: %v, %s", err, rec.Body)
 	}
-	if got := body.Targets[0]["address_family"]; got != "v4" {
-		t.Errorf("address_family = %v, want v4", got)
+	out := map[int64]string{}
+	for _, tg := range body.Targets {
+		out[tg.ID] = tg.Family
+	}
+	return out
+}
+
+// Protects the agents against a value they cannot read, and the agents that
+// can read it. An agent of an older version refuses an address_family it does
+// not know and then drops its whole target sync, so a target measured over
+// both is sent as both only to an agent that listed "both" in
+// X-Agent-Features (whatever else the list holds, in any order, with spaces),
+// and as v4 to every other. A v4 or v6 target is never affected by the header.
+func TestAgentAssignmentSendsBothOnlyToAnAgentThatSaidItCan(t *testing.T) {
+	h, st, agentID, key, mine, _ := ingestFixture(t)
+	tg := tree.Target{ID: mine, ParentID: new(int64(1)), Name: "mine", Enabled: true,
+		Host: new("mine.example.net"), AddressFamily: new("both"), Settings: tree.Settings{Agents: new("ams")}}
+	v6 := tree.Target{ParentID: new(int64(1)), Name: "six", Enabled: true,
+		Host: new("2001:db8::1"), AddressFamily: new("v6"), Settings: tree.Settings{Agents: new("ams")}}
+	v4 := tree.Target{ParentID: new(int64(1)), Name: "four", Enabled: true,
+		Host: new("192.0.2.1"), AddressFamily: new("v4"), Settings: tree.Settings{Agents: new("ams")}}
+	for _, n := range []*tree.Target{&tg, &v6, &v4} {
+		if err := st.UpsertTarget(t.Context(), n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		name     string
+		features []string
+		both     string
+	}{
+		{"no header", nil, "v4"},
+		{"both", []string{"both"}, "both"},
+		{"both among other words, spaced, any order", []string{"future-thing , both ,other"}, "both"},
+		{"both in a second header line", []string{"other", "both"}, "both"},
+		{"unknown words only", []string{"future-thing,other"}, "v4"},
+		{"a word that merely contains both", []string{"bothways,notboth"}, "v4"},
+		{"empty header", []string{""}, "v4"},
+	} {
+		got := assignedFamilies(t, h, agentID, key, c.features...)
+		if got[tg.ID] != c.both || got[v6.ID] != "v6" || got[v4.ID] != "v4" || len(got) != 3 {
+			t.Errorf("%s: sent %v, want the both target as %s and the v6 and v4 targets unchanged", c.name, got, c.both)
+		}
 	}
 }

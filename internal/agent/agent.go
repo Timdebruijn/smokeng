@@ -184,6 +184,10 @@ func (a *Agent) pull(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Says this agent can measure a target over both families. A master that
+	// does not know the header ignores it and sends v4 or v6, which the agent
+	// mirrors as it always did.
+	req.Header.Set("X-Agent-Features", "both")
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return err
