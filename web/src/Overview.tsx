@@ -12,7 +12,7 @@ import {
 } from './api'
 import { fmtLoss, fmtUs } from './format'
 import { Stat, ErrorText } from './shared'
-import { minMax, REFRESH_MS, resolveSeries, summarise } from './util'
+import { alertKey, minMax, seriesLabel, REFRESH_MS, resolveSeries, summarise } from './util'
 
 const WINDOW_S = 3600
 
@@ -259,14 +259,14 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
                 All quiet — no alerts firing.
               </p>
             ) : (
-              firing.map((a, i) => (
-                <div key={i} className="firing-card">
+              firing.map((a) => (
+                <div key={alertKey(a)} className="firing-card">
                   <span className="firing-title">
                     <span className="dot pulse" style={{ background: 'var(--bad)' }} />
                     {a.rule}
                   </span>
                   <span className="hint small">
-                    {a.describes} on <code>{a.target}</code>
+                    {a.describes} on <code>{a.target}</code> · {seriesLabel(a.agent, a.family)}
                   </span>
                 </div>
               ))
@@ -288,7 +288,7 @@ export default function Overview({ onOpenDetail }: { onOpenDetail: (id: number) 
                   />
                   <span className="activity-what">
                     <strong>{e.firing ? 'fired' : 'cleared'}</strong> · {e.rule} on{' '}
-                    <code>{e.target}</code>
+                    <code>{e.target}</code> · {e.family}
                   </span>
                   <span className="activity-when">{rel(e.ts)}</span>
                 </div>

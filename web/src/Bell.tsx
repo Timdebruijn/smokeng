@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { alertKey, seriesLabel } from './util'
 import { acknowledgeAlert, fetchFiringAlerts, type FiringAlert } from './api'
 
 /**
@@ -94,17 +95,17 @@ export default function Bell({
           {alerts.length === 0 ? (
             <p className="hint small">All quiet — nothing is firing.</p>
           ) : (
-            alerts.map((a, i) => {
+            alerts.map((a) => {
               const muted = a.acked || a.silenced
               return (
-                <div key={`${a.rule}-${a.target}-${i}`} className={muted ? 'bell-item acked' : 'bell-item'}>
+                <div key={alertKey(a)} className={muted ? 'bell-item acked' : 'bell-item'}>
                   <button className="bell-row" onClick={onOpenAlerts}>
                     <span className="bell-rule">
                       <span className={muted ? 'dot' : 'dot firing'} />
                       {a.rule} — {a.describes}
                     </span>
                     <span className="hint small mono">
-                      {a.target}
+                      {a.target} · {seriesLabel(a.agent, a.family)}
                       {a.since ? ` · since ${new Date(a.since * 1000).toLocaleTimeString()}` : ''}
                       {a.silenced ? ' · silenced' : a.acked && a.acked_by ? ` · ack ${a.acked_by}` : ''}
                     </span>
@@ -115,6 +116,7 @@ export default function Bell({
                     <button
                       className="pill small"
                       title={a.acked ? 'Un-acknowledge' : 'Acknowledge — still fires, just stops nagging'}
+                      aria-label={`${a.acked ? 'Un-acknowledge' : 'Acknowledge'} ${a.rule} on ${a.target}, ${seriesLabel(a.agent, a.family)}`}
                       onClick={() => void ack(a)}
                     >
                       {a.acked ? 'unack' : 'ack'}

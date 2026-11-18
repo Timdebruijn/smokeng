@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { axisLabel } from './layout.ts'
-import { csvCell, fromLocalInput, minMax, refreshMs, toLocalInput, zoomOut } from './util.ts'
+import { alertKey, csvCell, seriesLabel, fromLocalInput, minMax, refreshMs, toLocalInput, zoomOut } from './util.ts'
 
 // A golden reference can hold hundreds of thousands of samples. Math.min(...xs)
 // passes each element as an argument, and the engine refuses past about 125,000:
@@ -85,4 +85,16 @@ test('the time axis says the date once a window is longer than a day', () => {
   assert.equal(axisLabel(t, 86400), '14:30')
   assert.equal(axisLabel(t, 2 * 86400), '5 Nov 14:30')
   assert.equal(axisLabel(t, 30 * 86400), '5 Nov')
+})
+
+test('two families of one alert have different keys', () => {
+  const a = { rule_id: 1, target_id: 2, agent_id: 3, family: 'v4' }
+  assert.notEqual(alertKey(a), alertKey({ ...a, family: 'v6' }))
+  assert.equal(alertKey(a), alertKey({ ...a }))
+})
+
+test('seriesLabel names agent and family, whichever are known', () => {
+  assert.equal(seriesLabel('local', 'v4'), 'local · v4')
+  assert.equal(seriesLabel(undefined, 'v6'), 'v6')
+  assert.equal(seriesLabel('local', ''), 'local')
 })

@@ -16,23 +16,25 @@ export default function ShapeOverlay({
   ruleId,
   targetId,
   agentId,
+  family,
 }: {
   ruleId: number
   targetId: number
   agentId: number
+  family: string
 }) {
   const [data, setData] = useState<ShapeReference | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    fetchShapeReference(ruleId, targetId, agentId)
+    fetchShapeReference(ruleId, targetId, agentId, family)
       .then((d) => !cancelled && setData(d))
       .catch((e: Error) => !cancelled && setError(e.message))
     return () => {
       cancelled = true
     }
-  }, [ruleId, targetId, agentId])
+  }, [ruleId, targetId, agentId, family])
 
   const bins = useMemo(() => {
     if (!data) return null

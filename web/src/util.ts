@@ -189,3 +189,22 @@ export function summarise(s: {
     flags,
   }
 }
+
+/**
+ * What identifies one firing alert. A target measured over both families can
+ * fire one rule twice, so the family is part of the key: without it two rows
+ * collide and an action on one reads as an action on the other.
+ */
+export function alertKey(a: {
+  rule_id: number
+  target_id: number
+  agent_id: number
+  family: string
+}): string {
+  return `${a.rule_id}/${a.target_id}/${a.agent_id}/${a.family}`
+}
+
+/** "local · v4": the vantage point and family as text, either part optional. */
+export function seriesLabel(agent: string | undefined, family: string | undefined): string {
+  return [agent, family].filter((x) => x).join(' · ')
+}
