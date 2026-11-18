@@ -56,7 +56,7 @@ func probeDNS(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 		// failed. That distinction is the difference between a broken target
 		// and a broken smokeng.
 		col.markSendFailed(idx, store.SendReasonSocket)
-		log.Printf("probe: target %d: pack DNS query: %v", spec.TargetID, err)
+		log.Printf("probe: %s: pack DNS query: %v", spec.label(), err)
 		return
 	}
 
@@ -68,8 +68,8 @@ func probeDNS(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 		// resolver's, so it must not read as a healthy resolver going lossy.
 		col.markSendFailed(idx, sendReasonFor(err))
 		if idx == 0 {
-			log.Printf("probe: target %d (%s): dns query to %s never sent: %v",
-				spec.TargetID, spec.Host, server, err)
+			log.Printf("probe: %s (%s): dns query to %s never sent: %v",
+				spec.label(), spec.Host, server, err)
 		}
 		return
 	}

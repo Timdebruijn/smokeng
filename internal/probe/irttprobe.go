@@ -151,8 +151,8 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 		for i := range spec.Pings {
 			col.markSendFailed(i, sendReasonForOpen(err))
 		}
-		log.Printf("probe: target %d (%s): irtt session to %s never opened: %v; recorded as a send failure",
-			spec.TargetID, spec.Host, cfg.RemoteAddress, err)
+		log.Printf("probe: %s (%s): irtt session to %s never opened: %v; recorded as a send failure",
+			spec.label(), spec.Host, cfg.RemoteAddress, err)
 		return
 	}
 
@@ -162,9 +162,9 @@ func probeIRTT(ctx context.Context, col *collector, addr netip.Addr, spec Target
 	// replies that did arrive were dropped on our side — both are our loss, not
 	// the network's, and the ICMP path has FlagSocketOverflow for exactly this.
 	if r.SendErr != nil || r.ReceiveErr != nil {
-		log.Printf("probe: target %d (%s): irtt session to %s ended early (send=%v receive=%v); "+
+		log.Printf("probe: %s (%s): irtt session to %s ended early (send=%v receive=%v); "+
 			"the loss in this interval may be ours, not the network's",
-			spec.TargetID, spec.Host, cfg.RemoteAddress, r.SendErr, r.ReceiveErr)
+			spec.label(), spec.Host, cfg.RemoteAddress, r.SendErr, r.ReceiveErr)
 	}
 
 	now := time.Now()
@@ -252,9 +252,9 @@ func markUnsentTail(col *collector, spec TargetSpec, seen int, sendErr error) {
 	//
 	// Once per interval, because it is this prober's pacing rather than the
 	// network's doing, and because it is the only trace the measurement leaves.
-	log.Printf("probe: target %d (%s): irtt paced %d of %d probes into the interval; "+
+	log.Printf("probe: %s (%s): irtt paced %d of %d probes into the interval; "+
 		"the rest were never sent, so they are not counted as lost",
-		spec.TargetID, spec.Host, seen, spec.Pings)
+		spec.label(), spec.Host, seen, spec.Pings)
 }
 
 // irttDuration is how long to let an irtt session run for the interval's

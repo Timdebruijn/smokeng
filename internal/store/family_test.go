@@ -265,12 +265,11 @@ func columnsOf(t *testing.T, db *sql.DB, table string) []string {
 	return out
 }
 
-// Protects the resolutions log as the record of when a target was measured
-// over which family. A target changed to the other family and back resolves to
-// the address it had before; compared with the last address of its own family
-// that return is no change and would not be logged, and the log would end on
-// the family the target no longer has.
-func TestLastResolutionIsTheLatestOfAnyFamily(t *testing.T) {
+// Protects the two probe loops of a target measured over both families: each
+// compares the address it resolved with the last one of its own family. Read
+// as the latest of any family, each loop would see the other's address as a
+// change and log it every interval.
+func TestLastResolutionIsPerFamily(t *testing.T) {
 	s := openTemp(t)
 	ctx := t.Context()
 	for _, r := range []struct {
@@ -282,8 +281,13 @@ func TestLastResolutionIsTheLatestOfAnyFamily(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got, err := s.LastResolution(ctx, 7); err != nil || got != "2001:db8::1" {
-		t.Errorf("LastResolution = %q, %v; want the v6 address logged last", got, err)
+	for fam, want := range map[tree.Family]string{tree.FamilyV4: "192.0.2.1", tree.FamilyV6: "2001:db8::1"} {
+		if got, err := s.LastResolution(ctx, 7, fam); err != nil || got != want {
+			t.Errorf("LastResolution(%v) = %q, %v; want %q", fam, got, err, want)
+		}
+	}
+	if got, err := s.LastResolution(ctx, 8, tree.FamilyV4); err != nil || got != "" {
+		t.Errorf("LastResolution of an unlogged target = %q, %v; want empty", got, err)
 	}
 }
 

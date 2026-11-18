@@ -166,3 +166,48 @@ func TestAgentPathsAreFiledUnderTheFamilyTheAgentSays(t *testing.T) {
 		t.Errorf("v6 holds %q, want only the change stating v6", got)
 	}
 }
+
+// Protects the ingest of a target measured over both families: a row stating
+// v4 or v6 is stored under it and evaluated (each family has its own state, so
+// the same two lossy intervals fire the rule once per family), and a row stating
+// none is stored under v4, the default, and evaluated there. Read against a
+// single family this would store or evaluate only one of the two series.
+func TestIngestOfABothTargetStoresAndEvaluatesEachFamily(t *testing.T) {
+	const t0 = 1_756_400_000
+	h, st, mgr, agentID, key, mine, _ := ingestFixtureAlerts(t)
+	tg := tree.Target{ID: mine, ParentID: new(int64(1)), Name: "mine", Enabled: true,
+		Host: new("mine.example.net"), AddressFamily: new("both"), Settings: tree.Settings{Agents: new("ams")}}
+	if err := st.UpsertTarget(t.Context(), &tg); err != nil {
+		t.Fatal(err)
+	}
+	lossRule(t, st, mgr)
+
+	var ms []store.Measurement
+	for i, fam := range []tree.Family{tree.FamilyV4, tree.FamilyV4, tree.FamilyV6, tree.FamilyV6, tree.FamilyUnknown} {
+		m := measurement(mine, t0+int64(i%2)*60)
+		m.Family = fam
+		if fam == tree.FamilyUnknown {
+			m.TS = t0 + 120 // a row stating none: after v4's two, so it is not a duplicate
+		}
+		ms = append(ms, m)
+	}
+	if rec := submit(t, h, agentID, key, ms, time.Now()); rec.Code != http.StatusOK {
+		t.Fatalf("ingest = %d: %s", rec.Code, rec.Body)
+	}
+	for fam, want := range map[tree.Family]int{tree.FamilyV4: 3, tree.FamilyV6: 2} {
+		got, err := st.QueryRange(t.Context(), mine, agentID, fam, 0, 1<<40)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != want {
+			t.Errorf("%v holds %d rows, want %d (the row stating none belongs under v4)", fam, len(got), want)
+		}
+	}
+	fired := map[tree.Family]bool{}
+	for _, a := range mgr.Firing() {
+		fired[a.Family] = true
+	}
+	if !fired[tree.FamilyV4] || !fired[tree.FamilyV6] {
+		t.Errorf("firing by family = %v, want the loss rule firing for v4 and for v6", fired)
+	}
+}

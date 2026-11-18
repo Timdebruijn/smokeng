@@ -40,17 +40,17 @@ func TestRecoverProbeContainsAPanic(t *testing.T) {
 // target would simply stop being measured, quietly, forever.
 func TestRecoverTargetDeschedulesSoReloadRestartsIt(t *testing.T) {
 	quietLog(t)
-	e := &Engine{running: map[int64]*runningTarget{}, warned: map[int64]string{}}
+	e := &Engine{running: map[SpecKey]*runningTarget{}, warned: map[int64]string{}}
 	spec := TargetSpec{TargetID: 7, Host: "example"}
 	_, cancel := context.WithCancel(context.Background())
-	e.running[spec.TargetID] = &runningTarget{spec: spec, cancel: cancel}
+	e.running[spec.key()] = &runningTarget{spec: spec, cancel: cancel}
 
 	func() {
 		defer e.recoverTarget(spec)
 		panic("boom")
 	}()
 
-	if _, still := e.running[spec.TargetID]; still {
+	if _, still := e.running[spec.key()]; still {
 		t.Fatal("the target is still registered as running, so reload will never restart it " +
 			"and it stops being measured with no error anywhere")
 	}

@@ -85,7 +85,7 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 		// failure: nothing was asked of the target, so it is flagged not sent.
 		col.markSendFailed(idx, store.SendReasonSocket)
 		if idx == 0 {
-			log.Printf("probe: target %d: build request %q: %v", spec.TargetID, url, err)
+			log.Printf("probe: %s: build request %q: %v", spec.label(), url, err)
 		}
 		return
 	}
@@ -101,8 +101,8 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 		if isLocalResourceError(err) {
 			col.markSendFailed(idx, sendReasonFor(err))
 			if idx == 0 {
-				log.Printf("probe: target %d (%s): request to %s failed locally: %v; "+
-					"counted as sent and lost, flagged not sent", spec.TargetID, spec.Host, url, err)
+				log.Printf("probe: %s (%s): request to %s failed locally: %v; "+
+					"counted as sent and lost, flagged not sent", spec.label(), spec.Host, url, err)
 			}
 			return
 		}
@@ -122,8 +122,8 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 		// named once per interval, because "100% loss" alone would send you
 		// looking at the network for a fault that is in the application.
 		if idx == 0 {
-			log.Printf("probe: target %d (%s): %s returned HTTP %d; counted as loss",
-				spec.TargetID, spec.Host, url, resp.StatusCode)
+			log.Printf("probe: %s (%s): %s returned HTTP %d; counted as loss",
+				spec.label(), spec.Host, url, resp.StatusCode)
 		}
 		return
 	}

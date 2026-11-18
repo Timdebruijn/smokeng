@@ -53,9 +53,12 @@ type Engine struct {
 
 	traceUnsupported sync.Once
 
-	mu       sync.Mutex
-	conns    map[connKey]*conn
-	running  map[int64]*runningTarget
+	mu    sync.Mutex
+	conns map[connKey]*conn
+	// running is keyed by series, not target: a target measured over both
+	// families has two loops, and a change to one family's spec must not
+	// cancel or replace the other's.
+	running  map[SpecKey]*runningTarget
 	targetWG sync.WaitGroup
 	// warned remembers the last configuration problem reported per target, so
 	// a misconfiguration is named once instead of twice a minute forever.
@@ -90,7 +93,7 @@ func NewEngine(st store.Store, alerter *alert.Manager) (*Engine, error) {
 		alerter: alerter,
 		results: make(chan store.Measurement, 1024),
 		conns:   map[connKey]*conn{},
-		running: map[int64]*runningTarget{},
+		running: map[SpecKey]*runningTarget{},
 		warned:  map[int64]string{},
 	}, nil
 }
@@ -137,7 +140,7 @@ func (e *Engine) Run(ctx context.Context) error {
 }
 
 // reload diffs the desired spec set against what is running and starts/stops
-// per-target loops accordingly.
+// per-series loops accordingly.
 func (e *Engine) reload(ctx context.Context) {
 	specs, err := e.loadSpecs(ctx)
 	if err != nil {
@@ -153,18 +156,18 @@ func (e *Engine) reload(ctx context.Context) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for id, rt := range e.running {
-		if spec, ok := specs[id]; !ok || spec != rt.spec {
+	for key, rt := range e.running {
+		if spec, ok := specs[key]; !ok || spec != rt.spec {
 			rt.cancel()
-			delete(e.running, id)
+			delete(e.running, key)
 		}
 	}
-	for id, spec := range specs {
-		if _, ok := e.running[id]; ok {
+	for key, spec := range specs {
+		if _, ok := e.running[key]; ok {
 			continue
 		}
 		tctx, cancel := context.WithCancel(ctx)
-		e.running[id] = &runningTarget{spec: spec, cancel: cancel}
+		e.running[key] = &runningTarget{spec: spec, cancel: cancel}
 		e.targetWG.Go(func() { e.runTarget(tctx, spec) })
 		if spec.TraceIntervalS > 0 {
 			e.targetWG.Go(func() { e.runTracer(tctx, spec) })
@@ -177,11 +180,11 @@ func (e *Engine) reload(ctx context.Context) {
 // engine, so a test can hold an agent's view of a target against the master's
 // (the parity rule, DESIGN.md §9). A target that cannot be measured as
 // configured is left out, and logged, as the engine does.
-func Specs(ctx context.Context, st store.Store) (map[int64]TargetSpec, error) {
+func Specs(ctx context.Context, st store.Store) (map[SpecKey]TargetSpec, error) {
 	return (&Engine{st: st, warned: map[int64]string{}}).loadSpecs(ctx)
 }
 
-func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
+func (e *Engine) loadSpecs(ctx context.Context) (map[SpecKey]TargetSpec, error) {
 	targets, err := e.st.ListTargets(ctx)
 	if err != nil {
 		return nil, err
@@ -190,7 +193,7 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	specs := map[int64]TargetSpec{}
+	specs := map[SpecKey]TargetSpec{}
 	problems := map[int64]string{}
 	for i := range targets {
 		n := &targets[i]
@@ -207,7 +210,6 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 		spec := TargetSpec{
 			TargetID:       n.ID,
 			Host:           *n.Host,
-			Family:         *n.AddressFamily,
 			IntervalS:      res.IntervalS.Effective,
 			Pings:          res.PingsPerInterval.Effective,
 			Mode:           res.ProbeMode.Effective,
@@ -230,7 +232,12 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[int64]TargetSpec, error) {
 			problems[n.ID] = err.Error()
 			continue
 		}
-		specs[n.ID] = spec
+		// One spec per family: a target measured over both is two series that
+		// are probed, resolved and routed on their own.
+		for _, f := range n.Families() {
+			spec.Family = f.String()
+			specs[spec.key()] = spec
+		}
 	}
 	e.reportSpecProblems(targets, problems)
 	return specs, nil
@@ -330,9 +337,9 @@ func (e *Engine) connFor(family string, dscp int) (*conn, error) {
 // runTarget is the per-target loop: one iteration per interval bucket.
 func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 	defer e.recoverTarget(spec)
-	lastAddr, err := e.st.LastResolution(ctx, spec.TargetID)
+	lastAddr, err := e.st.LastResolution(ctx, spec.TargetID, tree.FamilyOf(spec.Family))
 	if err != nil {
-		log.Printf("probe: target %d: read last resolution: %v", spec.TargetID, err)
+		log.Printf("probe: %s: read last resolution: %v", spec.label(), err)
 	}
 	interval := time.Duration(spec.IntervalS) * time.Second
 	timeout := time.Duration(spec.TimeoutMS) * time.Millisecond
@@ -361,7 +368,7 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 			// which says nothing about the target. The interval is stored as no
 			// data with that reason, through the same path as a finalized one so
 			// alerting and an agent's outbox see it (DESIGN.md §8.2).
-			log.Printf("probe: target %d (%q): resolve: %v", spec.TargetID, spec.Host, err)
+			log.Printf("probe: %s (%q): resolve: %v", spec.label(), spec.Host, err)
 			e.dnsErrs.Add(1)
 			e.emit(noDataRow(spec, bucket, store.SendReasonNoAddress))
 			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
@@ -371,10 +378,10 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 		}
 		if a := addr.String(); a != lastAddr {
 			if lastAddr != "" {
-				log.Printf("probe: target %d (%q): address changed %s -> %s", spec.TargetID, spec.Host, lastAddr, a)
+				log.Printf("probe: %s (%q): address changed %s -> %s", spec.label(), spec.Host, lastAddr, a)
 			}
 			if err := e.st.RecordResolution(ctx, spec.TargetID, tree.FamilyOf(spec.Family), time.Now().Unix(), a); err != nil {
-				log.Printf("probe: target %d: record resolution: %v", spec.TargetID, err)
+				log.Printf("probe: %s: record resolution: %v", spec.label(), err)
 			}
 			lastAddr = a
 		}
@@ -385,8 +392,8 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 		// and that is loss on the path. Only the host's own table says the host
 		// could not send, and then nothing is, so the interval is no data.
 		if e.noRoute(addr, spec.Family) {
-			log.Printf("probe: target %d (%s): no route to %s on this host for %s; interval stored as no data",
-				spec.TargetID, spec.Host, addr, spec.Family)
+			log.Printf("probe: %s (%s): no route to %s on this host for %s; interval stored as no data",
+				spec.label(), spec.Host, addr, spec.Family)
 			e.emit(noDataRow(spec, bucket, store.SendReasonUnreachable))
 			if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
 				return
@@ -406,7 +413,7 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 				if errors.Is(err, errShuttingDown) {
 					return
 				}
-				log.Printf("probe: target %d: %v", spec.TargetID, err)
+				log.Printf("probe: %s: %v", spec.label(), err)
 				if !sleepUntil(ctx, time.Unix(bucket+int64(spec.IntervalS), 0)) {
 					return
 				}
@@ -450,7 +457,7 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 				}
 				if c != nil {
 					if err := c.send(col, i, addr, spec.PacketSize); err != nil && !sendLogged {
-						log.Printf("probe: target %d (%s): send: %v", spec.TargetID, spec.Host, err)
+						log.Printf("probe: %s (%s): send: %v", spec.label(), spec.Host, err)
 						sendLogged = true
 					}
 					continue
@@ -505,7 +512,7 @@ func (e *Engine) emit(m store.Measurement) {
 	select {
 	case e.results <- m:
 	default:
-		log.Printf("probe: results backlog full, dropping measurement for target %d", m.TargetID)
+		log.Printf("probe: results backlog full, dropping measurement for target %d %s", m.TargetID, m.Family)
 		e.dropped.Add(1)
 	}
 }
@@ -601,7 +608,8 @@ type Stats struct {
 	// Dropped measurements were finalized but never stored, because the
 	// writer could not keep up. This should always be zero.
 	Dropped int64
-	// ActiveTargets is how many target loops are currently running.
+	// ActiveTargets is how many series loops are currently running; a target
+	// measured over both families has two.
 	ActiveTargets int64
 	// Panics were contained instead of ending the process. Any non-zero value
 	// is a bug in smokeng, and the log line next to it has the stack.
@@ -659,7 +667,7 @@ func (e *Engine) traceOnce(ctx context.Context, spec TargetSpec) {
 			})
 			return
 		}
-		log.Printf("probe: target %d: trace: %v", spec.TargetID, err)
+		log.Printf("probe: %s: trace: %v", spec.label(), err)
 		return
 	}
 	if len(path) == 0 {
@@ -669,19 +677,19 @@ func (e *Engine) traceOnce(ctx context.Context, spec TargetSpec) {
 
 	last, err := e.st.LastPath(ctx, spec.TargetID, store.LocalAgentID, tree.FamilyOf(spec.Family))
 	if err != nil {
-		log.Printf("probe: target %d: read last path: %v", spec.TargetID, err)
+		log.Printf("probe: %s: read last path: %v", spec.label(), err)
 		return
 	}
 	if last == hops {
 		return
 	}
 	if err := e.st.RecordPath(ctx, spec.TargetID, store.LocalAgentID, tree.FamilyOf(spec.Family), time.Now().Unix(), hops); err != nil {
-		log.Printf("probe: target %d: record path: %v", spec.TargetID, err)
+		log.Printf("probe: %s: record path: %v", spec.label(), err)
 		return
 	}
 	if last != "" {
-		log.Printf("probe: target %d (%s): path changed\n  was: %s\n  now: %s",
-			spec.TargetID, spec.Host, last, hops)
+		log.Printf("probe: %s (%s): path changed\n  was: %s\n  now: %s",
+			spec.label(), spec.Host, last, hops)
 	}
 }
 
@@ -727,8 +735,8 @@ func (e *Engine) recoverProbe(spec TargetSpec, what string) {
 		return
 	}
 	e.panics.Add(1)
-	log.Printf("probe: target %d (%s): %s panicked: %v\n%s",
-		spec.TargetID, spec.Host, what, r, debug.Stack())
+	log.Printf("probe: %s (%s): %s panicked: %v\n%s",
+		spec.label(), spec.Host, what, r, debug.Stack())
 }
 
 // recoverTarget contains a panic to the target loop that caused it, and
@@ -743,13 +751,13 @@ func (e *Engine) recoverTarget(spec TargetSpec) {
 		return
 	}
 	e.panics.Add(1)
-	log.Printf("probe: target %d (%s): probe loop panicked: %v\n%s",
-		spec.TargetID, spec.Host, r, debug.Stack())
+	log.Printf("probe: %s (%s): probe loop panicked: %v\n%s",
+		spec.label(), spec.Host, r, debug.Stack())
 	e.mu.Lock()
-	if rt, ok := e.running[spec.TargetID]; ok && rt.spec == spec {
+	if rt, ok := e.running[spec.key()]; ok && rt.spec == spec {
 		rt.cancel()
-		delete(e.running, spec.TargetID)
+		delete(e.running, spec.key())
 	}
 	e.mu.Unlock()
-	log.Printf("probe: target %d will be restarted within %s", spec.TargetID, specRefresh)
+	log.Printf("probe: %s will be restarted within %s", spec.label(), specRefresh)
 }

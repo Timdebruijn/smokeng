@@ -95,11 +95,11 @@ func TestAnAgentMeasuresATargetExactlyAsTheMasterWould(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range ids {
-		w, ok := want[id]
+		w, ok := want[probe.SpecKey{TargetID: id, Family: "v4"}]
 		if !ok {
 			t.Fatalf("target %d: the master would not measure it", id)
 		}
-		g, ok := got[id]
+		g, ok := got[probe.SpecKey{TargetID: id, Family: "v4"}]
 		if !ok {
 			t.Errorf("target %d: the agent would not measure it", id)
 			continue
@@ -115,7 +115,7 @@ func TestAnAgentMeasuresATargetExactlyAsTheMasterWould(t *testing.T) {
 	for f := range typ.NumField() {
 		set := false
 		for _, id := range ids {
-			if !reflect.ValueOf(want[id]).Field(f).IsZero() {
+			if !reflect.ValueOf(want[probe.SpecKey{TargetID: id, Family: "v4"}]).Field(f).IsZero() {
 				set = true
 			}
 		}
@@ -143,7 +143,7 @@ func TestAnAssignmentWithoutTraceIntervalTracesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s, ok := specs[42]; !ok || s.TraceIntervalS != 0 {
+	if s, ok := specs[probe.SpecKey{TargetID: 42, Family: "v4"}]; !ok || s.TraceIntervalS != 0 {
 		t.Errorf("target 42 = %+v (present %v), want measured with trace_interval_s 0", s, ok)
 	}
 }

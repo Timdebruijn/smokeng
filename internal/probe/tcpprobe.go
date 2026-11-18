@@ -37,8 +37,8 @@ func probeTCP(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 		if isLocalResourceError(err) {
 			col.markSendFailed(idx, sendReasonFor(err))
 			if idx == 0 {
-				log.Printf("probe: target %d (%s): tcp/%d dial failed locally: %v; "+
-					"counted as sent and lost, flagged not sent", spec.TargetID, spec.Host, spec.ProbePort, err)
+				log.Printf("probe: %s (%s): tcp/%d dial failed locally: %v; "+
+					"counted as sent and lost, flagged not sent", spec.label(), spec.Host, spec.ProbePort, err)
 			}
 			return
 		}
@@ -48,8 +48,8 @@ func probeTCP(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 		// rather than once per probe: twenty identical lines a minute would
 		// describe one unchanging fact.
 		if idx == 0 && errors.Is(err, syscall.ECONNREFUSED) {
-			log.Printf("probe: target %d (%s): tcp/%d refused the connection; counted as loss",
-				spec.TargetID, spec.Host, spec.ProbePort)
+			log.Printf("probe: %s (%s): tcp/%d refused the connection; counted as loss",
+				spec.label(), spec.Host, spec.ProbePort)
 		}
 		return
 	}

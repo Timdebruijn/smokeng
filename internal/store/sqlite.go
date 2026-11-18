@@ -503,6 +503,18 @@ UPDATE targets SET positional_loss = 'exclude' WHERE parent_id IS NULL AND posit
 	// and events, baselines and silences say which family they are about. See
 	// alertFamilyMigration.
 	alertFamilyMigration(),
+	// v30: a target may say address_family = 'both'. The column's CHECK only
+	// allows v4 and v6, and a CHECK cannot be altered, so the column is replaced
+	// by a new one with the wider CHECK. targets is not rebuilt: other tables
+	// reference it with cascading foreign keys, and a rebuild is a drop and a
+	// recreate. Dropping a column is allowed because nothing else names it: no
+	// index, view, trigger, foreign key or other CHECK, and its own column-level
+	// CHECK goes with it (SQLite 3.35+). The column ends up last in the table;
+	// every reader names its columns (targetCols), none reads by position.
+	`ALTER TABLE targets ADD COLUMN address_family_v30 TEXT CHECK (address_family_v30 IN ('v4','v6','both'));
+UPDATE targets SET address_family_v30 = address_family;
+ALTER TABLE targets DROP COLUMN address_family;
+ALTER TABLE targets RENAME COLUMN address_family_v30 TO address_family;`,
 }
 
 func (s *SQLite) migrate() error {
@@ -1085,16 +1097,17 @@ func (s *SQLite) RecordResolution(ctx context.Context, targetID int64, family tr
 	return err
 }
 
-// LastResolution is the target's latest logged address, of whichever family.
-// Not per family: a target changed to the other family and back resolves to
-// the address it had before, and compared with its own family's last row that
-// return would not be logged. The log is what says when a target was measured
-// over which family for everything stored before the rows said so themselves.
-func (s *SQLite) LastResolution(ctx context.Context, targetID int64) (string, error) {
+// LastResolution is the latest address logged for one family of the target.
+// Per family because a target measured over both has two probe loops, each
+// comparing the address it resolves with the last one logged. Read as the
+// latest of any family, a loop that starts would take the other family's
+// address for its own previous one, and log a change at its first interval
+// that never happened.
+func (s *SQLite) LastResolution(ctx context.Context, targetID int64, family tree.Family) (string, error) {
 	var addr string
 	err := s.db.QueryRowContext(ctx,
-		"SELECT address FROM resolutions WHERE target_id = ? ORDER BY ts DESC LIMIT 1",
-		targetID).Scan(&addr)
+		"SELECT address FROM resolutions WHERE target_id = ? AND family = ? ORDER BY ts DESC LIMIT 1",
+		targetID, family).Scan(&addr)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}

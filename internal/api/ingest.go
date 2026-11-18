@@ -101,7 +101,7 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	var skipped []int64
 	var future int
 	for _, m := range measurements {
-		family, ok := assigned[m.TargetID]
+		families, ok := assigned[m.TargetID]
 		switch {
 		case !ok:
 			skipped = append(skipped, m.TargetID)
@@ -111,9 +111,11 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 			// A row that says which family it was measured over keeps it, so a
 			// backlog delivered after the target changed family is filed where it
 			// belongs. One that does not (an older agent, or history the agent could
-			// not place) is the target's family today, as it always was.
+			// not place) is the target's default family today, as it always was:
+			// v4 for a target measured over both, which is all an agent measures
+			// of one for now.
 			if m.Family == tree.FamilyUnknown {
-				m.Family = family
+				m.Family = families[0]
 			}
 			kept = append(kept, m)
 		}
@@ -143,13 +145,13 @@ func (s *server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	// later interval to clear it, so it is stored and not evaluated.
 	current := make([]store.Measurement, 0, len(stored))
 	for _, m := range stored {
-		if m.Family == assigned[m.TargetID] {
+		if slices.Contains(assigned[m.TargetID], m.Family) {
 			current = append(current, m)
 		}
 	}
 	s.evaluate(r.Context(), current)
 	if n := len(stored) - len(current); n > 0 {
-		log.Printf("ingest: agent %q submitted %d measurement(s) of a family other than their target's current one; "+
+		log.Printf("ingest: agent %q submitted %d measurement(s) of a family their target is not measured over; "+
 			"those were stored without being evaluated by alert rules", agent.Name, n)
 	}
 	dup := len(measurements) - len(stored)
@@ -227,10 +229,14 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 		}
 		path, _ := tr.Path(n.ID)
 		out = append(out, map[string]any{
-			"target_id":      n.ID,
-			"path":           path,
-			"host":           *n.Host,
-			"address_family": *n.AddressFamily,
+			"target_id": n.ID,
+			"path":      path,
+			"host":      *n.Host,
+			// A target measured over both goes out as v4. An agent of any released
+			// version refuses an address_family it does not know and then drops its
+			// whole target sync, and no agent can measure two families yet; the
+			// master's own prober measures both.
+			"address_family": n.Family().String(),
 			"interval_s":     res.IntervalS.Effective,
 			"pings":          res.PingsPerInterval.Effective,
 			"probe_mode":     res.ProbeMode.Effective,
@@ -264,11 +270,12 @@ func (s *server) handleAgentTargets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"targets": out, "ca_certificates": cas})
 }
 
-// assignedTargets is the set a given agent may submit for, with the family each
-// is measured over now. A submission that does not say which family a row was
-// measured over is stored under that, and a row that does is judged against it
-// to decide whether alert rules see it.
-func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int64]tree.Family, error) {
+// assignedTargets is the set a given agent may submit for, with the families
+// each is measured over now (never empty; the first is the default). A
+// submission that does not say which family a row was measured over is stored
+// under the default, and a row that does is judged against the set to decide
+// whether alert rules see it.
+func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int64][]tree.Family, error) {
 	targets, err := s.st.ListTargets(ctx)
 	if err != nil {
 		return nil, err
@@ -277,7 +284,7 @@ func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int
 	if err != nil {
 		return nil, err
 	}
-	out := map[int64]tree.Family{}
+	out := map[int64][]tree.Family{}
 	for i := range targets {
 		n := &targets[i]
 		if n.Host == nil {
@@ -288,7 +295,7 @@ func (s *server) assignedTargets(ctx context.Context, agentName string) (map[int
 			return nil, err
 		}
 		if assignedTo(res.Agents.Effective, agentName) {
-			out[n.ID] = n.Family()
+			out[n.ID] = n.Families()
 		}
 	}
 	return out, nil
@@ -416,11 +423,12 @@ func (s *server) handleAgentPaths(w http.ResponseWriter, r *http.Request) {
 	var kept []store.PathChange
 	var dropped int
 	for _, p := range sub.Paths {
-		family, ok := assigned[p.TargetID]
+		families, ok := assigned[p.TargetID]
 		if !ok || p.TS > horizon || !validHops(p.Hops) {
 			dropped++
 			continue
 		}
+		family := families[0]
 		if stated := pathFamily(p.Family); stated != tree.FamilyUnknown {
 			family = stated
 		}

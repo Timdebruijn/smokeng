@@ -7,6 +7,7 @@ package tree
 import (
 	"fmt"
 	"github.com/timdebruijn/smokeng/internal/series"
+	"net/netip"
 	"slices"
 	"strings"
 )
@@ -18,7 +19,7 @@ type Target struct {
 	ParentID      *int64 // nil = root
 	Name          string
 	Host          *string // nil for group nodes
-	AddressFamily *string // "v4" or "v6"; nil for group nodes
+	AddressFamily *string // "v4", "v6" or "both"; nil for group nodes
 	Title         *string
 	Notes         *string
 	Hidden        bool
@@ -144,8 +145,16 @@ func (t *Target) Validate() error {
 	if (t.Host == nil) != (t.AddressFamily == nil) {
 		return fmt.Errorf("tree: host and address_family must be set together (a node with neither is a group)")
 	}
-	if t.AddressFamily != nil && *t.AddressFamily != "v4" && *t.AddressFamily != "v6" {
-		return fmt.Errorf("tree: address_family must be v4 or v6, got %q", *t.AddressFamily)
+	if t.AddressFamily != nil {
+		af := *t.AddressFamily
+		if af != "v4" && af != "v6" && af != AddressFamilyBoth {
+			return fmt.Errorf("tree: address_family must be v4, v6 or both, got %q", af)
+		}
+		// A literal address has one family; "both" on it would be a series that
+		// can only ever be no data.
+		if af == AddressFamilyBoth && isIPLiteral(*t.Host) {
+			return fmt.Errorf("tree: address_family both needs a hostname, and host %q is an IP address, which has one family: use v4 or v6, or give a hostname", *t.Host)
+		}
 	}
 	s := &t.Settings
 	if s.ProbeMode != nil && *s.ProbeMode != "burst" && *s.ProbeMode != "spread" {
@@ -401,4 +410,11 @@ func resolve[T any](t *Tree, chain []*Target, get func(*Settings) *T) Value[T] {
 	}
 	// Unreachable after New's validation; return the zero value defensively.
 	return Value[T]{Local: local}
+}
+
+// isIPLiteral reports whether host is an IP address rather than a name, a zone
+// included.
+func isIPLiteral(host string) bool {
+	_, err := netip.ParseAddr(host)
+	return err == nil
 }

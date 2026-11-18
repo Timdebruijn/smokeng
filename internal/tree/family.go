@@ -79,17 +79,38 @@ func (f *Family) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Family is the family the target is measured over now; unknown for a group
-// node, which has no address.
+// AddressFamilyBoth is the address_family of a target measured over IPv4 and
+// IPv6 both, as two series.
+const AddressFamilyBoth = "both"
+
+// Family is the family a caller gets when it names none: the target's own for
+// v4 and v6, and v4 for a target measured over both (what a read of its series
+// without a family parameter returns). Unknown for a group node, which has no
+// address. Code that acts on every series of a target wants Families.
 func (t *Target) Family() Family {
 	if t.AddressFamily == nil {
 		return FamilyUnknown
 	}
+	if *t.AddressFamily == AddressFamilyBoth {
+		return FamilyV4
+	}
 	return FamilyOf(*t.AddressFamily)
 }
 
-// FamilyOf returns the current family of the target with the given id, and
-// unknown when there is no such target.
+// Families are the families the target is measured over: v4, v6, or v4 and v6
+// for both; none for a group node.
+func (t *Target) Families() []Family {
+	if t.AddressFamily == nil {
+		return nil
+	}
+	if *t.AddressFamily == AddressFamilyBoth {
+		return []Family{FamilyV4, FamilyV6}
+	}
+	return []Family{t.Family()}
+}
+
+// FamilyOf returns the default family (see Target.Family) of the target with
+// the given id, and unknown when there is no such target.
 func (t *Tree) FamilyOf(id int64) Family {
 	if n, ok := t.nodes[id]; ok {
 		return n.Family()

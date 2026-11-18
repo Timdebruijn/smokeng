@@ -6,6 +6,8 @@
 // TTL-based DNS refresh via dnscache.
 package probe
 
+import "fmt"
+
 // TargetSpec is one leaf target with all inheritable settings resolved flat:
 // the boundary between inheritance resolution (internal/tree) and the engine,
 // which knows nothing about the tree. Host may be a hostname or a literal IP.
@@ -31,3 +33,17 @@ type TargetSpec struct {
 	// TLSSkipVerify turns off certificate verification for an https probe.
 	TLSSkipVerify bool
 }
+
+// SpecKey identifies one series the local prober measures: a target measured
+// over both families has two specs, one per family, with the same target id.
+type SpecKey struct {
+	TargetID int64
+	Family   string // "v4" | "v6"
+}
+
+func (s TargetSpec) key() SpecKey { return SpecKey{s.TargetID, s.Family} }
+
+// label names the series in a log line. The family is always named, not only
+// for a target measured over both, because a spec does not know whether its
+// target has another one.
+func (s TargetSpec) label() string { return fmt.Sprintf("target %d %s", s.TargetID, s.Family) }
