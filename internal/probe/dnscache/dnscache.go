@@ -25,10 +25,10 @@ const (
 	queryTimeout = 5 * time.Second
 )
 
-// ErrNoRecord is a resolver's definitive answer that the name has no record of
-// the wanted type: NOERROR or NXDOMAIN with nothing of that type in the answer.
-// A resolver that failed, timed out or answered SERVFAIL or REFUSED says
-// nothing about the name and is not this.
+// ErrNoRecord is the resolvers' definitive answer that the name has no record
+// of the wanted type: at least one answered NOERROR or NXDOMAIN with nothing of
+// that type, and none had the record. A resolver that failed, timed out or
+// answered SERVFAIL or REFUSED says nothing about the name and is not this.
 var ErrNoRecord = errors.New("no record")
 
 type key struct {
@@ -127,6 +127,12 @@ func (c *Cache) refresh(k key) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e := c.entries[k]
+	if e == nil {
+		// Forgotten by another refresh of the same name while this one was out.
+		// Not reachable while a refresh is shorter than the minimum TTL, and
+		// this goroutine has nothing above it to recover a nil dereference.
+		return
+	}
 	e.refreshing = false
 	if errors.Is(err, ErrNoRecord) {
 		// The record is gone. Serving the old address would probe something the
@@ -153,7 +159,12 @@ func (c *Cache) resolve(ctx context.Context, host, family string) (netip.Addr, t
 	m := dns.NewMsg(host, qtype)
 	m.ID = dns.ID()
 
+	// A resolver's "no such record" is only taken as the answer when no other
+	// resolver has the record. Stopping at the first one would let a single
+	// resolver that wrongly says no make the cache forget a good address, and
+	// keep the target without data for as long as it went on saying so.
 	var lastErr error
+	denied := false
 	for _, server := range c.servers {
 		qctx, cancel := context.WithTimeout(ctx, queryTimeout)
 		r, err := c.exchange(qctx, m, server)
@@ -187,6 +198,9 @@ func (c *Cache) resolve(ctx context.Context, host, family string) (netip.Addr, t
 				}
 			}
 		}
+		denied = true
+	}
+	if denied {
 		return netip.Addr{}, 0, fmt.Errorf("dnscache: %w: no %s record for %s", ErrNoRecord, recordName(family), host)
 	}
 	return netip.Addr{}, 0, fmt.Errorf("dnscache: all resolvers failed for %s: %w", host, lastErr)

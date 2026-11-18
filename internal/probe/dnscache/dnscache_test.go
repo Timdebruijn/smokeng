@@ -162,3 +162,26 @@ func TestResolveTriesTheNextServerAfterSERVFAIL(t *testing.T) {
 		t.Errorf("every server failing = %v, want an error that is not ErrNoRecord", err)
 	}
 }
+
+// Protects a good address against one resolver that wrongly says the name does
+// not exist. Taken as final, that answer made the cache forget the address and
+// left the target without data for as long as that resolver went on saying so,
+// while the next resolver had the record all along. A "no" only stands when no
+// resolver has the record.
+func TestOneResolverSayingNoDoesNotOverruleAnotherThatHasTheRecord(t *testing.T) {
+	f := newFake("s1", "s2")
+	f.reply["s1"] = rcode(dns.RcodeNameError)
+	f.reply["s2"] = answerA("192.0.2.9")
+	addr, err := f.Lookup(t.Context(), "x.example", "v4")
+	if err != nil || addr.String() != "192.0.2.9" {
+		t.Fatalf("Lookup = %v, %v, want 192.0.2.9 from the second resolver", addr, err)
+	}
+
+	// One says no and the other does not answer: the only answer there is.
+	f = newFake("s1", "s2")
+	f.reply["s1"] = rcode(dns.RcodeSuccess)
+	f.reply["s2"] = fail
+	if _, err := f.Lookup(t.Context(), "y.example", "v4"); !errors.Is(err, ErrNoRecord) {
+		t.Errorf("one resolver says no and the other is silent: %v, want ErrNoRecord", err)
+	}
+}

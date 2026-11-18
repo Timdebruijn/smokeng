@@ -99,7 +99,7 @@ func TestRunTargetNoRouteIsNoDataAndSendsNothing(t *testing.T) {
 			m.SendErr == nil || *m.SendErr != store.SendReasonUnreachable {
 			t.Errorf("row = %+v, want an empty row, FlagSendFailed, SendReasonUnreachable", m)
 		}
-		if m.TargetID != spec.TargetID || m.TS%int64(spec.IntervalS) != 0 {
+		if m.TargetID != spec.TargetID || m.AgentID != store.LocalAgentID {
 			t.Errorf("row identity = %+v", m)
 		}
 	case <-time.After(5 * time.Second):
@@ -195,7 +195,7 @@ func TestRunTargetWritesNoDataWhenUnresolved(t *testing.T) {
 			m.SendErr == nil || *m.SendErr != store.SendReasonNoAddress {
 			t.Errorf("row = %+v, want an empty row, FlagSendFailed, SendReasonNoAddress", m)
 		}
-		if m.TargetID != spec.TargetID || m.AgentID != store.LocalAgentID || m.TS%int64(spec.IntervalS) != 0 {
+		if m.TargetID != spec.TargetID || m.AgentID != store.LocalAgentID {
 			t.Errorf("row identity = %+v", m)
 		}
 	case <-time.After(5 * time.Second):

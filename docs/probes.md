@@ -32,7 +32,7 @@ failure* with a reason. The loss rail shows it labelled as smokeng's side, not t
 | Out of file descriptors, ports or buffers on the prober (`tcp`, `http`) | send failure |
 | Query or request that could not be built or written | send failure |
 | `irtt` session that never opened | send failure for every probe of the interval |
-| A lookup that fails for any reason on a name that never resolved, or that gives no address of the target's family. A name that resolved before keeps being probed at its last address while the resolvers fail, and is no data once a resolver answers that the record is gone | **no data**, reason `no address to send to`; nothing is sent |
+| A lookup that fails for any reason on a name that never resolved, or that gives no address of the target's family. A name that resolved earlier in this run of the prober keeps being probed at its last address while the resolvers fail, and is no data once the resolvers answer that the record is gone and none of them has it. After a restart nothing is remembered, so a name that does not resolve then is no data | **no data**, reason `no address to send to`; nothing is sent |
 | The prober's routing table has no route to the target's address, asked once per interval before any probe is sent | **no data**, reason `no route to the target` |
 | `irtt` session that paced fewer packets than asked | not counted at all; the interval is narrower |
 | Receive queue overflow on the ICMP socket | interval flagged `dropped replies`; some loss is ours |

@@ -559,9 +559,10 @@ Full kernel timestamping on Linux, both directions, from v0.1 — not the half v
 - `address_family` strictly selects A vs AAAA. Never "whatever resolves". A lookup that gives
   no address is logged and the interval is stored as no data with the reason `no address`
   (§8.2), not skipped silently. A lookup that fails for any reason on a name that never
-  resolved is no address. A name that resolved before keeps being probed at its last address
-  while the resolvers fail, and becomes no data once a resolver answers that the record is
-  gone (NOERROR or NXDOMAIN without a record of that type).
+  resolved is no address. A name that resolved earlier in this run of the prober keeps being
+  probed at its last address while the resolvers fail, and becomes no data once a resolver
+  answers that the record is gone (NOERROR or NXDOMAIN without a record of that type) and no
+  other resolver has it. The cache does not outlive the process.
 
 ## 6. Storage engine
 
