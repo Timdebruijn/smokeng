@@ -556,7 +556,9 @@ Full kernel timestamping on Linux, both directions, from v0.1 — not the half v
   previous address until a new resolution succeeds.
 - On address change: log line + row in `resolutions` (§3.1). This makes anycast/failover
   flips visible in the UI later without storing anything per measurement.
-- `address_family` strictly selects A vs AAAA. Never "whatever resolves".
+- `address_family` strictly selects A vs AAAA. Never "whatever resolves". A lookup that gives
+  no address of that family is logged and the interval is stored as no data with the reason
+  `no address` (§8.2), not skipped silently.
 
 ## 6. Storage engine
 
@@ -854,6 +856,16 @@ draws nothing and breaks the median line; density and median are never interpola
 across missing data (scheduler downtime, disabled periods). RRDtool gets this right with
 its UNKNOWN handling and a reimplementation that connects lines across outages would be
 quietly lying.
+
+**No data with a reason is a gap too.** An interval in which the prober could not ask the
+target anything, for a reason that lies with its own host, is stored as a row with
+`sent = 0`, `received = 0`, the `not sent` flag and a reason: `no address` when the hostname
+gave no address of the target's family, `unreachable` when every probe failed to send with
+`ENETUNREACH` (the host has no route for the family). It is drawn as a gap in the smoke, the
+median line and the loss rail, and left out of every figure that divides by `sent`: it is
+neither 0% nor 100% loss. `EHOSTUNREACH` can come from a router on the path and stays loss;
+so does a dead gateway, where the route stays and the sends succeed. Alert rules read no
+value from it and availability counts it as unknown.
 
 **Variable settings over time are a feature, not a corruption case.** SmokePing fixes
 `step` and `pings` into the RRD at creation — changing either means deleting history.

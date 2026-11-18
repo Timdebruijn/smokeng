@@ -270,7 +270,8 @@ certificate. The log names the first two once per interval. Tables and the fixes
 `http_path`, `--tls-ca-file`): [Probes](probes.md).
 
 A probe this host could not send carries the `not sent` badge with a reason (see below). Fix
-the local cause (`ulimit -n`, `LimitNOFILE=`, route, firewall), not the target.
+the local cause (`ulimit -n`, `LimitNOFILE=`, route, firewall), not the target. If nothing at
+all could be sent (no address, no route), the interval is a gap with that reason, not loss.
 
 ## Loss on a graph that might be rate limiting
 
@@ -369,8 +370,8 @@ The `not sent` reasons, and where to look:
 |---|---|
 | `the socket refused the write` | This host: load, descriptors, firewall. |
 | `connection refused — the far end, or a router speaking for it, rejected the traffic` | The target side. |
-| `no route to the target` | Routing on this host. |
-| `no address to send to` | DNS or the target's address family. |
+| `no route to the target` | Routing on this host. On an interval without data, every probe failed with `ENETUNREACH`: the host has no route for that family (no default route, or the uplink is administratively down). A dead gateway does not show this; it shows loss. |
+| `no address to send to` | DNS or the target's address family. The interval is drawn as a gap, not as loss. |
 | `the session was refused` | The irtt server refused the session. |
 | `the session broke part-way` | The path or the irtt server. |
 | `the session got no reply — silence, which is not the same as refusal` | A filter or a server that is down. |

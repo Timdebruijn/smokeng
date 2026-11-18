@@ -148,7 +148,7 @@ none is absent, not an empty row. Tell the two shapes apart by the fields: only 
 | Column | Type | Meaning |
 | --- | --- | --- |
 | `ts`, `ts_end` | timestamp (s, UTC) | The column, `[ts, ts_end)`. |
-| `rounds` | uint32 | Intervals stored in the column. Against the target's interval, this is coverage. |
+| `rounds` | uint32 | Intervals with data stored in the column; an interval that sent nothing (`sent` 0, flagged not sent) is not counted. Against the target's interval, this is coverage. A column of only such intervals has `rounds`, `sent` and `received` of 0, and its `flags` and `flagged` still say they were stored. |
 | `sent`, `received` | uint64 | Packets sent and answered, summed over the column. Loss is `1 - received/sent`. |
 | `flags` | uint8 | Every quality bit any interval in the column carried. |
 | `flagged` | uint32 | How many intervals carried one. |

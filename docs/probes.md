@@ -31,9 +31,22 @@ failure* with a reason. The loss rail shows it labelled as smokeng's side, not t
 | `dns` reply of any kind (NXDOMAIN and SERVFAIL included) | **not loss**; see [DNS](#dns) |
 | Out of file descriptors, ports or buffers on the prober (`tcp`, `http`) | send failure |
 | Query or request that could not be built or written | send failure |
-| `irtt` session that never opened | send failure for every probe of the interval |
+| `irtt` session that never opened | send failure for every probe of the interval; no data if it failed with no route |
+| The hostname gives no address of the target's family (the lookup failed or returned none) | **no data**, reason `no address to send to`; nothing is sent |
+| No route from the prober for that family: every probe of the interval fails to send with `ENETUNREACH` | **no data**, reason `no route to the target` |
 | `irtt` session that paced fewer packets than asked | not counted at all; the interval is narrower |
 | Receive queue overflow on the ICMP socket | interval flagged `dropped replies`; some loss is ours |
+
+**No data is neither loss nor a clean interval.** In the two no-data rows the prober could not
+ask the target anything, for a reason that lies with its own host, so the interval says nothing
+about the target. It is stored as an interval with no probes sent and no replies, flagged `not
+sent` with the reason, and drawn as a gap. It applies to every probe type. The distinction is
+measured, on Linux: with no default route, or the uplink administratively down, ICMP, UDP and
+TCP sockets all fail to send with `ENETUNREACH`, for both families, and the interval is no data.
+With a dead gateway or a lost carrier the routes stay in place, the sends succeed, nothing
+answers and the interval is ordinary loss by timeout. `EHOSTUNREACH` stays what it was, because
+a router on the path can send it: it stays loss, flagged `not sent` wherever it was. One probe that went out, or
+failed for another reason, makes the interval an ordinary one.
 
 Badges and how to read them: [Reading graphs](reading-graphs.md).
 

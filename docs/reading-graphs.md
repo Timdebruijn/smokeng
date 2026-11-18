@@ -77,7 +77,9 @@ with different causes, and the pair distinguishes them at a glance.
 
 Loss is `1 − received / sent` per interval. Probes that never went out because of a local
 failure are still drawn as loss, with a `not sent` badge naming the reason (see the badges
-below), so an unreachable target is not an empty graph. Loss under 0.1 % is shown as
+below), so an unreachable target is not an empty graph. The exception is an interval in which
+nothing could be sent at all, because the hostname gave no address or this host has no route:
+that is drawn as a gap, like a missing interval, and left out of the loss figures. Loss under 0.1 % is shown as
 `<0.1%`, never as `0.0%`. What counts as lost for each probe type is in [Probes](probes.md).
 
 ## Path change marks
@@ -234,7 +236,7 @@ it beside the target name rather than leaving you to infer it. A badge with a co
 | `dropped replies` | The kernel receive queue overflowed and discarded replies. **Some of the loss shown is smokeng's, not the network's.** | Do not quote the loss as network loss. Raise the receive buffer or cut the ping rate, then measure again. |
 | `clock step` | The wall clock jumped during these intervals. The affected round-trip times cannot be trusted. | Ignore those intervals' latency. Check NTP on the prober. |
 | `cut short` | The interval ended early, after a restart or a settings change. Its loss figure is not comparable with a whole interval. | Leave it out of any loss figure you quote. |
-| `not sent`, with a reason | The probes never went out: no route, a refused write, an irtt session that never opened. They still draw as loss, so an unreachable target is not an empty graph. The reason says whether the cause was local or the far end. | Read the reason first. A local cause is yours to fix; a refusal from the far end is evidence. |
+| `not sent`, with a reason | The probes never went out: a refused write, an irtt session that never opened. They still draw as loss, so an unreachable target is not an empty graph. The reason says whether the cause was local or the far end. On an interval without data (reasons `no address to send to` and `no route to the target`) nothing was asked of the target: the interval is a gap in the smoke, the median line and the loss rail, and is in no loss figure or median. The hover says `no data`. | Read the reason first. A local cause is yours to fix; a refusal from the far end is evidence. With no data, the problem is the prober's DNS or routing, not the target. |
 | ICMP error | The target or a router answered with an ICMP error rather than an echo reply. The specific error (host unreachable, admin prohibited, TTL exceeded) appears in the hover readout. | Quote the exact error. It names who refused the traffic. |
 | `positional loss` | The loss in these intervals sits at fixed places in the send order, which loss that falls where it happens to does not do. Hover for the positions and the number of intervals it rests on. It is consistent with rate limiting by the target, a router or a CPE, and does not show that. The loss itself is drawn and counted as before. | Run `smokeng diag loss-pattern` to see the evidence ([Troubleshooting](troubleshooting.md#loss-on-a-graph-that-might-be-rate-limiting), which also says what the flag cannot see). If it is rate limiting, `probe_mode = "spread"` usually stays under the limit: [Probes](probes.md#rate-limiting-and-burst-or-spread). |
 
