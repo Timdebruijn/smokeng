@@ -214,8 +214,13 @@ an agent then discovers none. See [Upgrades](operations.md#compatibility-between
 Each measurement and path change carries the address family it was measured over, so a backlog
 delivered after a target's family was changed is filed under the family it was measured over;
 an older agent says nothing and its rows go under the target's current family. Rows of a family
-other than the target's current one are stored and can be read with `family=`, but alert rules
-do not evaluate them.
+other than the ones the target is measured over are stored and can be read with `family=`, but
+alert rules do not evaluate them.
+
+An agent measures a target with `address_family = "both"` over IPv4 only, for now. The master's
+assignment sends such a target as `v4`: an agent of any released version refuses a value it does
+not know and then drops its whole target sync. Its rows are v4, and the v6 series of that target
+has data from the master's own prober only.
 Downgrades are not supported.
 
 ## How the protocol works

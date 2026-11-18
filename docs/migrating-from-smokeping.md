@@ -137,8 +137,8 @@ smoothing. See [Reading the graphs](reading-graphs.md).
 year's minute is still a minute, so a post-incident review a year later shows the same
 distribution the prober recorded.
 
-**IPv4 and IPv6 are separate targets.** They take different paths and fail independently,
-so smokeng never merges them into one graph.
+**IPv4 and IPv6 are separate series.** They take different paths and fail independently,
+so smokeng never merges them into one graph. The import creates one target per family.
 
 **Loss and latency share the plot.** SmokePing encodes loss in the colour of the median
 line; smokeng gives it a dedicated rail beneath the graph, so "slow" and "lossy" stay

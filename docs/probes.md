@@ -227,8 +227,10 @@ targets, with `dscp = 46` and `0`, shows whether the network treats them differe
 
 ## Dual stack and what a name resolves to
 
-IPv4 and IPv6 are separate targets, on purpose: they take different paths and fail
-independently. A hostname resolves **one address per family**. `v4` takes an A record, `v6` an
+IPv4 and IPv6 are separate series, on purpose: they take different paths and fail
+independently. A target with `address_family = "both"` is measured over each, as two series, and a
+host with no route for one family, or a name with no record of it, shows that family as no data
+while the other is measured normally. A hostname resolves **one address per family**. `v4` takes an A record, `v6` an
 AAAA record (`internal/probe/dnscache/dnscache.go`).
 
 - The first matching record in the answer is the one measured. smokeng honours the record's TTL
