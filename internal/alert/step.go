@@ -29,11 +29,11 @@ func step(r *Rule, st *State, ss *shapeState, m *Input, golden []uint32, app *Ap
 		// leaves an alert that fired before the detector had seen enough firing
 		// for as long as the limiter keeps hitting: nothing would ever count
 		// towards clearing it. The round-trip times of such an interval are
-		// real, so every other metric reads it as usual. A copy, because the
-		// caller's Input is shared with the other rules on this series.
-		c := *m
-		c.Received = c.Sent
-		m = &c
+		// real, so every other metric reads it as usual. The state still carries
+		// the loss that was measured, so a notification says what happened and
+		// not what the rule counted.
+		measured, ok := Value(m, MetricLoss)
+		return evaluate(r, st, 0, measured, ok, m.LossTrusted, m.TS, intervalS)
 	}
 	return Evaluate(r, st, m, intervalS)
 }

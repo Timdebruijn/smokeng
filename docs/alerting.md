@@ -161,7 +161,8 @@ marks it `positional loss` (see [Reading the graphs](reading-graphs.md)). Loss t
 own rate limiter produces is not loss on the network, and a loss rule that pages on it pages
 about the target's configuration. So a rule on `loss` reads such an interval as 0% loss: for
 the usual `loss > x` rule it does not count towards firing, and it counts towards clearing
-like any other interval under the threshold. The interval is still stored, drawn and counted
+like any other interval under the threshold. The notification, the firing list and the
+history still show the loss that was measured. The interval is still stored, drawn and counted
 as loss everywhere else, in the availability figures included.
 
 Rules on median, p95, spread, shape and bimodality are not affected: the round-trip times of
@@ -172,7 +173,8 @@ Three consequences are worth knowing before you rely on it:
 - **A loss rule can still fire at the start of a rate-limited stretch.** The detector needs
   twelve intervals with lopsided loss before it flags anything. Once the flags begin the alert
   resolves after `clear_intervals` flagged intervals, while the loss on the graph goes on. The
-  resolve message gives the loss as 0%, which is what the rule read, not what was measured.
+  resolve message gives the loss that was measured; the rule resolved because it does not
+  count that loss, not because the loss stopped.
 - **Loss on the path can hide among it.** The flag is per interval, not per probe: while a
   series is flagged, an interval that lost some of its probes reads as having lost none, also
   when part of that loss was on the path.

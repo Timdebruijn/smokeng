@@ -295,6 +295,14 @@ func Evaluate(r *Rule, st *State, m *Input, intervalS int) Transition {
 // hysteresis, gap handling and state transitions stay identical to every other
 // rule, so shape rules inherit For/ClearFor, acknowledge and delivery unchanged.
 func EvaluateValue(r *Rule, st *State, value float64, ok, trusted bool, ts int64, intervalS int) Transition {
+	return evaluate(r, st, value, value, ok, trusted, ts, intervalS)
+}
+
+// evaluate is EvaluateValue with the figure the state carries kept apart from
+// the one the hysteresis reads. They differ only for a loss rule that reads a
+// positional-loss interval as 0%: the rule counts 0, the notification says
+// what was measured. shown is stored exactly when value would have been.
+func evaluate(r *Rule, st *State, value, shown float64, ok, trusted bool, ts int64, intervalS int) Transition {
 	if !r.Enabled {
 		return NoChange
 	}
@@ -307,7 +315,7 @@ func EvaluateValue(r *Rule, st *State, value float64, ok, trusted bool, ts int64
 		return NoChange
 	}
 	st.LastTS = ts
-	st.Value = value
+	st.Value = shown
 
 	matches := value > r.Threshold
 	if r.Op == OpLess {
