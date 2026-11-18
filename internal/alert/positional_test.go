@@ -125,10 +125,10 @@ func TestPositionalLossBreaksAStreakAndHidesNothingElse(t *testing.T) {
 	}
 }
 
-// A rule reads a flagged interval as 0% loss, and that is the figure its state
-// carries into a notification. Pinned because it is what an operator sees in a
-// resolve message while the graph still shows loss, and the docs say so.
-func TestPositionalLossIsReadAsZero(t *testing.T) {
+// A rule reads a flagged interval as 0% loss, but the figure its state carries
+// into a notification is the loss that was measured. Also pins that the caller's
+// input is left alone, since other rules on the series share it.
+func TestPositionalLossCarriesTheMeasuredValue(t *testing.T) {
 	loss := ruleOn(MetricLoss, 5)
 	app := &Applicable{IntervalS: 60, ExcludePositionalLoss: true}
 	var s Series
@@ -138,8 +138,8 @@ func TestPositionalLossIsReadAsZero(t *testing.T) {
 	}
 	in := lossyInput(1, true)
 	s.Step(loss, in, nil, app)
-	if s.State.Value != 0 {
-		t.Errorf("value read from a flagged interval = %v, want 0", s.State.Value)
+	if s.State.Value != 15 {
+		t.Errorf("value carried from a flagged interval = %v, want the measured 15", s.State.Value)
 	}
 	if in.Received != 17 {
 		t.Errorf("the caller's input was changed: received %d, want 17", in.Received)
@@ -148,5 +148,51 @@ func TestPositionalLossIsReadAsZero(t *testing.T) {
 	f.Step(loss, in, nil, &Applicable{IntervalS: 60})
 	if f.State.Value != 15 {
 		t.Errorf("flag_only: value = %v, want 15", f.State.Value)
+	}
+}
+
+// An interval that does not update the value on any other path must not on a
+// flagged one either: an untrusted interval and a disabled rule keep the last value.
+func TestPositionalLossKeepsTheValueWhereEvaluateDoes(t *testing.T) {
+	app := &Applicable{IntervalS: 60, ExcludePositionalLoss: true}
+	loss := ruleOn(MetricLoss, 5)
+	var s Series
+	s.Step(loss, lossyInput(0, false), nil, app)
+	untrusted := lossyInput(1, true)
+	untrusted.LossTrusted = false
+	s.Step(loss, untrusted, nil, app)
+	if s.State.Value != 15 {
+		t.Errorf("untrusted flagged interval changed the value to %v", s.State.Value)
+	}
+	off := ruleOn(MetricLoss, 5)
+	off.Enabled = false
+	var d Series
+	d.Step(off, lossyInput(0, true), nil, app)
+	if d.State.Value != 0 {
+		t.Errorf("disabled rule stored value %v", d.State.Value)
+	}
+}
+
+// The resolve transition of an alert that clears on flagged intervals reports
+// the measured loss, and happens at the same interval as it always did (the
+// third flagged one): only the figure changed, not the hysteresis.
+func TestPositionalLossResolveReportsMeasuredLoss(t *testing.T) {
+	loss := ruleOn(MetricLoss, 5)
+	app := &Applicable{IntervalS: 60, ExcludePositionalLoss: true}
+	var s Series
+	for i := range 3 {
+		s.Step(loss, lossyInput(i, false), nil, app)
+	}
+	resolvedAt := 0
+	for i := 3; i < 10 && resolvedAt == 0; i++ {
+		if s.Step(loss, lossyInput(i, true), nil, app) == Resolved {
+			resolvedAt = i
+			if s.State.Value != 15 {
+				t.Errorf("resolve carries value %v, want the measured 15", s.State.Value)
+			}
+		}
+	}
+	if resolvedAt != 5 {
+		t.Errorf("resolved at interval %d, want 5 (clear_for flagged intervals)", resolvedAt)
 	}
 }
