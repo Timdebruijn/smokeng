@@ -415,14 +415,19 @@ func (e *Engine) runTarget(ctx context.Context, spec TargetSpec) {
 				})
 			}
 		} else {
+			// Said once per interval, not once per probe: a host without a route
+			// for the target's family fails every send of every interval, and
+			// that is twenty lines saying one thing.
+			sendLogged := false
 			for i, at := range times {
 				if !sleepUntil(ctx, at) {
 					aborted = true
 					break
 				}
 				if c != nil {
-					if err := c.send(col, i, addr, spec.PacketSize); err != nil {
-						log.Printf("probe: target %d: send: %v", spec.TargetID, err)
+					if err := c.send(col, i, addr, spec.PacketSize); err != nil && !sendLogged {
+						log.Printf("probe: target %d (%s): send: %v", spec.TargetID, spec.Host, err)
+						sendLogged = true
 					}
 					continue
 				}
