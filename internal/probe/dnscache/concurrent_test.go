@@ -68,11 +68,9 @@ func fakeResolver(t *testing.T) string {
 // the two families of one name and at every start for all names at once. Each
 // must get its own answer.
 func TestConcurrentLookupsEachGetTheirOwnAnswer(t *testing.T) {
-	c, err := New()
-	if err != nil {
-		t.Skip("no system resolver configuration:", err)
-	}
-	c.servers = []string{fakeResolver(t)}
+	// Built by hand rather than with New, which needs a system resolver
+	// configuration and would have this test skipped where there is none.
+	c := &Cache{servers: []string{fakeResolver(t)}, exchange: exchangeUDP, entries: map[key]*entry{}}
 
 	const rounds, each = 20, 8
 	var wg sync.WaitGroup

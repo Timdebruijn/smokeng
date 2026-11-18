@@ -71,20 +71,24 @@ func New() (*Cache, error) {
 		servers = append(servers, net.JoinHostPort(s, port))
 	}
 	return &Cache{
-		servers: servers,
-		// A client per query. One client shared by every lookup is what the
-		// library's documentation allows, and it does not work: Client.Exchange
-		// empties the client's table of queries in flight when any one of them
-		// finishes, and the others then reject their own answers as "ID
-		// mismatch". Against a resolver that answers correctly, three in four
-		// lookups started together failed. Lookups do start together: every
-		// name at start-up, and the two families of one name at every interval.
-		exchange: func(ctx context.Context, m *dns.Msg, server string) (*dns.Msg, error) {
-			r, _, err := dns.NewClient().Exchange(ctx, m, "udp", server)
-			return r, err
-		},
-		entries: map[key]*entry{},
+		servers:  servers,
+		exchange: exchangeUDP,
+		entries:  map[key]*entry{},
 	}, nil
+}
+
+// exchangeUDP asks one server over UDP, with a client of its own.
+//
+// A client per query. One client shared by every lookup is what the
+// library's documentation allows, and it does not work: Client.Exchange
+// empties the client's table of queries in flight when any one of them
+// finishes, and the others then reject their own answers as "ID
+// mismatch". Against a resolver that answers correctly, three in four
+// lookups started together failed. Lookups do start together: every
+// name at start-up, and the two families of one name at every interval.
+func exchangeUDP(ctx context.Context, m *dns.Msg, server string) (*dns.Msg, error) {
+	r, _, err := dns.NewClient().Exchange(ctx, m, "udp", server)
+	return r, err
 }
 
 // Lookup returns the address for host in the given family ("v4"/"v6").
