@@ -360,7 +360,7 @@ Meanings: [Reading graphs](reading-graphs.md). What to do:
 | `clock step` | Check NTP: `timedatectl`, `chronyc tracking`. Ignore the spike. |
 | `cut short` | Nothing to fix. Do not read a one-off loss there as an outage. |
 | `not sent` plus a reason | See the next table. |
-| `positional loss` | Run `smokeng diag loss-pattern` ([above](#loss-on-a-graph-that-might-be-rate-limiting)). If it is rate limiting, try `probe_mode = "spread"` ([Probes](probes.md#rate-limiting-and-burst-or-spread)). The badge does not change the loss figures or any alert. |
+| `positional loss` | Run `smokeng diag loss-pattern` ([above](#loss-on-a-graph-that-might-be-rate-limiting)). If it is rate limiting, try `probe_mode = "spread"` ([Probes](probes.md#rate-limiting-and-burst-or-spread)). The badge does not change the loss figures. Alert rules on `loss` read flagged intervals as loss-free unless `positional_loss = "flag_only"` ([Alerting](alerting.md#loss-at-fixed-send-positions)). |
 | An ICMP error name (`host unreachable`, `administratively filtered`, `TTL exceeded`, ...) | Look at the router or firewall the error names. `administratively filtered` is a filter rule. |
 
 The `not sent` reasons, and where to look:

@@ -67,6 +67,11 @@ const SETTING_LABELS: {
       return raw.split(/\s+/).join(', ')
     },
   },
+  {
+    key: 'positional_loss',
+    label: 'Positional loss',
+    render: (v) => (v === 'flag_only' ? 'flag only' : 'excluded from loss rules'),
+  },
 ]
 
 /**

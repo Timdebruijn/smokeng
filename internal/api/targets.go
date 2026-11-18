@@ -80,6 +80,7 @@ func targetJSON(sc *Scope, n *tree.Target) (map[string]any, error) {
 			"trace_interval_s":   settingJSON(sc, n.ID, res.TraceIntervalS),
 			"retention_s":        settingJSON(sc, n.ID, res.RetentionS),
 			"graph_series":       settingJSON(sc, n.ID, res.GraphSeries),
+			"positional_loss":    settingJSON(sc, n.ID, res.PositionalLoss),
 			"probe_type":         settingJSON(sc, n.ID, res.ProbeType),
 			"probe_port":         settingJSON(sc, n.ID, res.ProbePort),
 			"dns_query":          settingJSON(sc, n.ID, res.DNSQuery),
@@ -555,7 +556,8 @@ func applyPatch(n *tree.Target, body map[string]json.RawMessage) error {
 			"http_path":   &n.Settings.HTTPPath,
 			// The UI sends this as an array of series names, handled below; a
 			// space-separated string still works and means the same thing.
-			"graph_series": &n.Settings.GraphSeries,
+			"graph_series":    &n.Settings.GraphSeries,
+			"positional_loss": &n.Settings.PositionalLoss,
 		}
 		for key, raw := range settings {
 			// graph_series travels as an array of series names, which is what

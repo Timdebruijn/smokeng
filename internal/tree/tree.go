@@ -77,7 +77,20 @@ type Settings struct {
 	// measurement smokeng took and did not show is one nobody knows to look
 	// for. The empty string draws none, leaving only the round trip.
 	GraphSeries *string
+	// PositionalLoss is whether an alert rule on loss counts an interval whose
+	// loss sits at fixed places in the send order (store.Measurement.Positional).
+	// Loss that a target's own rate limiter produces is not loss on the network,
+	// and a loss rule that pages on it pages about the target's configuration.
+	// PositionalExclude is the default; PositionalFlagOnly counts such intervals
+	// like any other, for a subtree where the pattern is not rate limiting.
+	PositionalLoss *string
 }
+
+// The values of Settings.PositionalLoss.
+const (
+	PositionalExclude  = "exclude"
+	PositionalFlagOnly = "flag_only"
+)
 
 // Source identifies the node an effective value came from.
 type Source struct {
@@ -107,6 +120,7 @@ type Resolved struct {
 	TraceIntervalS   Value[int]
 	RetentionS       Value[int]
 	GraphSeries      Value[string]
+	PositionalLoss   Value[string]
 	ProbeType        Value[string]
 	ProbePort        Value[int]
 	DNSQuery         Value[string]
@@ -196,6 +210,10 @@ func (t *Target) Validate() error {
 			return fmt.Errorf("tree: graph_series: %w", err)
 		}
 	}
+	if s.PositionalLoss != nil && *s.PositionalLoss != PositionalExclude && *s.PositionalLoss != PositionalFlagOnly {
+		return fmt.Errorf("tree: positional_loss must be %q or %q, got %q",
+			PositionalExclude, PositionalFlagOnly, *s.PositionalLoss)
+	}
 	// 0 disables path discovery, so only a negative value is wrong.
 	if s.TraceIntervalS != nil && *s.TraceIntervalS < 0 {
 		return fmt.Errorf("tree: trace_interval_s must not be negative (0 disables it)")
@@ -253,7 +271,7 @@ func New(targets []Target) (*Tree, error) {
 		s.BurstGapMS == nil || s.TimeoutMS == nil || s.PacketSize == nil ||
 		s.DSCP == nil || s.Agents == nil || s.TraceIntervalS == nil ||
 		s.RetentionS == nil || s.ProbeType == nil || s.TLSSkipVerify == nil ||
-		s.GraphSeries == nil {
+		s.GraphSeries == nil || s.PositionalLoss == nil {
 		return nil, fmt.Errorf("tree: root %d must set every inheritable default", t.root.ID)
 	}
 	for _, n := range t.nodes {
@@ -363,6 +381,7 @@ func (t *Tree) Resolve(id int64) (Resolved, error) {
 		TraceIntervalS:   resolve(t, chain, func(s *Settings) *int { return s.TraceIntervalS }),
 		RetentionS:       resolve(t, chain, func(s *Settings) *int { return s.RetentionS }),
 		GraphSeries:      resolve(t, chain, func(s *Settings) *string { return s.GraphSeries }),
+		PositionalLoss:   resolve(t, chain, func(s *Settings) *string { return s.PositionalLoss }),
 	}, nil
 }
 

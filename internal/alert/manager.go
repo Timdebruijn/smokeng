@@ -217,7 +217,7 @@ func (m *Manager) Observe(ctx context.Context, ms []Input) {
 					m.shapes[key] = ss
 				}
 			}
-			switch step(r, st, ss, meas, m.golden[r.ID].Samples, app.IntervalS) {
+			switch step(r, st, ss, meas, m.golden[r.ID].Samples, &app) {
 			case Fired:
 				fired = append(fired, m.alertLocked(r, st, app, true))
 			case Resolved:

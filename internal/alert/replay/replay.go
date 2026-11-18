@@ -122,6 +122,7 @@ var notes = []string{
 	"The live engine re-warms shape baselines after every restart; the replay does not know about restarts.",
 	"Gap detection uses each target's current interval_s, which may differ from what it was when the data was measured.",
 	"Silences that were deleted are not known.",
+	"Flagged intervals (positional loss) are the ones the master flagged when it stored them, read as no loss by loss rules under the target's current positional_loss setting.",
 	"An interval that reached the master after a later one of its series was not evaluated live; the replay evaluates it in its place.",
 }
 
@@ -464,7 +465,7 @@ func (sr *seriesRun) run(ctx context.Context) ([]seriesOut, error) {
 			// rule decides here is before the window and is discarded.
 			for _, rr := range rrs {
 				if m.TS >= rr.warmStart {
-					rr.ser.Step(&rr.rule, &in, rr.golden, sr.app.IntervalS)
+					rr.ser.Step(&rr.rule, &in, rr.golden, &sr.app)
 					rr.found++
 				}
 			}
@@ -529,7 +530,7 @@ func (sr *seriesRun) run(ctx context.Context) ([]seriesOut, error) {
 
 // step advances one rule by one in-window row and keeps its episodes.
 func (sr *seriesRun) step(rr *ruleRun, in *alert.Input) {
-	t := rr.ser.Step(&rr.rule, in, rr.golden, sr.app.IntervalS)
+	t := rr.ser.Step(&rr.rule, in, rr.golden, &sr.app)
 	st := &rr.ser.State
 	switch t {
 	case alert.Fired:

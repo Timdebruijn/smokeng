@@ -137,6 +137,16 @@ const SETTINGS: SettingDef[] = [
     types: ['irtt'],
     hint: 'Which of the per-packet distributions measured beside the round trip are drawn. This changes what is shown, never what is kept — everything measured is stored regardless, so switching one on later shows its history rather than starting it from today. Only irtt targets measure any of these, and only where the far end returns timestamps.',
   },
+  {
+    key: 'positional_loss',
+    label: 'Positional loss',
+    kind: 'choice',
+    choices: [
+      { value: 'exclude', label: 'exclude from loss rules' },
+      { value: 'flag_only', label: 'flag only' },
+    ],
+    hint: 'Whether loss at fixed send positions (the positional loss badge) counts for alert rules on loss.',
+  },
 ]
 
 /**

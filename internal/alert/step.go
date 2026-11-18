@@ -10,14 +10,30 @@ import "github.com/timdebruijn/smokeng/internal/tree"
 //
 // ss is the series' shape memory; only the shape metrics read it, and it may be
 // nil for the others. golden is the rule's captured reference, nil when there
-// is none.
-func step(r *Rule, st *State, ss *shapeState, m *Input, golden []uint32, intervalS int) Transition {
+// is none. app is the target's resolved context: it carries the interval and
+// the positional-loss policy, so that neither caller can forget either.
+func step(r *Rule, st *State, ss *shapeState, m *Input, golden []uint32, app *Applicable) Transition {
+	intervalS := app.IntervalS
 	if r.Metric.IsShape() {
 		// Shape metrics are computed from history, not from one interval: the
 		// baseline and divergence buffers live in ss, and the value feeds the
 		// same hysteresis every other rule uses.
 		value, ok := ss.value(r, m, golden)
 		return EvaluateValue(r, st, value, ok, m.RTTTrusted, m.TS, intervalS)
+	}
+	if r.Metric == MetricLoss && app.ExcludePositionalLoss && m.PositionalLoss {
+		// Loss that the target's own rate limiter produces is not loss on the
+		// network, and a rule that pages on it pages about the target's
+		// configuration. So the rule reads the interval as having lost nothing.
+		// Skipping it instead, as an interval with dropped replies is skipped,
+		// leaves an alert that fired before the detector had seen enough firing
+		// for as long as the limiter keeps hitting: nothing would ever count
+		// towards clearing it. The round-trip times of such an interval are
+		// real, so every other metric reads it as usual. A copy, because the
+		// caller's Input is shared with the other rules on this series.
+		c := *m
+		c.Received = c.Sent
+		m = &c
 	}
 	return Evaluate(r, st, m, intervalS)
 }
@@ -33,8 +49,8 @@ type Series struct {
 
 // Step advances the series by one measurement, exactly as the manager does for
 // a live one. Measurements must be given oldest first.
-func (s *Series) Step(r *Rule, m *Input, golden []uint32, intervalS int) Transition {
-	return step(r, &s.State, &s.shape, m, golden, intervalS)
+func (s *Series) Step(r *Rule, m *Input, golden []uint32, app *Applicable) Transition {
+	return step(r, &s.State, &s.shape, m, golden, app)
 }
 
 // WarmupIntervals is how many intervals before a moment a rule's verdict at
@@ -63,6 +79,10 @@ type Applicable struct {
 	IntervalS int
 	Path      string
 	Host      string
+	// ExcludePositionalLoss is the target's positional_loss setting: true when a
+	// rule on loss reads an interval flagged as losing at fixed send positions
+	// as one without loss.
+	ExcludePositionalLoss bool
 }
 
 // Resolve works out which rules reach each enabled leaf. Rules inherit like
@@ -94,7 +114,10 @@ func Resolve(targets []tree.Target, rules []Rule) (map[int64]Applicable, error) 
 		if err != nil {
 			return nil, err
 		}
-		app := Applicable{IntervalS: res.IntervalS.Effective, Path: path, Host: *n.Host}
+		app := Applicable{
+			IntervalS: res.IntervalS.Effective, Path: path, Host: *n.Host,
+			ExcludePositionalLoss: res.PositionalLoss.Effective == tree.PositionalExclude,
+		}
 		if node, ok := NearestRuleNode(tr, func(id int64) bool { return len(byNode[id]) > 0 }, n.ID); ok {
 			app.Rules = byNode[node]
 		}

@@ -262,8 +262,9 @@ path at one instant. smokeng does not change the mode by itself; you do, per tar
 
 smokeng marks intervals whose loss sits at fixed send positions with the `positional loss` badge,
 and `smokeng diag loss-pattern` shows the evidence. The badge says the loss does not fit loss that
-falls where it happens to, not what causes it, and it does not touch the loss figures or the alert
-rules. What the detection needs and cannot see:
+falls where it happens to, not what causes it. It does not touch the loss figures. Alert rules on
+`loss` read such intervals as loss-free by default, which a setting turns off: see
+[Alerting](alerting.md#loss-at-fixed-send-positions). What the detection needs and cannot see:
 [Troubleshooting](troubleshooting.md#loss-on-a-graph-that-might-be-rate-limiting).
 
 ## Internal certificates

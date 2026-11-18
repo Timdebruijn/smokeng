@@ -147,10 +147,51 @@ towards saying nothing.
 
 The consecutive-interval counter resets when smokeng cannot trust the input: a gap in the
 data of more than two intervals, or an interval flagged as untrustworthy (a clock step, a
-receive-queue overflow). Only two flags change what a rule reads: a socket overflow
-is left out of loss, and a clock step is left out of the round-trip metrics. A probe that
+receive-queue overflow). Three things change what a rule reads: a socket overflow
+is left out of loss, a clock step is left out of the round-trip metrics, and, by default, a
+loss rule reads an interval flagged `positional loss` as one without loss. A probe that
 failed to send (for example local file-descriptor exhaustion) still counts as sent and lost,
 so it can fire a loss alert.
+
+### Loss at fixed send positions
+
+An interval whose loss sits at the same places in the send order, interval after interval,
+is the signature of a target's ICMP rate limiter rather than of loss on the path; the graph
+marks it `positional loss` (see [Reading the graphs](reading-graphs.md)). Loss that a target's
+own rate limiter produces is not loss on the network, and a loss rule that pages on it pages
+about the target's configuration. So a rule on `loss` reads such an interval as 0% loss: for
+the usual `loss > x` rule it does not count towards firing, and it counts towards clearing
+like any other interval under the threshold. The interval is still stored, drawn and counted
+as loss everywhere else, in the availability figures included.
+
+Rules on median, p95, spread, shape and bimodality are not affected: the round-trip times of
+a rate-limited interval are real.
+
+Three consequences are worth knowing before you rely on it:
+
+- **A loss rule can still fire at the start of a rate-limited stretch.** The detector needs
+  twelve intervals with lopsided loss before it flags anything. Once the flags begin the alert
+  resolves after `clear_intervals` flagged intervals, while the loss on the graph goes on. The
+  resolve message gives the loss as 0%, which is what the rule read, not what was measured.
+- **Loss on the path can hide among it.** The flag is per interval, not per probe: while a
+  series is flagged, an interval that lost some of its probes reads as having lost none, also
+  when part of that loss was on the path.
+- **A target that stops answering still fires.** An interval that lost every probe is never
+  flagged, since total loss says nothing about position, so a loss rule reads it as it is.
+
+On upgrading to the release that adds this, existing loss rules start reading flagged
+intervals as loss-free, since `exclude` is the default. A series with no flagged intervals
+behaves as before.
+
+This is a default, not a certainty. The flag says the pattern does not fit random loss, which
+rate limiting explains and does not prove. To count flagged intervals like any other for a
+subtree, set `positional_loss` there (`[defaults]` or any target table; it inherits like every
+other setting, and the admin page has it as "Positional loss"):
+
+```toml
+[targets."Lab"]
+positional_loss = "flag_only"   # "exclude" (the default) or "flag_only"
+```
 
 Alert state is persisted, so an alert that has been firing for an hour does not resolve
 and re-fire every time the service restarts.
@@ -217,7 +258,7 @@ rule slow-p95 on /Production: p95 > 80ms for 5 intervals
 
 Notes:
   - These are rule transitions, not notifications: Alertmanager grouping, repeats and routing are not simulated.
-  (five more notes follow)
+  (six more notes follow)
 ```
 
 Each line under a series is one firing period: when the rule fired (the interval that
@@ -242,6 +283,9 @@ with notes, which say what the output is not:
 - **Late intervals are replayed in order.** The live engine does not evaluate an interval that
   arrives after a later one of the same series (an agent whose clock stepped back); the replay
   reads history in time order and evaluates it where it belongs.
+- **Positional loss is as the master flagged it.** The intervals a loss rule reads as
+  loss-free are the ones the master flagged when it stored them, under the target's current
+  `positional_loss` setting.
 
 How the rule applies is decided as after an import. A rule from the file replaces the stored
 rule of the same name on the same node, keeping its captured golden baseline and its

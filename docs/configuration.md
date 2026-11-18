@@ -156,6 +156,7 @@ type is stored and ignored. What each type measures: [Probes](probes.md).
 | `trace_interval_s` | path discovery | int | `300` | 0, or 30 – 604 800 | Seconds between traceroutes; `0` disables path discovery |
 | `retention_s` | all | int | `0` | 0, or 3600 – 315 360 000 | Seconds to keep raw measurements; `0` keeps them forever. Older intervals are deleted whole, never downsampled; see [Operations](operations.md). Admin-only to set |
 | `graph_series` | `irtt` | string | `all` | `all`, `""`, or names | Which extra per-packet distributions are drawn. Display only |
+| `positional_loss` | all | string | `"exclude"` | `exclude` or `flag_only` | Whether alert rules on loss read intervals flagged `positional loss` (loss at fixed send positions, as a target's ICMP rate limiter produces) as having no loss. `flag_only` counts them like any other. See [Alerting](alerting.md#loss-at-fixed-send-positions) |
 
 `agents` is checked against the agents you have enrolled. A name that matches none is refused,
 with the offending name and the list of what exists, because the alternative is a target
