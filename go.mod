@@ -3,7 +3,7 @@ module github.com/timdebruijn/smokeng
 go 1.27.4
 
 require (
-	codeberg.org/miekg/dns v0.6.134
+	codeberg.org/miekg/dns v0.6.139
 	github.com/apache/arrow-go/v18 v18.9.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/google/flatbuffers v25.12.19+incompatible
@@ -22,7 +22,7 @@ require (
 	github.com/goccy/go-json v0.12.0 // indirect
 	github.com/google/pprof v0.0.0-20261026192309-dbd0ed30aa88 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/klauspost/compress v1.20.4 // indirect
+	github.com/klauspost/compress v1.20.5 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.2 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
