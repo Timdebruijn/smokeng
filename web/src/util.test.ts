@@ -11,6 +11,7 @@ import {
   filterByFamily,
   parseFamilyChoice,
   resolveSeries,
+  screenTitle,
   seriesKey,
   seriesLabel,
   shownFamilies,
@@ -282,4 +283,12 @@ test('countedFlags leaves out the userspace pair only where the probe type alway
     assert.equal(countedFlags(0b11, type), 0b11, String(type))
     assert.equal(countedFlags(0b10, type), 0b10, String(type))
   }
+})
+
+test('screenTitle names every screen, detail after its target', () => {
+  assert.equal(screenTitle('overview'), 'Overview - smokeng')
+  assert.equal(screenTitle('access'), 'Access - smokeng')
+  assert.equal(screenTitle('signin'), 'Sign in - smokeng')
+  assert.equal(screenTitle('detail', 'core/router'), 'core/router - smokeng')
+  assert.equal(screenTitle('detail', null), 'Target - smokeng')
 })

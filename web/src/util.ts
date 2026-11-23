@@ -209,6 +209,16 @@ export function resolveSeries(t: Target, byName: Map<string, number>, sep = ' ')
   )
 }
 
+export type ScreenName = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail' | 'signin'
+
+/** The document title of a screen. Detail is named after its target; until that
+ *  is loaded it says "Target" rather than a title that would be wrong. */
+export function screenTitle(screen: ScreenName, detailName?: string | null): string {
+  const name =
+    screen === 'detail' ? detailName || 'Target' : screen === 'signin' ? 'Sign in' : screen[0].toUpperCase() + screen.slice(1)
+  return `${name} - smokeng`
+}
+
 /**
  * Pooled over the whole window, from the samples themselves. With no replies
  * every quantile would otherwise read as 0 — not "unknown", but a specific,
