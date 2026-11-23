@@ -65,6 +65,28 @@ export function fmtClock(unixSeconds: number): string {
 }
 
 /**
+ * The row the keyboard moves the cursor to: `cur` is the row under it now (-1
+ * for none), `n` the number of rows. Arrows step one row and stop at the ends;
+ * from no cursor, right starts at the first row and left at the last. Null for
+ * a key that moves nothing.
+ */
+export function stepRow(key: string, cur: number, n: number): number | null {
+  if (n <= 0) return null
+  switch (key) {
+    case 'ArrowRight':
+      return Math.min(n - 1, cur + 1)
+    case 'ArrowLeft':
+      return cur < 0 ? n - 1 : Math.max(0, cur - 1)
+    case 'Home':
+      return 0
+    case 'End':
+      return n - 1
+    default:
+      return null
+  }
+}
+
+/**
  * The last row starting at or before t, or -1: a row's ts is the start of the
  * interval it covers, [ts, ts+span). Picking the *nearest* row instead reports
  * the following interval's median for everything past the midpoint of each

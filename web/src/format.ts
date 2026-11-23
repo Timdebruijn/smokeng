@@ -39,6 +39,60 @@ export function replyLines(sent: number, received: number, median: number, loss:
   ]
 }
 
+/** The finite values, sorted ascending. */
+function sortedFinite(values: ArrayLike<number>): number[] {
+  return Array.from(values)
+    .filter((x) => Number.isFinite(x))
+    .sort((a, b) => a - b)
+}
+
+/**
+ * The text alternative of one canvas plot: what a sighted reader takes from it
+ * at a glance, in a sentence. Built from the per-row medians the component
+ * keeps (the full distributions live in the worker), so the "typical" figure is
+ * the median of the rows' medians and the "highest" the highest row median, not
+ * a quantile of every probe. `intervals` counts probe intervals, which a pooled
+ * read has more of than rows. Loss is across everything sent, when it is known.
+ */
+export function chartSummary(p: {
+  name: string
+  when: string
+  medians: ArrayLike<number>
+  intervals: number
+  fmt?: (v: number) => string
+  sent?: ArrayLike<number>
+  received?: ArrayLike<number>
+}): string {
+  const head = `${p.name}, ${p.when}`
+  if (p.intervals === 0) return `${head}: no data in this window.`
+  const fmt = p.fmt ?? fmtUs
+  const parts = [`${p.intervals} interval${p.intervals === 1 ? '' : 's'}`]
+  const v = sortedFinite(p.medians)
+  if (v.length === 0) parts.push('no replies')
+  else parts.push(`typical median ${fmt(v[v.length >> 1])}`, `highest median ${fmt(v[v.length - 1])}`)
+  if (p.sent && p.received) {
+    let sent = 0
+    let received = 0
+    for (let i = 0; i < p.sent.length; i++) {
+      sent += p.sent[i]
+      received += p.received[i]
+    }
+    parts.push(sent > 0 ? `loss ${fmtLoss((1 - received / sent) * 100)}` : 'nothing sent')
+  }
+  return `${head}: ${parts.join(', ')}.`
+}
+
+/** The compare graph's alternative: one clause per plotted line, same figures as chartSummary. */
+export function compareSummary(when: string, lines: { label: string; medians: (number | null)[] }[]): string {
+  if (lines.length === 0) return `Compare, ${when}: no series selected.`
+  const per = lines.map((l) => {
+    const v = sortedFinite(l.medians.filter((x): x is number => x !== null))
+    if (v.length === 0) return `${l.label}: no replies`
+    return `${l.label}: typical median ${fmtUs(v[v.length >> 1])}, highest ${fmtUs(v[v.length - 1])}`
+  })
+  return `Compare pooled medians, ${when}. ${per.join('. ')}.`
+}
+
 /**
  * Send positions (1-based, ascending) the way an operator reads them, runs as
  * ranges: [16, 17, 18, 19, 20] is "16–20", [4, 8, 12] is "4, 8, 12". The same
