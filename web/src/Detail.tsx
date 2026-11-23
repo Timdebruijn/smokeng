@@ -513,7 +513,7 @@ function AvailabilityPanel({ target, families }: { target: Target; families: (Fa
   return (
     <section className="card section-card">
       <div className="section-card-head">
-        <span className="section-card-title">Availability</span>
+        <h2 className="section-card-title">Availability</h2>
         <span className="spacer" />
         <span className="pill-row">
           {AVAIL_PERIODS.map((p) => (
@@ -580,6 +580,14 @@ function AvailabilityPanel({ target, families }: { target: Target; families: (Fa
                         {r.downtime.length} outage(s), {fmtDur(r.down_s)} total
                       </summary>
                       <table className="alerts">
+                        <caption className="visually-hidden">Outages</caption>
+                        <thead className="visually-hidden">
+                          <tr>
+                            <th scope="col">Start</th>
+                            <th scope="col">End</th>
+                            <th scope="col">Duration</th>
+                          </tr>
+                        </thead>
                         <tbody>
                           {r.downtime.map((e, i) => (
                             <tr key={i}>

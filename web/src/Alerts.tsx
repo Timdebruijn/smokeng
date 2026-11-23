@@ -98,12 +98,22 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
 
       <section className="card section-card">
         <div className="section-card-head">
-          <span className="section-card-title">Firing</span>
+          <h2 className="section-card-title">Firing</h2>
         </div>
         {firing.length === 0 ? (
           <p className="hint">Nothing is firing.</p>
         ) : (
           <table className="alerts">
+            <caption className="visually-hidden">Firing alerts</caption>
+            <thead className="visually-hidden">
+              <tr>
+                <th scope="col">Alert</th>
+                <th scope="col">Target</th>
+                <th scope="col">Condition</th>
+                <th scope="col">Since</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {firing.map((a) => {
                 const muted = a.acked || a.silenced
@@ -215,7 +225,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
 
       <section className="card section-card">
         <div className="section-card-head">
-          <span className="section-card-title">Rules</span>
+          <h2 className="section-card-title">Rules</h2>
         </div>
         <p className="hint">
           A rule applies to the node it is defined on and everything below it. A node with its own
@@ -226,6 +236,16 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
         {rules.length === 0 && <p className="hint">No rules defined.</p>}
         {rules.length > 0 && (
           <table className="alerts">
+            <caption className="visually-hidden">Alert rules</caption>
+            <thead className="visually-hidden">
+              <tr>
+                <th scope="col">Rule</th>
+                <th scope="col">Target</th>
+                <th scope="col">Condition</th>
+                <th scope="col">Clearing</th>
+                {isAdmin && <th scope="col">Actions</th>}
+              </tr>
+            </thead>
             <tbody>
               {rules.map((r) => (
                 <tr key={r.id} className={r.enabled ? '' : 'disabled-row'}>
@@ -414,7 +434,7 @@ function SilencesSection({
   return (
     <section className="card section-card">
       <div className="section-card-head">
-        <span className="section-card-title">Silences &amp; maintenance windows</span>
+        <h2 className="section-card-title">Silences &amp; maintenance windows</h2>
       </div>
       <p className="hint">
         A silence suppresses delivery and mutes matching alerts over a time window, without
@@ -427,6 +447,16 @@ function SilencesSection({
         <p className="hint">No active or upcoming silences.</p>
       ) : (
         <table className="alerts">
+          <caption className="visually-hidden">Silences and maintenance windows</caption>
+          <thead className="visually-hidden">
+            <tr>
+              <th scope="col">Status</th>
+              <th scope="col">Scope</th>
+              <th scope="col">Period</th>
+              <th scope="col">Reason</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
           <tbody>
             {live.map((s) => (
               <tr key={s.id}>
@@ -466,6 +496,14 @@ function SilencesSection({
         <details className="hint">
           <summary>{past.length} past silence(s)</summary>
           <table className="alerts">
+            <caption className="visually-hidden">Past silences</caption>
+            <thead className="visually-hidden">
+              <tr>
+                <th scope="col">Scope</th>
+                <th scope="col">Ended</th>
+                <th scope="col">Reason</th>
+              </tr>
+            </thead>
             <tbody>
               {past.map((s) => (
                 <tr key={s.id} className="disabled-row">
@@ -636,6 +674,16 @@ function AlertHistory() {
         </p>
       ) : (
         <table className="alerts">
+          <caption className="visually-hidden">Alert history</caption>
+          <thead className="visually-hidden">
+            <tr>
+              <th scope="col">State</th>
+              <th scope="col">Rule</th>
+              <th scope="col">Condition</th>
+              <th scope="col">Target</th>
+              <th scope="col">Time</th>
+            </tr>
+          </thead>
           <tbody>
             {events.map((e) => (
               <tr key={e.id}>

@@ -61,7 +61,7 @@ export default function Grants({
 
       <section className="card section-card">
         <div className="section-card-head">
-          <span className="section-card-title">Access</span>
+          <h2 className="section-card-title">Access</h2>
         </div>
         <p className="hint">
           A grant gives an OIDC group a role on a target and everything beneath it. A group scoped
@@ -90,6 +90,14 @@ export default function Grants({
           <p className="hint">No grants.</p>
         ) : (
           <table className="alerts">
+            <caption className="visually-hidden">Access grants</caption>
+            <thead className="visually-hidden">
+              <tr>
+                <th scope="col">Target</th>
+                <th scope="col">Role</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {grouped.map(([group, list]) => (
                 <Fragment key={group}>

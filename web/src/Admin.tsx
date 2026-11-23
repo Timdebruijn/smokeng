@@ -414,6 +414,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
           </p>
         )}
       <table className="settings">
+        <caption className="visually-hidden">Target settings</caption>
         <tbody>
           {settingsFor(target).map((s) => (
             <SettingRow
@@ -508,7 +509,7 @@ function SettingRow({
 
   return (
     <tr>
-      <th id={`${id}-l`}>{def.label}</th>
+      <th scope="row" id={`${id}-l`}>{def.label}</th>
       <td>
         {def.kind === 'series' ? (
           <SeriesPicker
