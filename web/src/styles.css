@@ -875,6 +875,15 @@ a.button {
   font-weight: 600;
 }
 
+/* The title is an h2 now; this renders it as the span it replaced. The extra
+   class beats `.detail h2`, which would make it a larger flex row. */
+.section-card-head .section-card-title {
+  display: block;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 /* A .dot beside the text it qualifies, inside a table cell — the same idea
    as .plot-head's dot-then-title, just inline instead of in a flex row. */
 .dot-label {

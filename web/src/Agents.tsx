@@ -61,7 +61,7 @@ export default function Agents({
 
       <section className="card section-card">
         <div className="section-card-head">
-          <span className="section-card-title">Agents</span>
+          <h2 className="section-card-title">Agents</h2>
         </div>
         <p className="hint">
           Each agent measures from its own vantage point, and each is its own series — two
@@ -72,6 +72,16 @@ export default function Agents({
           <p className="hint">No agents.</p>
         ) : (
           <table className="alerts">
+            <caption className="visually-hidden">Agents</caption>
+            <thead className="visually-hidden">
+              <tr>
+                <th scope="col">Agent</th>
+                <th scope="col">Last seen</th>
+                <th scope="col">Version</th>
+                <th scope="col">Status</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {agents.map((a) => (
                 <AgentRow
@@ -113,7 +123,7 @@ export default function Agents({
 
       <section className="card section-card">
         <div className="section-card-head">
-          <span className="section-card-title">Enrolment tokens</span>
+          <h2 className="section-card-title">Enrolment tokens</h2>
         </div>
         <p className="hint">
           A token is single-use: an agent spends it on its first connection. Unspent tokens expire
@@ -123,6 +133,15 @@ export default function Agents({
           <p className="hint">No tokens.</p>
         ) : (
           <table className="alerts">
+            <caption className="visually-hidden">Enrolment tokens</caption>
+            <thead className="visually-hidden">
+              <tr>
+                <th scope="col">Token</th>
+                <th scope="col">Details</th>
+                <th scope="col">Status</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {tokens.map((t) => (
                 <TokenRow
