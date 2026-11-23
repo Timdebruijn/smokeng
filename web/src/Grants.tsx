@@ -7,7 +7,7 @@ import {
   type Grant,
   type Target,
 } from './api'
-import { ConfirmButton, useAction, ErrorText } from './shared'
+import { ConfirmButton, useAction, ErrorText, FORM_ERROR_ID } from './shared'
 import { orderedTargets } from './util'
 
 const ROLES: { value: Grant['role']; label: string }[] = [
@@ -58,7 +58,7 @@ export default function Grants({
   return (
     <>
       <h1 className="visually-hidden">Access</h1>
-      {error && <ErrorText>{error}</ErrorText>}
+      {error && <ErrorText id={FORM_ERROR_ID}>{error}</ErrorText>}
 
       <section className="card section-card">
         <div className="section-card-head">
@@ -263,7 +263,7 @@ function AddGrantForm({
         that already has one replaces its role rather than adding a second grant.
       </p>
       <div className="pill-row">
-        <button className="pill accent" type="submit" disabled={busy || !group.trim() || targetId === undefined}>
+        <button className="pill accent" type="submit" aria-describedby={FORM_ERROR_ID} disabled={busy || !group.trim() || targetId === undefined}>
           Add grant
         </button>
         <button className="pill" type="button" disabled={busy} onClick={onCancel}>

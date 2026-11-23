@@ -7,7 +7,9 @@ import {
   alertKey,
   alertName,
   countedFlags,
+  countUnacked,
   csvCell,
+  firingAnnouncement,
   filterByFamily,
   parseFamilyChoice,
   resolveSeries,
@@ -284,6 +286,19 @@ test('countedFlags leaves out the userspace pair only where the probe type alway
     assert.equal(countedFlags(0b11, type), 0b11, String(type))
     assert.equal(countedFlags(0b10, type), 0b10, String(type))
   }
+})
+
+test('firingAnnouncement speaks only when the count rises', () => {
+  assert.equal(firingAnnouncement(null, 0), null)
+  assert.equal(firingAnnouncement(null, 2), '2 alerts firing')
+  assert.equal(firingAnnouncement(0, 1), '1 alert firing')
+  assert.equal(firingAnnouncement(1, 3), '3 alerts firing')
+  assert.equal(firingAnnouncement(3, 3), null)
+  assert.equal(firingAnnouncement(3, 2), null)
+})
+
+test('countUnacked skips acknowledged and silenced alerts', () => {
+  assert.equal(countUnacked([{}, { acked: true }, { silenced: true }, { acked: false, silenced: false }]), 2)
 })
 
 test('measurementLabel puts no data before loss before flags', () => {

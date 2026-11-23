@@ -519,7 +519,7 @@ function AvailabilityPanel({ target, families }: { target: Target; families: (Fa
   }
 
   return (
-    <section className="card section-card">
+    <section className="card section-card" aria-busy={loading}>
       <div className="section-card-head">
         <h2 className="section-card-title">Availability</h2>
         <span className="spacer" />

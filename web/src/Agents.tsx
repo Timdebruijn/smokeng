@@ -10,7 +10,7 @@ import {
   type AgentToken,
   type NewAgentToken,
 } from './api'
-import { ConfirmButton, StatusDot, useAction, useCopy, ErrorText } from './shared'
+import { ConfirmButton, StatusDot, useAction, useCopy, ErrorText, FORM_ERROR_ID } from './shared'
 
 const TTL_OPTIONS: { seconds: number; label: string }[] = [
   { seconds: 900, label: '15 minutes' },
@@ -57,7 +57,7 @@ export default function Agents({
   return (
     <>
       <h1 className="visually-hidden">Agents</h1>
-      {error && <ErrorText>{error}</ErrorText>}
+      {error && <ErrorText id={FORM_ERROR_ID}>{error}</ErrorText>}
 
       <section className="card section-card">
         <div className="section-card-head">
@@ -316,7 +316,7 @@ function AddAgentForm({
         </select>
       </label>
       <div className="pill-row">
-        <button className="pill accent" type="submit" disabled={busy || !name.trim()}>
+        <button className="pill accent" type="submit" aria-describedby={FORM_ERROR_ID} disabled={busy || !name.trim()}>
           Create token
         </button>
         <button className="pill" type="button" disabled={busy} onClick={onCancel}>
