@@ -220,11 +220,12 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
         />
       )}
       <div className="admin">
-      <aside className="tree">
+      <aside className="tree" aria-label="Target tree">
         {ordered.map(({ target, depth }) => (
           <button
             key={target.id}
             className={`tree-row${target.id === selectedId ? ' selected' : ''}`}
+            aria-current={target.id === selectedId ? 'true' : undefined}
             style={{ paddingLeft: 8 + depth * 14 }}
             onClick={() => setSelectedId(target.id)}
           >

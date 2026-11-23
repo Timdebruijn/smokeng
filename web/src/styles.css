@@ -214,6 +214,32 @@ h1 {
   margin: 0.5rem 0;
 }
 
+/* Focus lands here after a change of screen (App.tsx). Neither is a control,
+   so there is nothing to show a ring for. */
+h1[tabindex='-1']:focus,
+main:focus {
+  outline: none;
+}
+
+/* First stop of the page; visible only while it has focus. */
+.skip-link {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  padding: 0.5rem 0.9rem;
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  transform: translateY(-300%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
 .host {
   font-weight: 400;
   font-size: 12.5px;

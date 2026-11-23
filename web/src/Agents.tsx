@@ -56,6 +56,7 @@ export default function Agents({
 
   return (
     <>
+      <h1 className="visually-hidden">Agents</h1>
       {error && <ErrorText>{error}</ErrorText>}
 
       <section className="card section-card">

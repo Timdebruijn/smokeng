@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import Admin from './Admin'
 import Agents from './Agents'
 import Alerts from './Alerts'
@@ -18,6 +18,7 @@ import {
   filterByFamily,
   fromLocalInput,
   resolveSeries,
+  screenTitle,
   seriesKey,
   seriesLabel,
   toLocalInput,
@@ -41,8 +42,11 @@ export default function App() {
   const [detailId, setDetailId] = useState<number | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
+  // The loaded target's name, reported by DetailRoute: App only has its id.
+  const [detailName, setDetailName] = useState<string | null>(null)
   const openDetail = (id: number) => {
     setDetailId(id)
+    setDetailName(null)
     setView('detail')
   }
 
@@ -74,10 +78,34 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  useEffect(() => {
+    document.title = screenTitle(needsLogin ? 'signin' : view, detailName)
+  }, [needsLogin, view, detailName])
+
+  // After a change of screen, not on the first render, put focus at the top of
+  // the new screen: the control that was clicked is gone or no longer says
+  // where we are. Detail's heading only exists once its target has loaded, so
+  // that moves focus a second time, from main to the heading.
+  const arrivedAt = useRef<string | null>(null)
+  const screenKey = `${view}-${detailId}-${detailName !== null}`
+  useEffect(() => {
+    if (arrivedAt.current === null || arrivedAt.current === screenKey) {
+      arrivedAt.current = screenKey
+      return
+    }
+    arrivedAt.current = screenKey
+    const h1 = document.querySelector<HTMLElement>('main h1')
+    if (h1) h1.tabIndex = -1
+    ;(h1 ?? document.getElementById('main'))?.focus()
+  }, [screenKey])
+
   if (needsLogin) return <SignIn />
 
   return (
     <>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <AppHeader
         me={me}
         view={view}
@@ -103,7 +131,7 @@ export default function App() {
           onOpenDetail={openDetail}
         />
       )}
-      <main>
+      <main id="main" tabIndex={-1}>
       {/* Keyed by what is shown, so after a failure the next screen starts clean. */}
       <ErrorBoundary key={view === 'detail' ? `detail-${detailId}` : view} what={view === 'detail' ? 'this target' : `the ${view} screen`}>
       {view === 'overview' ? (
@@ -114,6 +142,7 @@ export default function App() {
           family={family}
           onBack={() => setView('graphs')}
           onEdit={() => setView('targets')}
+          onName={setDetailName}
         />
       ) : view === 'graphs' ? (
         <Graphs family={family} onOpenDetail={openDetail} />
@@ -220,7 +249,12 @@ function AppHeader({
         </button>
         <nav className="tabs">
           {views.map((v) => (
-            <button key={v} className={view === v ? 'tab active' : 'tab'} onClick={() => onView(v)}>
+            <button
+              key={v}
+              className={view === v ? 'tab active' : 'tab'}
+              aria-current={view === v ? 'page' : undefined}
+              onClick={() => onView(v)}
+            >
               {v[0].toUpperCase() + v.slice(1)}
             </button>
           ))}
@@ -361,6 +395,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
 
   return (
     <section className="graphs">
+      <h1 className="visually-hidden">Graphs</h1>
       {sidebarOpen && (
         <TargetSidebar
           leaves={leaves}
@@ -590,7 +625,7 @@ function TargetSidebar({
   const allShown = leaves.every((t) => !hidden.has(t.id))
 
   return (
-    <aside className="card sidebar">
+    <aside className="card sidebar" aria-label="Targets shown">
       <input
         className="filter"
         value={search}
@@ -628,11 +663,13 @@ function DetailRoute({
   family,
   onBack,
   onEdit,
+  onName,
 }: {
   targetId: number
   family: FamilyChoice
   onBack: () => void
   onEdit: () => void
+  onName: (name: string) => void
 }) {
   const [targets, setTargets] = useState<Target[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
@@ -641,6 +678,10 @@ function DetailRoute({
     void fetchAgents().then(setAgents).catch(() => setAgents([]))
   }, [])
   const target = targets.find((t) => t.id === targetId)
+  const name = target ? (target.title ?? target.path) : null
+  useEffect(() => {
+    if (name !== null) onName(name)
+  }, [name, onName])
   if (!target) return <p className="hint">Loading…</p>
   return <Detail target={target} agents={agents} family={family} onBack={onBack} onEdit={onEdit} />
 }
