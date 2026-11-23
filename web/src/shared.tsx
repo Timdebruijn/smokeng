@@ -270,3 +270,17 @@ export function useTimeWindow(initialRangeS = 3600) {
 
   return { rangeS, from, to, refreshKey, live: live && !zoom, zoom, setZoom, pickRange, onZoomOut, toggleLive }
 }
+
+/**
+ * A status dot whose colour carries a state: the same span as before, plus the
+ * state in words for assistive technology. A dot beside text that already says
+ * it stays a bare span with aria-hidden.
+ */
+export function StatusDot({ className = 'dot', background, label }: { className?: string; background?: string; label: string }) {
+  return (
+    <>
+      <span className={className} style={background ? { background } : undefined} />
+      <span className="visually-hidden">{label}</span>
+    </>
+  )
+}

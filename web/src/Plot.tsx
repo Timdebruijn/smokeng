@@ -7,11 +7,11 @@ import {
   type PathChange,
   type Target,
 } from './api'
-import { countedFlags, type Family } from './util'
+import { countedFlags, measurementLabel, type Family } from './util'
 import { setCursor, subscribeCursor } from './crosshair'
 import { positionalTitle, replyLines } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt } from './layout'
-import { useRenderWorker, useWidth, ErrorText } from './shared'
+import { useRenderWorker, useWidth, StatusDot, ErrorText } from './shared'
 
 interface Props {
   target: Target
@@ -503,10 +503,12 @@ export default function Plot({
     setCursor(null)
   }
 
+  const flagged = quality.filter((q) => !q.aboutTarget && !q.expected).length
+
   return (
     <section className="card plot">
       <div className="plot-head">
-        <span className="dot" style={{ background: dotColour(quality.filter((q) => !q.aboutTarget && !q.expected).length) }} />
+        <StatusDot background={dotColour(flagged)} label={measurementLabel({ flagged })} />
         {onOpenDetail ? (
           <button className="plot-title link-title" onClick={onOpenDetail}>
             {target.title ?? target.path}
@@ -529,8 +531,8 @@ export default function Plot({
         {onOpenDetail && (
           <>
             <span className="spacer" />
-            <button className="pill" onClick={onOpenDetail}>
-              Detail →
+            <button className="pill" onClick={onOpenDetail} aria-label={`Detail: ${target.title ?? target.path}`}>
+              Detail <span aria-hidden="true">→</span>
             </button>
           </>
         )}

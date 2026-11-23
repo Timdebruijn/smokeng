@@ -17,6 +17,7 @@ import {
   showsFamily,
   summarise,
   fromLocalInput,
+  measurementLabel,
   minMax,
   refreshMs,
   toLocalInput,
@@ -282,4 +283,13 @@ test('countedFlags leaves out the userspace pair only where the probe type alway
     assert.equal(countedFlags(0b11, type), 0b11, String(type))
     assert.equal(countedFlags(0b10, type), 0b10, String(type))
   }
+})
+
+test('measurementLabel puts no data before loss before flags', () => {
+  assert.equal(measurementLabel({ sent: 0, loss: 3, flagged: 2 }), 'no data')
+  assert.equal(measurementLabel({ sent: 10, loss: 1, flagged: 2 }), 'loss')
+  assert.equal(measurementLabel({ sent: 10, loss: 0, flagged: 2 }), 'flagged')
+  assert.equal(measurementLabel({ sent: 10, loss: 0, flagged: 0 }), 'clean')
+  assert.equal(measurementLabel({ flagged: 1 }), 'flagged')
+  assert.equal(measurementLabel({}), 'clean')
 })
