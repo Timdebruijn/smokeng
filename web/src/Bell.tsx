@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import { afterName, alertKey, alertName, seriesLabel } from './util'
+import { useEffect, useRef, useState } from 'react'
+import { afterName, alertKey, alertName, countUnacked, firingAnnouncement, seriesLabel } from './util'
+import { announce } from './shared'
 import { acknowledgeAlert, fetchFiringAlerts, type FiringAlert } from './api'
 
 /**
@@ -29,9 +30,16 @@ export default function Bell({
   // only thing a missing webhook changes is that nothing is posted onward.
   const [delivering, setDelivering] = useState(true)
 
+  // The unacknowledged count at the last poll; null until the first one.
+  const lastCount = useRef<number | null>(null)
+
   const poll = () =>
     fetchFiringAlerts()
       .then((r) => {
+        const n = countUnacked(r.alerts ?? [])
+        const say = firingAnnouncement(lastCount.current, n)
+        if (say) announce(say)
+        lastCount.current = n
         setAlerts(r.alerts ?? [])
         setDelivering(r.delivering)
       })
@@ -56,7 +64,7 @@ export default function Bell({
   // The badge counts what still needs attention: alerts that are neither
   // acknowledged nor silenced. Both are still firing and still listed, just not
   // shouting.
-  const unacked = alerts.filter((a) => !a.acked && !a.silenced).length
+  const unacked = countUnacked(alerts)
 
   return (
     <div className="bell">

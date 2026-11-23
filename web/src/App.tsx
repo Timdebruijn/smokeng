@@ -24,7 +24,7 @@ import {
   type FamilyChoice,
   type PlotSeries,
 } from './util'
-import { ErrorText, useTimeWindow } from './shared'
+import { Announcer, ErrorText, useTimeWindow } from './shared'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
@@ -132,6 +132,7 @@ export default function App() {
       )}
       </ErrorBoundary>
       </main>
+      <Announcer />
     </>
   )
 }

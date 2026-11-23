@@ -296,3 +296,21 @@ const USERSPACE_FLAGS = 0b11
 export function countedFlags(flags: number, probeType: unknown): number {
   return ['tcp', 'http', 'https', 'irtt'].includes(String(probeType)) ? flags & ~USERSPACE_FLAGS : flags
 }
+
+/** Alerts that still need attention: neither acknowledged nor silenced. */
+export function countUnacked(alerts: { acked?: boolean; silenced?: boolean }[]): number {
+  return alerts.filter((a) => !a.acked && !a.silenced).length
+}
+
+/**
+ * What to say when the unacknowledged firing count is polled. `prev` is null
+ * before the first poll. Only a rise is news: a fall is the user's own
+ * acknowledge or an alert clearing, and an unchanged count is the 30 s poll
+ * repeating itself. The first poll counts as a rise from zero, because the bell
+ * button's name changes after the page was read and nothing else would tell
+ * someone who just opened the page that alerts are firing.
+ */
+export function firingAnnouncement(prev: number | null, now: number): string | null {
+  if (now <= (prev ?? 0)) return null
+  return now === 1 ? '1 alert firing' : `${now} alerts firing`
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react'
 import { refreshMs, zoomOut } from './util'
 
 /**
@@ -46,6 +46,41 @@ export function useAction(load: () => Promise<void>) {
   return { error, busy, reload, run }
 }
 
+let announcement = ''
+const announcers = new Set<() => void>()
+const setAnnouncement = (text: string) => {
+  announcement = text
+  announcers.forEach((f) => f())
+}
+
+/**
+ * Say something to screen readers without moving focus. The text is cleared
+ * and set a tick later, so the same message twice is read twice.
+ */
+export function announce(text: string) {
+  setAnnouncement('')
+  setTimeout(() => setAnnouncement(text), 50)
+}
+
+/** The one live region `announce` writes to; render it once, always. */
+export function Announcer() {
+  const text = useSyncExternalStore(
+    (f) => {
+      announcers.add(f)
+      return () => announcers.delete(f)
+    },
+    () => announcement,
+  )
+  return (
+    <div role="status" className="visually-hidden">
+      {text}
+    </div>
+  )
+}
+
+/** The id of the server error a form's submit button points at (one per screen). */
+export const FORM_ERROR_ID = 'form-error'
+
 /** An error line that screen readers announce when it appears. */
 export function ErrorText({ children, id }: { children: ReactNode; id?: string }) {
   return (
@@ -62,6 +97,7 @@ export function useCopy(text: string): [boolean, () => Promise<void>] {
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
+      announce('Copied to clipboard')
       setTimeout(() => setCopied(false), 2000)
     } catch {
       // Clipboard access can be refused; the text is selectable either way.
@@ -265,6 +301,7 @@ export function useTimeWindow(initialRangeS = 3600) {
 
   const toggleLive = () => {
     setZoom(null)
+    announce(live ? 'Paused' : 'Live')
     setLive(!live)
   }
 
