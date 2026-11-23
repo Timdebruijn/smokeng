@@ -1,6 +1,41 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { fmtPositions, positionalTitle, replyLines } from './format.ts'
+import { chartSummary, compareSummary, fmtPositions, positionalTitle, replyLines } from './format.ts'
+
+test('a plot says what it shows: window, typical and highest median, loss', () => {
+  const base = { name: 'router v4', when: '10:00 – 11:00' }
+  assert.equal(
+    chartSummary({ ...base, medians: [1000, 3000, 2000], intervals: 3, sent: [10, 10, 10], received: [10, 9, 10] }),
+    'router v4, 10:00 – 11:00: 3 intervals, typical median 2.0ms, highest median 3.0ms, loss 3.3%.',
+  )
+})
+
+test('an empty plot says there is no data, and an all-lost one says no replies', () => {
+  const base = { name: 'router v4', when: '10:00 – 11:00' }
+  assert.equal(
+    chartSummary({ ...base, medians: [], intervals: 0, sent: [], received: [] }),
+    'router v4, 10:00 – 11:00: no data in this window.',
+  )
+  assert.equal(
+    chartSummary({ ...base, medians: [NaN, NaN], intervals: 2, sent: [5, 5], received: [0, 0] }),
+    'router v4, 10:00 – 11:00: 2 intervals, no replies, loss 100.0%.',
+  )
+  assert.equal(
+    chartSummary({ ...base, medians: [NaN], intervals: 1, sent: [0], received: [0] }),
+    'router v4, 10:00 – 11:00: 1 interval, no replies, nothing sent.',
+  )
+})
+
+test('the compare summary names every line, also one without replies', () => {
+  assert.equal(
+    compareSummary('10:00 – 11:00', [
+      { label: 'a', medians: [1000, null, 3000] },
+      { label: 'b', medians: [null] },
+    ]),
+    'Compare pooled medians, 10:00 – 11:00. a: typical median 3.0ms, highest 3.0ms. b: no replies.',
+  )
+  assert.equal(compareSummary('w', []), 'Compare, w: no series selected.')
+})
 
 test('send positions are written as ranges, runs joined and gaps kept', () => {
   assert.equal(fmtPositions([16, 17, 18, 19, 20]), '16–20')

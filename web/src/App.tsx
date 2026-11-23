@@ -25,7 +25,7 @@ import {
   type FamilyChoice,
   type PlotSeries,
 } from './util'
-import { ErrorText, useTimeWindow } from './shared'
+import { ErrorText, keepInView, useTimeWindow } from './shared'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
@@ -292,7 +292,7 @@ function AppHeader({
               <span className="role-tag">{me.role}</span>
             </button>
             {menu === 'user' && (
-              <div id="user-popover" className="popover">
+              <div id="user-popover" className="popover" ref={keepInView}>
                 <p className="popover-title">{me.email ?? me.subject}</p>
                 <p className="hint small">Signed in via OIDC · {me.role}</p>
                 {me.version && <p className="hint small">smokeng {me.version}</p>}

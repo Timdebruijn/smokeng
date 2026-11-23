@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { gapsBefore } from './layout.ts'
+import { gapsBefore, stepRow } from './layout.ts'
+
+test('the keyboard steps one row, stops at the ends and starts from the right side', () => {
+  assert.equal(stepRow('ArrowRight', 2, 5), 3)
+  assert.equal(stepRow('ArrowRight', 4, 5), 4)
+  assert.equal(stepRow('ArrowLeft', 0, 5), 0)
+  assert.equal(stepRow('ArrowLeft', 3, 5), 2)
+  assert.equal(stepRow('ArrowRight', -1, 5), 0)
+  assert.equal(stepRow('ArrowLeft', -1, 5), 4)
+  assert.equal(stepRow('Home', 3, 5), 0)
+  assert.equal(stepRow('End', 1, 5), 4)
+  assert.equal(stepRow('ArrowRight', -1, 0), null)
+  assert.equal(stepRow('a', 1, 5), null)
+})
 
 const at = (gaps: boolean[]) => gaps.flatMap((g, j) => (g ? [j] : []))
 
