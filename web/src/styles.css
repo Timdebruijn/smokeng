@@ -53,6 +53,19 @@
   --bad: light-dark(#b13487, #f2a0ce);
 }
 
+/* Text for assistive technology only. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Accessibility menu and the firing bell, both in the header. */
 .a11y,
 .bell,
@@ -201,6 +214,32 @@ h1 {
   margin: 0.5rem 0;
 }
 
+/* Focus lands here after a change of screen (App.tsx). Neither is a control,
+   so there is nothing to show a ring for. */
+h1[tabindex='-1']:focus,
+main:focus {
+  outline: none;
+}
+
+/* First stop of the page; visible only while it has focus. */
+.skip-link {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  padding: 0.5rem 0.9rem;
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  transform: translateY(-300%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
 .host {
   font-weight: 400;
   font-size: 12.5px;
@@ -239,6 +278,13 @@ h1 {
 .series-canvas {
   position: relative;
   cursor: crosshair;
+}
+
+/* The container is the keyboard's tab stop; a click never shows the ring. */
+.plot-stack:focus-visible,
+.series-canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .plot-stack canvas {
@@ -836,6 +882,15 @@ html {
   font-weight: 600;
 }
 
+/* The title is an h2 now; this renders it as the span it replaced. The extra
+   class beats `.detail h2`, which would make it a larger flex row. */
+.section-card-head .section-card-title {
+  display: block;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 /* A .dot beside the text it qualifies, inside a table cell — the same idea
    as .plot-head's dot-then-title, just inline instead of in a flex row. */
 .dot-label {
@@ -955,6 +1010,12 @@ html {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* Names the range buttons as one group without becoming a box of its own:
+   the buttons stay items of the toolbar and wrap one by one, as before. */
+.range-group {
+  display: contents;
 }
 
 .icon-button {

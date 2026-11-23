@@ -220,11 +220,12 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
         />
       )}
       <div className="admin">
-      <aside className="tree">
+      <aside className="tree" aria-label="Target tree">
         {ordered.map(({ target, depth }) => (
           <button
             key={target.id}
             className={`tree-row${target.id === selectedId ? ' selected' : ''}`}
+            aria-current={target.id === selectedId ? 'true' : undefined}
             style={{ paddingLeft: 8 + depth * 14 }}
             onClick={() => setSelectedId(target.id)}
           >
@@ -414,6 +415,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
           </p>
         )}
       <table className="settings">
+        <caption className="visually-hidden">Target settings</caption>
         <tbody>
           {settingsFor(target).map((s) => (
             <SettingRow
@@ -508,7 +510,7 @@ function SettingRow({
 
   return (
     <tr>
-      <th id={`${id}-l`}>{def.label}</th>
+      <th scope="row" id={`${id}-l`}>{def.label}</th>
       <td>
         {def.kind === 'series' ? (
           <SeriesPicker
