@@ -109,7 +109,7 @@ export default function A11yMenu({
       <button
         className="icon-button"
         title="Accessibility options"
-        aria-label="Accessibility options"
+        aria-label="Aa, accessibility options"
         aria-expanded={open}
         aria-controls="a11y-popover"
         onClick={() => onOpenChange(!open)}
