@@ -209,6 +209,16 @@ export function resolveSeries(t: Target, byName: Map<string, number>, sep = ' ')
   )
 }
 
+export type ScreenName = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail' | 'signin'
+
+/** The document title of a screen. Detail is named after its target; until that
+ *  is loaded it says "Target" rather than a title that would be wrong. */
+export function screenTitle(screen: ScreenName, detailName?: string | null): string {
+  const name =
+    screen === 'detail' ? detailName || 'Target' : screen === 'signin' ? 'Sign in' : screen[0].toUpperCase() + screen.slice(1)
+  return `${name} - smokeng`
+}
+
 /**
  * Pooled over the whole window, from the samples themselves. With no replies
  * every quantile would otherwise read as 0 — not "unknown", but a specific,
@@ -313,4 +323,15 @@ export function countUnacked(alerts: { acked?: boolean; silenced?: boolean }[]):
 export function firingAnnouncement(prev: number | null, now: number): string | null {
   if (now <= (prev ?? 0)) return null
   return now === 1 ? '1 alert firing' : `${now} alerts firing`
+}
+
+/**
+ * What a measurement status dot says in words. `sent` and `loss` are left out
+ * where the dot does not know them (a plot header knows only its flags).
+ */
+export function measurementLabel(s: { sent?: number; loss?: number; flagged?: number }): string {
+  if (s.sent === 0) return 'no data'
+  if ((s.loss ?? 0) > 0) return 'loss'
+  if ((s.flagged ?? 0) > 0) return 'flagged'
+  return 'clean'
 }

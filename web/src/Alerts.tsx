@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useState } from 'react'
-import { useAction, ErrorText, FORM_ERROR_ID } from './shared'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useAction, StatusDot, ErrorText, FORM_ERROR_ID } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -58,6 +58,13 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   const [silences, setSilences] = useState<Silence[]>([])
   const [baselines, setBaselines] = useState<AlertBaseline[]>([])
   const [adding, setAdding] = useState(false)
+  // The form replaces the button that opened it; give focus back when it closes.
+  const addButton = useRef<HTMLButtonElement>(null)
+  const wasAdding = useRef(false)
+  useEffect(() => {
+    if (wasAdding.current && !adding) addButton.current?.focus()
+    wasAdding.current = adding
+  }, [adding])
 
   const load = useCallback(async () => {
     const [r, f, t, s, b] = await Promise.all([
@@ -87,6 +94,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
+      <h1 className="visually-hidden">Alerts</h1>
       {error && <ErrorText id={FORM_ERROR_ID}>{error}</ErrorText>}
       {!delivering && (
         <p className="hint warn">
@@ -98,12 +106,22 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
 
       <section className="card section-card">
         <div className="section-card-head">
-          <span className="section-card-title">Firing</span>
+          <h2 className="section-card-title">Firing</h2>
         </div>
         {firing.length === 0 ? (
           <p className="hint">Nothing is firing.</p>
         ) : (
           <table className="alerts">
+            <caption className="visually-hidden">Firing alerts</caption>
+            <thead className="visually-hidden">
+              <tr>
+                <th scope="col">Alert</th>
+                <th scope="col">Target</th>
+                <th scope="col">Condition</th>
+                <th scope="col">Since</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {firing.map((a) => {
                 const muted = a.acked || a.silenced
@@ -111,9 +129,9 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                   <tr key={alertKey(a)} className={muted ? 'disabled-row' : undefined}>
                     <td>
                       <span className="dot-label">
-                        <span
-                          className="dot"
-                          style={{ background: muted ? 'var(--dim)' : 'var(--bad)' }}
+                        <StatusDot
+                          background={muted ? 'var(--dim)' : 'var(--bad)'}
+                          label={muted ? 'acknowledged or silenced' : 'firing'}
                         />
                         <span className="chip firing">{a.rule}</span>
                       </span>
@@ -156,13 +174,13 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                           className="pill small"
                           title={
                             a.acked
-                              ? 'Un-acknowledge'
+                              ? 'Unacknowledge'
                               : 'Acknowledge — the alert keeps firing, it just stops demanding attention'
                           }
-                          aria-label={`${a.acked ? 'Un-acknowledge' : 'Acknowledge'} ${alertName(a)}`}
+                          aria-label={`${a.acked ? 'Unacknowledge' : 'Acknowledge'} ${alertName(a)}`}
                           onClick={() => void ackAlert(a)}
                         >
-                          {a.acked ? 'un-acknowledge' : 'acknowledge'}
+                          {a.acked ? 'unacknowledge' : 'acknowledge'}
                         </button>
                         {!a.silenced && (
                           <SilenceQuick
@@ -215,7 +233,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
 
       <section className="card section-card">
         <div className="section-card-head">
-          <span className="section-card-title">Rules</span>
+          <h2 className="section-card-title">Rules</h2>
         </div>
         <p className="hint">
           A rule applies to the node it is defined on and everything below it. A node with its own
@@ -226,12 +244,22 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
         {rules.length === 0 && <p className="hint">No rules defined.</p>}
         {rules.length > 0 && (
           <table className="alerts">
+            <caption className="visually-hidden">Alert rules</caption>
+            <thead className="visually-hidden">
+              <tr>
+                <th scope="col">Rule</th>
+                <th scope="col">Target</th>
+                <th scope="col">Condition</th>
+                <th scope="col">Clearing</th>
+                {isAdmin && <th scope="col">Actions</th>}
+              </tr>
+            </thead>
             <tbody>
               {rules.map((r) => (
                 <tr key={r.id} className={r.enabled ? '' : 'disabled-row'}>
                   <td>
                     <span className="dot-label">
-                      <span className="dot" style={{ background: r.enabled ? 'var(--good)' : 'var(--warn)' }} />
+                      <StatusDot background={r.enabled ? 'var(--good)' : 'var(--warn)'} label={r.enabled ? 'enabled' : 'disabled'} />
                       {r.name}
                     </span>
                   </td>
@@ -295,7 +323,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
             />
           ) : (
             <div className="pill-row">
-              <button className="pill accent" onClick={() => setAdding(true)}>
+              <button ref={addButton} className="pill accent" onClick={() => setAdding(true)}>
                 Add rule…
               </button>
             </div>
@@ -414,7 +442,7 @@ function SilencesSection({
   return (
     <section className="card section-card">
       <div className="section-card-head">
-        <span className="section-card-title">Silences &amp; maintenance windows</span>
+        <h2 className="section-card-title">Silences &amp; maintenance windows</h2>
       </div>
       <p className="hint">
         A silence suppresses delivery and mutes matching alerts over a time window, without
@@ -427,6 +455,16 @@ function SilencesSection({
         <p className="hint">No active or upcoming silences.</p>
       ) : (
         <table className="alerts">
+          <caption className="visually-hidden">Silences and maintenance windows</caption>
+          <thead className="visually-hidden">
+            <tr>
+              <th scope="col">Status</th>
+              <th scope="col">Scope</th>
+              <th scope="col">Period</th>
+              <th scope="col">Reason</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
           <tbody>
             {live.map((s) => (
               <tr key={s.id}>
@@ -435,6 +473,7 @@ function SilencesSection({
                     <span
                       className="dot"
                       style={{ background: s.active ? 'var(--warn)' : 'var(--dim)' }}
+                      aria-hidden="true"
                     />
                     <span className="chip">{s.active ? 'active' : 'upcoming'}</span>
                   </span>
@@ -466,6 +505,14 @@ function SilencesSection({
         <details className="hint">
           <summary>{past.length} past silence(s)</summary>
           <table className="alerts">
+            <caption className="visually-hidden">Past silences</caption>
+            <thead className="visually-hidden">
+              <tr>
+                <th scope="col">Scope</th>
+                <th scope="col">Ended</th>
+                <th scope="col">Reason</th>
+              </tr>
+            </thead>
             <tbody>
               {past.map((s) => (
                 <tr key={s.id} className="disabled-row">
@@ -636,6 +683,16 @@ function AlertHistory() {
         </p>
       ) : (
         <table className="alerts">
+          <caption className="visually-hidden">Alert history</caption>
+          <thead className="visually-hidden">
+            <tr>
+              <th scope="col">State</th>
+              <th scope="col">Rule</th>
+              <th scope="col">Condition</th>
+              <th scope="col">Target</th>
+              <th scope="col">Time</th>
+            </tr>
+          </thead>
           <tbody>
             {events.map((e) => (
               <tr key={e.id}>
@@ -644,6 +701,7 @@ function AlertHistory() {
                     <span
                       className="dot"
                       style={{ background: e.firing ? 'var(--bad)' : 'var(--good)' }}
+                      aria-hidden="true"
                     />
                     {e.firing ? 'fired' : 'cleared'}
                   </span>
@@ -713,7 +771,7 @@ function RuleForm({
     >
       <label className="field">
         <span>Name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} required />
+        <input value={name} autoFocus onChange={(e) => setName(e.target.value)} required />
       </label>
       <label className="field">
         <span>Applies to</span>

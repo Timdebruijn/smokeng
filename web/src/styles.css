@@ -214,6 +214,32 @@ h1 {
   margin: 0.5rem 0;
 }
 
+/* Focus lands here after a change of screen (App.tsx). Neither is a control,
+   so there is nothing to show a ring for. */
+h1[tabindex='-1']:focus,
+main:focus {
+  outline: none;
+}
+
+/* First stop of the page; visible only while it has focus. */
+.skip-link {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  padding: 0.5rem 0.9rem;
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  transform: translateY(-300%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
 .host {
   font-weight: 400;
   font-size: 12.5px;
@@ -252,6 +278,13 @@ h1 {
 .series-canvas {
   position: relative;
   cursor: crosshair;
+}
+
+/* The container is the keyboard's tab stop; a click never shows the ring. */
+.plot-stack:focus-visible,
+.series-canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .plot-stack canvas {
@@ -610,6 +643,13 @@ a.button {
   box-shadow: var(--shadow);
 }
 
+/* The viewport scrolls under the sticky .appbar, so a focused element that is
+   scrolled into view must stop below it. 72px is the 56px bar plus a margin;
+   the phone block raises it for the two-row bar. */
+html {
+  scroll-padding-top: 72px;
+}
+
 .appbar-inner {
   /* The global header rule makes .appbar a flex container; without these the
      inner row cannot shrink below its tabs and pushes a phone page sideways. */
@@ -842,6 +882,15 @@ a.button {
   font-weight: 600;
 }
 
+/* The title is an h2 now; this renders it as the span it replaced. The extra
+   class beats `.detail h2`, which would make it a larger flex row. */
+.section-card-head .section-card-title {
+  display: block;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 /* A .dot beside the text it qualifies, inside a table cell — the same idea
    as .plot-head's dot-then-title, just inline instead of in a flex row. */
 .dot-label {
@@ -961,6 +1010,12 @@ a.button {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* Names the range buttons as one group without becoming a box of its own:
+   the buttons stay items of the toolbar and wrap one by one, as before. */
+.range-group {
+  display: contents;
 }
 
 .icon-button {
@@ -1290,6 +1345,14 @@ a.button {
 
 .dot.pulse {
   animation: pulse-dot 2.4s infinite;
+}
+
+/* Both pulsing dots keep their colour; only the opacity animation stops. */
+@media (prefers-reduced-motion: reduce) {
+  .dot.firing,
+  .dot.pulse {
+    animation: none;
+  }
 }
 
 .stat-sub {
@@ -1752,6 +1815,10 @@ dialog.modal-host::backdrop {
     row-gap: 0;
   }
 
+  html {
+    scroll-padding-top: 104px;
+  }
+
   .tabs {
     order: 9;
     flex: 1 0 100%;
@@ -1859,5 +1926,62 @@ dialog.modal-host::backdrop {
   .alerts th {
     padding: 0;
     border: none;
+  }
+}
+
+/* ── Low windows (zoom, landscape phones) ──────────────────────────────── */
+
+/* At 400% zoom the sticky bar took 113 of a 256px high window. In a window
+   lower than 480px the bar scrolls away with the page, and the tabs wrap so
+   that none sits out of sight in a row that scrolls sideways. */
+@media (max-height: 480px) {
+  .appbar {
+    position: static;
+  }
+
+  html {
+    scroll-padding-top: 0;
+  }
+
+  .tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
+  /* It sticks below the bar; with the bar gone it sticks near the top. */
+  .sidebar {
+    top: 14px;
+  }
+}
+
+/* ── Forced colours ────────────────────────────────────────────────────── */
+
+@media (forced-colors: active) {
+  /* Status dots and legend swatches are filled shapes; system colours would
+     replace the fill and hide them. Keep the fill and add an outline in a
+     system colour. The compare line samples are all fill, so they only keep it. */
+  .dot,
+  .swatch {
+    border: 1px solid CanvasText;
+    box-sizing: border-box;
+  }
+
+  .dot,
+  .swatch,
+  .compare-swatch {
+    forced-color-adjust: none;
+  }
+
+  .dot.firing {
+    border-width: 3px;
+  }
+
+  /* States that only change the background today. */
+  .tab.active,
+  .pill.active,
+  .tree-row.selected,
+  .palette-item.active {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
 }

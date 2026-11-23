@@ -13,12 +13,14 @@ import {
   filterByFamily,
   parseFamilyChoice,
   resolveSeries,
+  screenTitle,
   seriesKey,
   seriesLabel,
   shownFamilies,
   showsFamily,
   summarise,
   fromLocalInput,
+  measurementLabel,
   minMax,
   refreshMs,
   toLocalInput,
@@ -297,4 +299,21 @@ test('firingAnnouncement speaks only when the count rises', () => {
 
 test('countUnacked skips acknowledged and silenced alerts', () => {
   assert.equal(countUnacked([{}, { acked: true }, { silenced: true }, { acked: false, silenced: false }]), 2)
+})
+
+test('measurementLabel puts no data before loss before flags', () => {
+  assert.equal(measurementLabel({ sent: 0, loss: 3, flagged: 2 }), 'no data')
+  assert.equal(measurementLabel({ sent: 10, loss: 1, flagged: 2 }), 'loss')
+  assert.equal(measurementLabel({ sent: 10, loss: 0, flagged: 2 }), 'flagged')
+  assert.equal(measurementLabel({ sent: 10, loss: 0, flagged: 0 }), 'clean')
+  assert.equal(measurementLabel({ flagged: 1 }), 'flagged')
+  assert.equal(measurementLabel({}), 'clean')
+})
+
+test('screenTitle names every screen, detail after its target', () => {
+  assert.equal(screenTitle('overview'), 'Overview - smokeng')
+  assert.equal(screenTitle('access'), 'Access - smokeng')
+  assert.equal(screenTitle('signin'), 'Sign in - smokeng')
+  assert.equal(screenTitle('detail', 'core/router'), 'core/router - smokeng')
+  assert.equal(screenTitle('detail', null), 'Target - smokeng')
 })
