@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState } from 'react'
-import { useAction, ErrorText } from './shared'
+import { useAction, ErrorText, FORM_ERROR_ID } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -87,7 +87,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
-      {error && <ErrorText>{error}</ErrorText>}
+      {error && <ErrorText id={FORM_ERROR_ID}>{error}</ErrorText>}
       {!delivering && (
         <p className="hint warn">
           Rules are evaluated and their transitions recorded, but nothing is posted anywhere:
@@ -593,7 +593,7 @@ function SilenceForm({
         />
       </label>
       <div className="pill-row">
-        <button className="pill accent" type="submit">
+        <button className="pill accent" type="submit" aria-describedby={FORM_ERROR_ID}>
           Schedule
         </button>
         <button className="pill" type="button" onClick={onCancel}>
@@ -623,7 +623,7 @@ function AlertHistory() {
   }, [])
 
   return (
-    <section className="card section-card">
+    <section className="card section-card" aria-busy={!loaded}>
       <div className="section-card-head">
         <h2 className="section-card-title">History</h2>
       </div>
@@ -830,7 +830,7 @@ function RuleForm({
         </select>
       </label>
       <div className="pill-row">
-        <button className="pill accent" type="submit" disabled={!name}>
+        <button className="pill accent" type="submit" aria-describedby={FORM_ERROR_ID} disabled={!name}>
           Create
         </button>
         <button className="pill" type="button" onClick={onCancel}>

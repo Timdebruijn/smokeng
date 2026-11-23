@@ -14,7 +14,7 @@ import {
   type SettingValue,
   type Target,
 } from './api'
-import { useAction, ErrorText } from './shared'
+import { useAction, ErrorText, FORM_ERROR_ID } from './shared'
 import { orderedTargets } from './util'
 
 interface SettingDef {
@@ -238,7 +238,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
         ))}
       </aside>
       <section className="detail">
-        {error && <ErrorText>{error}</ErrorText>}
+        {error && <ErrorText id={FORM_ERROR_ID}>{error}</ErrorText>}
         {selected ? (
           <TargetDetail
             key={selected.id}
@@ -721,7 +721,7 @@ function AddChildForm({
         <option value="v6">v6</option>
         <option value="both">v4 + v6</option>
       </select>
-      <button type="submit" disabled={busy || !name}>
+      <button type="submit" aria-describedby={FORM_ERROR_ID} disabled={busy || !name}>
         Create
       </button>
       <button type="button" onClick={onCancel} disabled={busy}>
