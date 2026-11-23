@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { keepInView } from './shared'
 
 /**
  * Presentation settings that belong to the person reading the graphs rather
@@ -117,7 +118,7 @@ export default function A11yMenu({
         Aa
       </button>
       {open && (
-        <div id="a11y-popover" className="popover a11y-popover">
+        <div id="a11y-popover" className="popover a11y-popover" ref={keepInView}>
           <p className="popover-title">Accessibility</p>
           {ROWS.map((r) => (
             <label key={r.key} className="a11y-row">

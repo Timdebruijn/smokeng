@@ -286,6 +286,7 @@ export default function Detail({
                 <SeriesPlot
                   key={name}
                   targetId={target.id}
+                  targetName={target.title ?? target.path}
                   agentId={agentId}
                   family={f}
                   name={name}

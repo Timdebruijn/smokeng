@@ -8,6 +8,19 @@ import { refreshMs, zoomOut } from './util'
  * `run` clears the error, does the mutation, reloads, and answers whether the
  * mutation worked.
  */
+/**
+ * A ref for a header popover, which hangs from the right edge of its button.
+ * That is right while the button sits at the right of the bar. Once the bar
+ * wraps, the button can start a second row at the left, and the popover would
+ * open past the left edge of the window, where nothing can scroll to it. This
+ * moves it back in by exactly what stuck out.
+ */
+export function keepInView(el: HTMLElement | null) {
+  if (!el) return
+  const over = 8 - el.getBoundingClientRect().left
+  if (over > 0) el.style.right = `${-over}px`
+}
+
 export function useAction(load: () => Promise<void>) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)

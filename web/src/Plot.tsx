@@ -9,8 +9,8 @@ import {
 } from './api'
 import { countedFlags, measurementLabel, type Family } from './util'
 import { setCursor, subscribeCursor } from './crosshair'
-import { positionalTitle, replyLines } from './format'
-import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt } from './layout'
+import { chartSummary, positionalTitle, replyLines } from './format'
+import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt, stepRow } from './layout'
 import { useRenderWorker, useWidth, StatusDot, ErrorText } from './shared'
 
 interface Props {
@@ -228,6 +228,11 @@ export default function Plot({
   const stackRef = useRef<HTMLDivElement>(null)
   const rowsRef = useRef<RowIndex | null>(null)
   const cursorRef = useRef<number | null>(null)
+  // The readout lines the last draw produced, for the keyboard's live region.
+  // The mouse never writes that region, or every mousemove would be announced.
+  const linesRef = useRef<string[] | null>(null)
+  const liveRef = useRef<HTMLDivElement>(null)
+  const keyedRef = useRef(false)
   const brushRef = useRef<{ t0: number; t1: number } | null>(null)
   const pathsRef = useRef<PathChange[]>([])
   const draggingRef = useRef(false)
@@ -235,6 +240,7 @@ export default function Plot({
   rangeRef.current = { from, to }
   const [quality, setQuality] = useState<Badge[]>([])
   const [rowCount, setRowCount] = useState(0)
+  const [summary, setSummary] = useState('')
   // Set only when the measurements fetch itself failed — not when it
   // succeeded with zero rows, which is a legitimate (and different) thing to
   // show. Cleared on the next successful fetch.
@@ -242,6 +248,9 @@ export default function Plot({
   const width = useWidth(stackRef)
   const workerRef = useRenderWorker(canvasRef, `plot ${target.path}`)
   const probeType = String(target.settings.probe_type.effective || 'icmp')
+  // What names this plot to assistive technology: the family and agent are what
+  // tell the plots of one target apart.
+  const plotName = [target.title ?? target.path, family, agentName && `from ${agentName}`].filter(Boolean).join(' ')
 
   // Pixel ↔ time mapping, in CSS pixels over the density area only.
   const xToTime = useCallback((xCss: number, widthCss: number): number | null => {
@@ -270,6 +279,7 @@ export default function Plot({
     const ctx = cv.getContext('2d')!
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, cssW, cssH)
+    linesRef.current = null
     const plotH = densityHeight(cssH)
     const dark = matchMedia('(prefers-color-scheme: dark)').matches
     const vline = (x: number) => {
@@ -342,6 +352,7 @@ export default function Plot({
       const named = inForce.hops.filter((h) => h !== '*')
       lines.push(`path: ${named.length ? named.join(' → ') : 'no hops answered'}`)
     }
+    linesRef.current = lines
     ctx.font = '11px system-ui, sans-serif'
     const boxW = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 14
     const boxH = lines.length * 14 + 10
@@ -403,6 +414,18 @@ export default function Plot({
           rows.loss[i] = series.sent[i] > 0 ? 1 - series.received[i] / series.sent[i] : NaN
         }
         rowsRef.current = rows
+        let intervals = n
+        if (rows.pooled) intervals = rows.pooled.rounds.reduce((a, b) => a + b, 0)
+        setSummary(
+          chartSummary({
+            name: plotName,
+            when: `${fmtWhen(from)} – ${fmtWhen(to)}`,
+            medians: rows.median,
+            intervals,
+            sent: rows.sent,
+            received: rows.received,
+          }),
+        )
         setQuality(
           series.pooled
             ? pooledFlags(series.flags, series.pooled.positional, probeType)
@@ -447,6 +470,7 @@ export default function Plot({
         setRowCount(0)
         setQuality([])
         setFetchError(e.message)
+        setSummary(`${plotName}: measurements failed to load.`)
         workerRef.current?.postMessage({ type: 'clear' })
         drawOverlay()
       })
@@ -505,6 +529,35 @@ export default function Plot({
 
   const flagged = quality.filter((q) => !q.aboutTarget && !q.expected).length
 
+  // The keyboard moves the same shared cursor the mouse does, one row at a time;
+  // the draw it triggers leaves the readout lines in linesRef, which go into the
+  // live region as text.
+  const onKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const live = liveRef.current
+    if (e.key === 'Escape') {
+      keyedRef.current = false
+      setCursor(null)
+      if (live) live.textContent = ''
+      return
+    }
+    const rows = rowsRef.current
+    if (!rows) return
+    const cur = cursorRef.current
+    const next = stepRow(e.key, cur === null ? -1 : rowAt(rows.ts, cur), rows.ts.length)
+    if (next === null) return
+    e.preventDefault()
+    keyedRef.current = true
+    setCursor(rows.ts[next])
+    if (live) live.textContent = linesRef.current?.join(', ') ?? ''
+  }
+
+  const onBlur = () => {
+    if (!keyedRef.current) return
+    keyedRef.current = false
+    setCursor(null)
+    if (liveRef.current) liveRef.current.textContent = ''
+  }
+
   return (
     <section className="card plot">
       <div className="plot-head">
@@ -546,9 +599,20 @@ export default function Plot({
         onMouseDown={onDown}
         onMouseUp={onUp}
         onMouseLeave={onLeave}
+        tabIndex={0}
+        role="group"
+        aria-label={`${plotName}: readout, use the arrow keys`}
+        onKeyDown={onKey}
+        onBlur={onBlur}
       >
-        <canvas ref={canvasRef} style={{ width: '100%', height: PLOT_HEIGHT }} />
-        <canvas ref={overlayRef} className="overlay" style={{ width: '100%', height: PLOT_HEIGHT }} />
+        <canvas
+          ref={canvasRef}
+          role="img"
+          aria-label={summary || `${plotName}: loading.`}
+          style={{ width: '100%', height: PLOT_HEIGHT }}
+        />
+        <canvas ref={overlayRef} className="overlay" aria-hidden="true" style={{ width: '100%', height: PLOT_HEIGHT }} />
+        <div ref={liveRef} className="visually-hidden" aria-live="polite" />
       </div>
     </section>
   )

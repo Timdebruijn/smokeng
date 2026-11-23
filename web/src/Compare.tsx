@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchSeries, type Series } from './api'
-import { fmtUs } from './format'
-import { gapsBefore } from './layout'
+import { compareSummary, fmtUs } from './format'
+import { fmtWhen, gapsBefore } from './layout'
 import { useWidth } from './shared'
 import type { Family } from './util'
 
@@ -261,7 +261,15 @@ export default function Compare({
           </span>
         ))}
       </div>
-      <canvas ref={canvasRef} className="compare-canvas" />
+      <canvas
+        ref={canvasRef}
+        className="compare-canvas"
+        role="img"
+        aria-label={compareSummary(
+          `${fmtWhen(from)} – ${fmtWhen(to)}`,
+          series.map((s) => ({ label: s.label, medians: data.get(s.key)?.med ?? [] })),
+        )}
+      />
       {error && <p className="hint small error">{error}</p>}
       <p className="hint small">
         Vantage points are never averaged — each line is its own measurement. Uncheck targets on

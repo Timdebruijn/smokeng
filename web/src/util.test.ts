@@ -11,6 +11,7 @@ import {
   filterByFamily,
   parseFamilyChoice,
   resolveSeries,
+  screenTitle,
   seriesKey,
   seriesLabel,
   shownFamilies,
@@ -292,4 +293,12 @@ test('measurementLabel puts no data before loss before flags', () => {
   assert.equal(measurementLabel({ sent: 10, loss: 0, flagged: 0 }), 'clean')
   assert.equal(measurementLabel({ flagged: 1 }), 'flagged')
   assert.equal(measurementLabel({}), 'clean')
+})
+
+test('screenTitle names every screen, detail after its target', () => {
+  assert.equal(screenTitle('overview'), 'Overview - smokeng')
+  assert.equal(screenTitle('access'), 'Access - smokeng')
+  assert.equal(screenTitle('signin'), 'Sign in - smokeng')
+  assert.equal(screenTitle('detail', 'core/router'), 'core/router - smokeng')
+  assert.equal(screenTitle('detail', null), 'Target - smokeng')
 })

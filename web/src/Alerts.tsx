@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useAction, StatusDot, ErrorText } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
@@ -58,6 +58,13 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   const [silences, setSilences] = useState<Silence[]>([])
   const [baselines, setBaselines] = useState<AlertBaseline[]>([])
   const [adding, setAdding] = useState(false)
+  // The form replaces the button that opened it; give focus back when it closes.
+  const addButton = useRef<HTMLButtonElement>(null)
+  const wasAdding = useRef(false)
+  useEffect(() => {
+    if (wasAdding.current && !adding) addButton.current?.focus()
+    wasAdding.current = adding
+  }, [adding])
 
   const load = useCallback(async () => {
     const [r, f, t, s, b] = await Promise.all([
@@ -87,6 +94,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
+      <h1 className="visually-hidden">Alerts</h1>
       {error && <ErrorText>{error}</ErrorText>}
       {!delivering && (
         <p className="hint warn">
@@ -295,7 +303,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
             />
           ) : (
             <div className="pill-row">
-              <button className="pill accent" onClick={() => setAdding(true)}>
+              <button ref={addButton} className="pill accent" onClick={() => setAdding(true)}>
                 Add rule…
               </button>
             </div>
@@ -715,7 +723,7 @@ function RuleForm({
     >
       <label className="field">
         <span>Name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} required />
+        <input value={name} autoFocus onChange={(e) => setName(e.target.value)} required />
       </label>
       <label className="field">
         <span>Applies to</span>

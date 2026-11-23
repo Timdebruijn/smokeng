@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { StatusDot } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import { acknowledgeAlert, fetchFiringAlerts, type FiringAlert } from './api'
+import { keepInView } from './shared'
 
 /**
  * What is firing, reachable from every page.
@@ -86,7 +87,7 @@ export default function Bell({
         {unacked > 0 && <span className="bell-badge">{unacked}</span>}
       </button>
       {open && (
-        <div id="bell-popover" className="popover bell-popover">
+        <div id="bell-popover" className="popover bell-popover" ref={keepInView}>
           <p className="popover-title">Firing now</p>
           {!delivering && (
             <p className="hint small">
