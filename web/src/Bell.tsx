@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { StatusDot } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import { acknowledgeAlert, fetchFiringAlerts, type FiringAlert } from './api'
+import { keepInView } from './shared'
 
 /**
  * What is firing, reachable from every page.
@@ -85,7 +87,7 @@ export default function Bell({
         {unacked > 0 && <span className="bell-badge">{unacked}</span>}
       </button>
       {open && (
-        <div id="bell-popover" className="popover bell-popover">
+        <div id="bell-popover" className="popover bell-popover" ref={keepInView}>
           <p className="popover-title">Firing now</p>
           {!delivering && (
             <p className="hint small">
@@ -101,7 +103,7 @@ export default function Bell({
                 <div key={alertKey(a)} className={muted ? 'bell-item acked' : 'bell-item'}>
                   <button className="bell-row" onClick={onOpenAlerts}>
                     <span className="bell-rule">
-                      <span className={muted ? 'dot' : 'dot firing'} />
+                      <StatusDot className={muted ? 'dot' : 'dot firing'} label={muted ? 'acknowledged or silenced' : 'firing'} />
                       {a.rule} — {a.describes}
                     </span>
                     <span className="hint small mono">
@@ -116,7 +118,7 @@ export default function Bell({
                   {!a.silenced && (
                     <button
                       className="pill small"
-                      title={a.acked ? 'Un-acknowledge' : 'Acknowledge — still fires, just stops nagging'}
+                      title={a.acked ? 'Unacknowledge' : 'Acknowledge — still fires, just stops nagging'}
                       aria-label={`${a.acked ? 'Unacknowledge' : 'Acknowledge'} ${alertName(a)}`}
                       onClick={() => void ack(a)}
                     >

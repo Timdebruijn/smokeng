@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useState } from 'react'
-import { useAction, ErrorText } from './shared'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useAction, StatusDot, ErrorText } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -58,6 +58,13 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   const [silences, setSilences] = useState<Silence[]>([])
   const [baselines, setBaselines] = useState<AlertBaseline[]>([])
   const [adding, setAdding] = useState(false)
+  // The form replaces the button that opened it; give focus back when it closes.
+  const addButton = useRef<HTMLButtonElement>(null)
+  const wasAdding = useRef(false)
+  useEffect(() => {
+    if (wasAdding.current && !adding) addButton.current?.focus()
+    wasAdding.current = adding
+  }, [adding])
 
   const load = useCallback(async () => {
     const [r, f, t, s, b] = await Promise.all([
@@ -87,6 +94,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
+      <h1 className="visually-hidden">Alerts</h1>
       {error && <ErrorText>{error}</ErrorText>}
       {!delivering && (
         <p className="hint warn">
@@ -121,9 +129,9 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                   <tr key={alertKey(a)} className={muted ? 'disabled-row' : undefined}>
                     <td>
                       <span className="dot-label">
-                        <span
-                          className="dot"
-                          style={{ background: muted ? 'var(--dim)' : 'var(--bad)' }}
+                        <StatusDot
+                          background={muted ? 'var(--dim)' : 'var(--bad)'}
+                          label={muted ? 'acknowledged or silenced' : 'firing'}
                         />
                         <span className="chip firing">{a.rule}</span>
                       </span>
@@ -166,13 +174,13 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                           className="pill small"
                           title={
                             a.acked
-                              ? 'Un-acknowledge'
+                              ? 'Unacknowledge'
                               : 'Acknowledge — the alert keeps firing, it just stops demanding attention'
                           }
-                          aria-label={`${a.acked ? 'Un-acknowledge' : 'Acknowledge'} ${alertName(a)}`}
+                          aria-label={`${a.acked ? 'Unacknowledge' : 'Acknowledge'} ${alertName(a)}`}
                           onClick={() => void ackAlert(a)}
                         >
-                          {a.acked ? 'un-acknowledge' : 'acknowledge'}
+                          {a.acked ? 'unacknowledge' : 'acknowledge'}
                         </button>
                         {!a.silenced && (
                           <SilenceQuick
@@ -251,7 +259,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                 <tr key={r.id} className={r.enabled ? '' : 'disabled-row'}>
                   <td>
                     <span className="dot-label">
-                      <span className="dot" style={{ background: r.enabled ? 'var(--good)' : 'var(--warn)' }} />
+                      <StatusDot background={r.enabled ? 'var(--good)' : 'var(--warn)'} label={r.enabled ? 'enabled' : 'disabled'} />
                       {r.name}
                     </span>
                   </td>
@@ -315,7 +323,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
             />
           ) : (
             <div className="pill-row">
-              <button className="pill accent" onClick={() => setAdding(true)}>
+              <button ref={addButton} className="pill accent" onClick={() => setAdding(true)}>
                 Add rule…
               </button>
             </div>
@@ -465,6 +473,7 @@ function SilencesSection({
                     <span
                       className="dot"
                       style={{ background: s.active ? 'var(--warn)' : 'var(--dim)' }}
+                      aria-hidden="true"
                     />
                     <span className="chip">{s.active ? 'active' : 'upcoming'}</span>
                   </span>
@@ -692,6 +701,7 @@ function AlertHistory() {
                     <span
                       className="dot"
                       style={{ background: e.firing ? 'var(--bad)' : 'var(--good)' }}
+                      aria-hidden="true"
                     />
                     {e.firing ? 'fired' : 'cleared'}
                   </span>
@@ -761,7 +771,7 @@ function RuleForm({
     >
       <label className="field">
         <span>Name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} required />
+        <input value={name} autoFocus onChange={(e) => setName(e.target.value)} required />
       </label>
       <label className="field">
         <span>Applies to</span>

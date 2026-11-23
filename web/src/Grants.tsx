@@ -57,6 +57,7 @@ export default function Grants({
 
   return (
     <>
+      <h1 className="visually-hidden">Access</h1>
       {error && <ErrorText>{error}</ErrorText>}
 
       <section className="card section-card">

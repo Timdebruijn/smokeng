@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { SERIES_LABELS, fetchSeries, type SeriesName } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
-import { fmtUs } from './format'
-import { AXIS_W, fmtClock, fmtSigned, fmtWhen, inferSpan, rowAt } from './layout'
+import { chartSummary, fmtUs } from './format'
+import { AXIS_W, fmtClock, fmtSigned, fmtWhen, inferSpan, rowAt, stepRow } from './layout'
 import { useRenderWorker, useWidth } from './shared'
 import type { Family } from './util'
 
 interface Props {
   targetId: number
+  /** Only for the plot's text alternative. */
+  targetName: string
   agentId: number
   /** Which of a both target's two series; unset for any other. */
   family?: Family
@@ -32,6 +34,7 @@ const HEIGHT = 150
  */
 export default function SeriesPlot({
   targetId,
+  targetName,
   agentId,
   family,
   name,
@@ -51,8 +54,18 @@ export default function SeriesPlot({
     ends?: Float64Array
   } | null>(null)
   const cursorRef = useRef<number | null>(null)
+  // The readout the last draw produced, for the keyboard's live region (the
+  // mouse never writes that region, or every mousemove would be announced).
+  const readoutRef = useRef<string | null>(null)
+  const liveRef = useRef<HTMLDivElement>(null)
+  const keyedRef = useRef(false)
   const [state, setState] = useState<'loading' | 'ok' | 'unmeasured' | 'empty' | 'error'>('loading')
-  const [readout, setReadout] = useState<string | null>(null)
+  const [readout, setReadoutState] = useState<string | null>(null)
+  const [summary, setSummary] = useState('')
+  const setReadout = (r: string | null) => {
+    readoutRef.current = r
+    setReadoutState(r)
+  }
   // Re-fetch and re-render on a real width change. Without this the density
   // canvas kept the bitmap it was given — time axis baked in — while CSS
   // stretched it to the new width, so an excursion sat visually at one time
@@ -60,6 +73,8 @@ export default function SeriesPlot({
   const width = useWidth(wrapRef)
   const workerRef = useRenderWorker(canvasRef, `series ${targetId}${family ? `/${family}` : ''}/${name}`)
   const label = SERIES_LABELS[name]
+  const plotName = [targetName, label?.title ?? name, family].filter(Boolean).join(' ')
+  const when = `${fmtWhen(from)} – ${fmtWhen(to)}`
 
   useEffect(() => {
     let cancelled = false
@@ -88,6 +103,9 @@ export default function SeriesPlot({
           // is the one thing this project must not do.
           setReadout(null)
           setState(s.ts.length === 0 ? 'empty' : 'unmeasured')
+          setSummary(
+            `${plotName}, ${when}: ${s.ts.length === 0 ? 'no data in this window' : 'not measured in this session'}.`,
+          )
           workerRef.current.postMessage({ type: 'clear' })
           return
         }
@@ -108,6 +126,15 @@ export default function SeriesPlot({
           ends: s.pooled?.ends.slice(),
         }
         setState('ok')
+        setSummary(
+          chartSummary({
+            name: plotName,
+            when,
+            medians: median,
+            intervals: s.pooled ? s.pooled.rounds.reduce((a, b) => a + b, 0) : n,
+            fmt: name === 'server_processing' ? fmtUs : fmtSigned,
+          }),
+        )
         workerRef.current.postMessage(
           {
             type: 'render',
@@ -140,6 +167,7 @@ export default function SeriesPlot({
         rowsRef.current = null
         setReadout(null)
         setState('error')
+        setSummary(`${plotName}: could not be loaded.`)
         workerRef.current?.postMessage({ type: 'clear' })
       })
     return () => {
@@ -213,6 +241,34 @@ export default function SeriesPlot({
     })
   }, [from, to, name])
 
+  // Same keys as Plot: the shared cursor, one row at a time; the draw leaves the
+  // readout in readoutRef, which goes into the live region.
+  const onKey = (e: React.KeyboardEvent) => {
+    const live = liveRef.current
+    if (e.key === 'Escape') {
+      keyedRef.current = false
+      setCursor(null)
+      if (live) live.textContent = ''
+      return
+    }
+    const rows = rowsRef.current
+    if (!rows) return
+    const cur = cursorRef.current
+    const next = stepRow(e.key, cur === null ? -1 : rowAt(rows.ts, cur), rows.ts.length)
+    if (next === null) return
+    e.preventDefault()
+    keyedRef.current = true
+    setCursor(rows.ts[next])
+    if (live) live.textContent = readoutRef.current ?? ''
+  }
+
+  const onBlur = () => {
+    if (!keyedRef.current) return
+    keyedRef.current = false
+    setCursor(null)
+    if (liveRef.current) liveRef.current.textContent = ''
+  }
+
   const onMove = (e: React.MouseEvent) => {
     const wrap = wrapRef.current
     if (!wrap) return
@@ -237,9 +293,15 @@ export default function SeriesPlot({
         style={{ height: HEIGHT }}
         onMouseMove={onMove}
         onMouseLeave={() => setCursor(null)}
+        tabIndex={0}
+        role="group"
+        aria-label={`${plotName}: readout, use the arrow keys`}
+        onKeyDown={onKey}
+        onBlur={onBlur}
       >
-        <canvas ref={canvasRef} />
-        <canvas ref={overlayRef} className="series-overlay" />
+        <canvas ref={canvasRef} role="img" aria-label={summary || `${plotName}: loading.`} />
+        <canvas ref={overlayRef} className="series-overlay" aria-hidden="true" />
+        <div ref={liveRef} className="visually-hidden" aria-live="polite" />
         {state === 'empty' && <p className="series-note">No measurements in this window.</p>}
         {state === 'unmeasured' && (
           <p className="series-note">

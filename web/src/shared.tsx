@@ -8,6 +8,19 @@ import { refreshMs, zoomOut } from './util'
  * `run` clears the error, does the mutation, reloads, and answers whether the
  * mutation worked.
  */
+/**
+ * A ref for a header popover, which hangs from the right edge of its button.
+ * That is right while the button sits at the right of the bar. Once the bar
+ * wraps, the button can start a second row at the left, and the popover would
+ * open past the left edge of the window, where nothing can scroll to it. This
+ * moves it back in by exactly what stuck out.
+ */
+export function keepInView(el: HTMLElement | null) {
+  if (!el) return
+  const over = 8 - el.getBoundingClientRect().left
+  if (over > 0) el.style.right = `${-over}px`
+}
+
 export function useAction(load: () => Promise<void>) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -269,4 +282,18 @@ export function useTimeWindow(initialRangeS = 3600) {
   }
 
   return { rangeS, from, to, refreshKey, live: live && !zoom, zoom, setZoom, pickRange, onZoomOut, toggleLive }
+}
+
+/**
+ * A status dot whose colour carries a state: the same span as before, plus the
+ * state in words for assistive technology. A dot beside text that already says
+ * it stays a bare span with aria-hidden.
+ */
+export function StatusDot({ className = 'dot', background, label }: { className?: string; background?: string; label: string }) {
+  return (
+    <>
+      <span className={className} style={background ? { background } : undefined} />
+      <span className="visually-hidden">{label}</span>
+    </>
+  )
 }

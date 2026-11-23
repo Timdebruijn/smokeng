@@ -15,10 +15,11 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { Stat, ErrorText, useTimeWindow } from './shared'
+import { Stat, StatusDot, ErrorText, useTimeWindow } from './shared'
 import {
   RANGES,
   csvCell,
+  measurementLabel,
   seriesLabel,
   shownFamilies,
   summarise,
@@ -158,15 +159,18 @@ export default function Detail({
       </button>
 
       <div className="detail-head">
-        <span
-          className="dot"
-          style={{
-            background: shownStats.some((s) => s.sent > 0)
+        <StatusDot
+          background={
+            shownStats.some((s) => s.sent > 0)
               ? shownStats.some((s) => s.loss > 0)
                 ? 'var(--warn)'
                 : 'var(--good)'
-              : 'var(--dim)',
-          }}
+              : 'var(--dim)'
+          }
+          label={measurementLabel({
+            sent: shownStats.some((s) => s.sent > 0) ? 1 : 0,
+            loss: shownStats.some((s) => s.loss > 0) ? 1 : 0,
+          })}
         />
         <h1>{target.title ?? target.path}</h1>
         {/* The probe type belongs on the identity line, not buried in the
@@ -232,16 +236,19 @@ export default function Detail({
               : `${agentNames.length > 1 ? `from ${agentNames[0]}` : 'measured'} · pooled over the window below`}
           </span>
           <span className="spacer" />
-          {RANGES.map((r) => (
-            <button
-              key={r.label}
-              className={!zoom && r.seconds === rangeS ? 'pill active' : 'pill'}
-              onClick={() => pickRange(r.seconds)}
-            >
-              {r.label}
-            </button>
-          ))}
-          <button className={live ? 'pill active' : 'pill'} onClick={toggleLive}>
+          <div className="range-group" role="group" aria-label="Time range">
+            {RANGES.map((r) => (
+              <button
+                key={r.label}
+                className={!zoom && r.seconds === rangeS ? 'pill active' : 'pill'}
+                aria-pressed={!zoom && r.seconds === rangeS}
+                onClick={() => pickRange(r.seconds)}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <button className={live ? 'pill active' : 'pill'} aria-pressed={live} onClick={toggleLive}>
             {live ? '● live' : '○ paused'}
           </button>
           {zoom && (
@@ -279,6 +286,7 @@ export default function Detail({
                 <SeriesPlot
                   key={name}
                   targetId={target.id}
+                  targetName={target.title ?? target.path}
                   agentId={agentId}
                   family={f}
                   name={name}
@@ -340,9 +348,9 @@ export default function Detail({
             ) : (
               covering.map((r) => (
                 <div key={r.id} className="rule-line">
-                  <span
-                    className="dot"
-                    style={{ background: r.enabled ? 'var(--good)' : 'var(--dim)' }}
+                  <StatusDot
+                    background={r.enabled ? 'var(--good)' : 'var(--dim)'}
+                    label={r.enabled ? 'enabled' : 'disabled'}
                   />
                   <span className="rule-name">{r.name}</span>
                   {/* The server's own phrasing, not a unit guessed here: a
@@ -515,11 +523,12 @@ function AvailabilityPanel({ target, families }: { target: Target; families: (Fa
       <div className="section-card-head">
         <h2 className="section-card-title">Availability</h2>
         <span className="spacer" />
-        <span className="pill-row">
+        <span className="pill-row" role="group" aria-label="Availability period">
           {AVAIL_PERIODS.map((p) => (
             <button
               key={p.label}
               className={p.seconds === periodS ? 'pill active' : 'pill'}
+              aria-pressed={p.seconds === periodS}
               onClick={() => setPeriodS(p.seconds)}
             >
               {p.label}
