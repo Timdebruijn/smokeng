@@ -597,6 +597,13 @@ a.button {
   box-shadow: var(--shadow);
 }
 
+/* The viewport scrolls under the sticky .appbar, so a focused element that is
+   scrolled into view must stop below it. 72px is the 56px bar plus a margin;
+   the phone block raises it for the two-row bar. */
+html {
+  scroll-padding-top: 72px;
+}
+
 .appbar-inner {
   /* The global header rule makes .appbar a flex container; without these the
      inner row cannot shrink below its tabs and pushes a phone page sideways. */
@@ -1279,6 +1286,14 @@ a.button {
   animation: pulse-dot 2.4s infinite;
 }
 
+/* Both pulsing dots keep their colour; only the opacity animation stops. */
+@media (prefers-reduced-motion: reduce) {
+  .dot.firing,
+  .dot.pulse {
+    animation: none;
+  }
+}
+
 .stat-sub {
   font-size: 12.5px;
   font-weight: 400;
@@ -1739,6 +1754,10 @@ dialog.modal-host::backdrop {
     row-gap: 0;
   }
 
+  html {
+    scroll-padding-top: 104px;
+  }
+
   .tabs {
     order: 9;
     flex: 1 0 100%;
@@ -1846,5 +1865,62 @@ dialog.modal-host::backdrop {
   .alerts th {
     padding: 0;
     border: none;
+  }
+}
+
+/* ── Low windows (zoom, landscape phones) ──────────────────────────────── */
+
+/* At 400% zoom the sticky bar took 113 of a 256px high window. In a window
+   lower than 480px the bar scrolls away with the page, and the tabs wrap so
+   that none sits out of sight in a row that scrolls sideways. */
+@media (max-height: 480px) {
+  .appbar {
+    position: static;
+  }
+
+  html {
+    scroll-padding-top: 0;
+  }
+
+  .tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
+  /* It sticks below the bar; with the bar gone it sticks near the top. */
+  .sidebar {
+    top: 14px;
+  }
+}
+
+/* ── Forced colours ────────────────────────────────────────────────────── */
+
+@media (forced-colors: active) {
+  /* Status dots and legend swatches are filled shapes; system colours would
+     replace the fill and hide them. Keep the fill and add an outline in a
+     system colour. The compare line samples are all fill, so they only keep it. */
+  .dot,
+  .swatch {
+    border: 1px solid CanvasText;
+    box-sizing: border-box;
+  }
+
+  .dot,
+  .swatch,
+  .compare-swatch {
+    forced-color-adjust: none;
+  }
+
+  .dot.firing {
+    border-width: 3px;
+  }
+
+  /* States that only change the background today. */
+  .tab.active,
+  .pill.active,
+  .tree-row.selected,
+  .palette-item.active {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
 }
