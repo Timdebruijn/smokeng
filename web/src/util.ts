@@ -306,3 +306,14 @@ const USERSPACE_FLAGS = 0b11
 export function countedFlags(flags: number, probeType: unknown): number {
   return ['tcp', 'http', 'https', 'irtt'].includes(String(probeType)) ? flags & ~USERSPACE_FLAGS : flags
 }
+
+/**
+ * What a measurement status dot says in words. `sent` and `loss` are left out
+ * where the dot does not know them (a plot header knows only its flags).
+ */
+export function measurementLabel(s: { sent?: number; loss?: number; flagged?: number }): string {
+  if (s.sent === 0) return 'no data'
+  if ((s.loss ?? 0) > 0) return 'loss'
+  if ((s.flagged ?? 0) > 0) return 'flagged'
+  return 'clean'
+}

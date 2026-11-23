@@ -415,29 +415,35 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           >
             ☰
           </button>
-          {RANGES.map((r) => (
-            <button
-              key={r.label}
-              className={!zoom && r.seconds === rangeS ? 'pill active' : 'pill'}
-              onClick={() => pickRange(r.seconds)}
-            >
-              {r.label}
-            </button>
-          ))}
+          <div className="range-group" role="group" aria-label="Time range">
+            {RANGES.map((r) => (
+              <button
+                key={r.label}
+                className={!zoom && r.seconds === rangeS ? 'pill active' : 'pill'}
+                aria-pressed={!zoom && r.seconds === rangeS}
+                onClick={() => pickRange(r.seconds)}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
           <button
             className={logScale ? 'pill active' : 'pill'}
+            aria-pressed={logScale}
             onClick={() => setLogScale(!logScale)}
           >
             log
           </button>
           <button
             className={live ? 'pill active' : 'pill'}
+            aria-pressed={live}
             onClick={toggleLive}
           >
             {live ? '● live' : '○ paused'}
           </button>
           <button
             className={custom ? 'pill active' : 'pill'}
+            aria-pressed={custom !== null}
             onClick={() => setCustom(custom ? null : { from: toLocalInput(from), to: toLocalInput(to) })}
             title="Choose the window's start and end"
           >
@@ -448,6 +454,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           </button>
           <button
             className={compareOn ? 'pill active' : 'pill'}
+            aria-pressed={compareOn}
             onClick={() => setCompareOn((v) => !v)}
             title="Overlay the pooled medians of the shown targets on one axis"
           >
@@ -566,7 +573,7 @@ function Unmeasured({
   return (
     <section className="card plot">
       <div className="plot-head">
-        <span className="dot" style={{ background: 'var(--dim)' }} />
+        <span className="dot" style={{ background: 'var(--dim)' }} aria-hidden="true" />
         <button className="plot-title link-title" onClick={onOpenDetail}>
           {target.title ?? target.path}
         </button>
@@ -575,8 +582,8 @@ function Unmeasured({
         </span>
         <span className="agent">not enrolled</span>
         <span className="spacer" />
-        <button className="pill" onClick={onOpenDetail}>
-          Detail →
+        <button className="pill" onClick={onOpenDetail} aria-label={`Detail: ${target.title ?? target.path}`}>
+          Detail <span aria-hidden="true">→</span>
         </button>
       </div>
       {listFailed ? (

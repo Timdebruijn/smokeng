@@ -996,6 +996,12 @@ a.button {
   flex-wrap: wrap;
 }
 
+/* Names the range buttons as one group without becoming a box of its own:
+   the buttons stay items of the toolbar and wrap one by one, as before. */
+.range-group {
+  display: contents;
+}
+
 .icon-button {
   display: inline-grid;
   place-items: center;

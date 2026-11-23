@@ -10,7 +10,7 @@ import {
   type AgentToken,
   type NewAgentToken,
 } from './api'
-import { ConfirmButton, useAction, useCopy, ErrorText } from './shared'
+import { ConfirmButton, StatusDot, useAction, useCopy, ErrorText } from './shared'
 
 const TTL_OPTIONS: { seconds: number; label: string }[] = [
   { seconds: 900, label: '15 minutes' },
@@ -164,7 +164,7 @@ function AgentRow({
     <tr className={agent.enabled ? '' : 'disabled-row'}>
       <td>
         <span className="dot-label">
-          <span className="dot" style={{ background: agent.enabled ? 'var(--good)' : 'var(--warn)' }} />
+          <StatusDot background={agent.enabled ? 'var(--good)' : 'var(--warn)'} label={agent.enabled ? 'enabled' : 'disabled'} />
           {agent.is_local ? (
             <strong>{agent.name}</strong>
           ) : readOnly ? (
@@ -224,7 +224,7 @@ function TokenRow({
     <tr className={state === 'unspent' ? '' : 'disabled-row'}>
       <td>
         <span className="dot-label">
-          <span className="dot" style={{ background: dotColour }} />
+          <span className="dot" style={{ background: dotColour }} aria-hidden="true" />
           {token.name}
         </span>
       </td>

@@ -11,12 +11,13 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { Stat, ErrorText } from './shared'
+import { Stat, StatusDot, ErrorText } from './shared'
 import {
   afterName,
   alertKey,
   countedFlags,
   showsFamily,
+  measurementLabel,
   minMax,
   seriesKey,
   seriesLabel,
@@ -153,7 +154,7 @@ export default function Overview({
       <div className="page-head">
         <h1>Network overview</h1>
         <span className="live-note">
-          <span className="dot pulse" style={{ background: 'var(--good)' }} />
+          <span className="dot pulse" style={{ background: 'var(--good)' }} aria-hidden="true" />
           live · last hour
         </span>
       </div>
@@ -221,17 +222,17 @@ export default function Overview({
                     className="health-row"
                     onClick={() => onOpenDetail(r.target.id)}
                   >
-                    <span
-                      className="dot"
-                      style={{
-                        background: noData
+                    <StatusDot
+                      background={
+                        noData
                           ? 'var(--dim)'
                           : r.loss > 0
                             ? 'var(--bad)'
                             : counted(r) !== 0
                               ? 'var(--warn)'
-                              : 'var(--good)',
-                      }}
+                              : 'var(--good)'
+                      }
+                      label={measurementLabel({ sent: r.sent, loss: r.loss, flagged: counted(r) })}
                     />
                     <span className="health-name">
                       <span className="health-title">
@@ -296,14 +297,14 @@ export default function Overview({
             )}
             {firing.length === 0 ? (
               <p className="quiet-line">
-                <span className="dot" style={{ background: 'var(--good)' }} />
+                <span className="dot" style={{ background: 'var(--good)' }} aria-hidden="true" />
                 All quiet — no alerts firing.
               </p>
             ) : (
               firing.map((a) => (
                 <div key={alertKey(a)} className="firing-card">
                   <span className="firing-title">
-                    <span className="dot pulse" style={{ background: 'var(--bad)' }} />
+                    <span className="dot pulse" style={{ background: 'var(--bad)' }} aria-hidden="true" />
                     {a.rule}
                   </span>
                   <span className="hint small">
@@ -327,6 +328,7 @@ export default function Overview({
                   <span
                     className="dot"
                     style={{ background: e.firing ? 'var(--bad)' : 'var(--good)' }}
+                    aria-hidden="true"
                   />
                   <span className="activity-what">
                     <strong>{e.firing ? 'fired' : 'cleared'}</strong> · {e.rule} on{' '}
@@ -347,7 +349,7 @@ export default function Overview({
             </p>
             {flagged === 0 ? (
               <p className="quiet-line">
-                <span className="dot" style={{ background: 'var(--good)' }} />
+                <span className="dot" style={{ background: 'var(--good)' }} aria-hidden="true" />
                 Nothing flagged — every series was measured cleanly.
               </p>
             ) : (

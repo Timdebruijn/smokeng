@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useAction, ErrorText } from './shared'
+import { useAction, StatusDot, ErrorText } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -119,9 +119,9 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                   <tr key={alertKey(a)} className={muted ? 'disabled-row' : undefined}>
                     <td>
                       <span className="dot-label">
-                        <span
-                          className="dot"
-                          style={{ background: muted ? 'var(--dim)' : 'var(--bad)' }}
+                        <StatusDot
+                          background={muted ? 'var(--dim)' : 'var(--bad)'}
+                          label={muted ? 'acknowledged or silenced' : 'firing'}
                         />
                         <span className="chip firing">{a.rule}</span>
                       </span>
@@ -164,13 +164,13 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                           className="pill small"
                           title={
                             a.acked
-                              ? 'Un-acknowledge'
+                              ? 'Unacknowledge'
                               : 'Acknowledge — the alert keeps firing, it just stops demanding attention'
                           }
-                          aria-label={`${a.acked ? 'Un-acknowledge' : 'Acknowledge'} ${alertName(a)}`}
+                          aria-label={`${a.acked ? 'Unacknowledge' : 'Acknowledge'} ${alertName(a)}`}
                           onClick={() => void ackAlert(a)}
                         >
-                          {a.acked ? 'un-acknowledge' : 'acknowledge'}
+                          {a.acked ? 'unacknowledge' : 'acknowledge'}
                         </button>
                         {!a.silenced && (
                           <SilenceQuick
@@ -239,7 +239,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                 <tr key={r.id} className={r.enabled ? '' : 'disabled-row'}>
                   <td>
                     <span className="dot-label">
-                      <span className="dot" style={{ background: r.enabled ? 'var(--good)' : 'var(--warn)' }} />
+                      <StatusDot background={r.enabled ? 'var(--good)' : 'var(--warn)'} label={r.enabled ? 'enabled' : 'disabled'} />
                       {r.name}
                     </span>
                   </td>
@@ -443,6 +443,7 @@ function SilencesSection({
                     <span
                       className="dot"
                       style={{ background: s.active ? 'var(--warn)' : 'var(--dim)' }}
+                      aria-hidden="true"
                     />
                     <span className="chip">{s.active ? 'active' : 'upcoming'}</span>
                   </span>
@@ -652,6 +653,7 @@ function AlertHistory() {
                     <span
                       className="dot"
                       style={{ background: e.firing ? 'var(--bad)' : 'var(--good)' }}
+                      aria-hidden="true"
                     />
                     {e.firing ? 'fired' : 'cleared'}
                   </span>
