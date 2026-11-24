@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useAction, StatusDot, ErrorText, FORM_ERROR_ID } from './shared'
+import { useAction, StatusDot, ErrorText } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -81,7 +81,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
     setSilences(s)
     setBaselines(b)
   }, [])
-  const { error, reload, run } = useAction(load)
+  const { error, reload, run, attempt } = useAction(load)
 
   useEffect(() => {
     const id = setInterval(() => void reload(), REFRESH_MS)
@@ -95,7 +95,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   return (
     <>
       <h1 className="visually-hidden">Alerts</h1>
-      {error && <ErrorText id={FORM_ERROR_ID}>{error}</ErrorText>}
+      {error && <ErrorText>{error}</ErrorText>}
       {!delivering && (
         <p className="hint warn">
           Rules are evaluated and their transitions recorded, but nothing is posted anywhere:
@@ -318,7 +318,9 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
               targets={targets}
               onCancel={() => setAdding(false)}
               onSubmit={async (body) => {
-                if (await run(() => createAlertRule(body))) setAdding(false)
+                const err = await attempt(() => createAlertRule(body))
+                if (!err) setAdding(false)
+                return err
               }}
             />
           ) : (
@@ -333,7 +335,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
       <SilencesSection
         silences={silences}
         targets={targets}
-        onCreate={(body) => run(() => createSilence(body))}
+        onCreate={(body) => attempt(() => createSilence(body))}
         onCancel={(id) => run(() => deleteSilence(id))}
       />
 
@@ -430,7 +432,7 @@ function SilencesSection({
 }: {
   silences: Silence[]
   targets: Target[]
-  onCreate: (body: Parameters<typeof createSilence>[0]) => Promise<boolean>
+  onCreate: (body: Parameters<typeof createSilence>[0]) => Promise<string | null>
   onCancel: (id: number) => Promise<boolean>
 }) {
   const [adding, setAdding] = useState(false)
@@ -533,7 +535,9 @@ function SilencesSection({
           targets={targets}
           onCancel={() => setAdding(false)}
           onSubmit={async (body) => {
-            if (await onCreate(body)) setAdding(false)
+            const err = await onCreate(body)
+            if (!err) setAdding(false)
+            return err
           }}
         />
       ) : (
@@ -553,7 +557,7 @@ function SilenceForm({
   onCancel,
 }: {
   targets: Target[]
-  onSubmit: (body: Parameters<typeof createSilence>[0]) => void
+  onSubmit: (body: Parameters<typeof createSilence>[0]) => Promise<string | null>
   onCancel: () => void
 }) {
   // "now" mode books a duration from this moment; "window" mode books an
@@ -564,8 +568,10 @@ function SilenceForm({
   const [startsAt, setStartsAt] = useState('')
   const [endsAt, setEndsAt] = useState('')
   const [reason, setReason] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const errId = useId()
 
-  const submit = () => {
+  const submit = async () => {
     const body: Parameters<typeof createSilence>[0] = { reason }
     if (scope > 0) body.target_id = scope
     if (mode === 'now') {
@@ -574,7 +580,8 @@ function SilenceForm({
       body.starts_at = Math.floor(new Date(startsAt).getTime() / 1000)
       body.ends_at = Math.floor(new Date(endsAt).getTime() / 1000)
     }
-    onSubmit(body)
+    setError(null)
+    setError(await onSubmit(body))
   }
 
   return (
@@ -605,7 +612,16 @@ function SilenceForm({
         <label className="field">
           <span>Duration</span>
           <span className="inline">
-            <input value={durationH} size={4} onChange={(e) => setDurationH(e.target.value)} />
+            {/* 0 passes here and the server says why not; a positive floor would
+                be stricter than the server, which takes any duration of a second. */}
+            <input
+              type="number"
+              min="0"
+              step="any"
+              required
+              value={durationH}
+              onChange={(e) => setDurationH(e.target.value)}
+            />
             <span className="unit">hours</span>
           </span>
         </label>
@@ -625,6 +641,7 @@ function SilenceForm({
             <input
               type="datetime-local"
               value={endsAt}
+              min={startsAt || undefined}
               onChange={(e) => setEndsAt(e.target.value)}
               required
             />
@@ -639,8 +656,9 @@ function SilenceForm({
           placeholder="e.g. planned upgrade of the DB cluster"
         />
       </label>
+      {error && <ErrorText id={errId}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={FORM_ERROR_ID}>
+        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined}>
           Schedule
         </button>
         <button className="pill" type="button" onClick={onCancel}>
@@ -730,10 +748,12 @@ function RuleForm({
   onCancel,
 }: {
   targets: Target[]
-  onSubmit: (body: Partial<AlertRule>) => void
+  onSubmit: (body: Partial<AlertRule>) => Promise<string | null>
   onCancel: () => void
 }) {
   const id = useId()
+  const errId = useId()
+  const [error, setError] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [targetId, setTargetId] = useState<number>(targets[0]?.id ?? 1)
   const [metric, setMetric] = useState<AlertRule['metric']>('loss')
@@ -752,11 +772,12 @@ function RuleForm({
       className="card rule-form"
       onSubmit={(e) => {
         e.preventDefault()
+        setError(null)
         // A shape rule always fires on rising anomaly. In auto mode the
         // threshold is a built-in cutoff the operator does not set: a z-score
         // of 4 for a shift, the 0.6 bimodality mark for two clusters.
         const auto = shape && mode === 'auto'
-        onSubmit({
+        void onSubmit({
           name,
           target_id: targetId,
           metric,
@@ -766,7 +787,7 @@ function RuleForm({
           for_intervals: Number(forIntervals),
           clear_intervals: Number(clearIntervals),
           severity,
-        })
+        }).then(setError)
       }}
     >
       <label className="field">
@@ -804,8 +825,9 @@ function RuleForm({
                   <span className="unit">&gt;</span>
                   <input
                     aria-label="Threshold"
+                    type="number"
+                    step="any"
                     value={threshold}
-                    size={5}
                     onChange={(e) => setThreshold(e.target.value)}
                     required
                   />
@@ -825,8 +847,11 @@ function RuleForm({
               </select>
               <input
                 aria-label="Threshold"
+                type="number"
+                step="any"
+                min={metric === 'loss' ? 0 : undefined}
+                max={metric === 'loss' ? 100 : undefined}
                 value={threshold}
-                size={5}
                 onChange={(e) => setThreshold(e.target.value)}
                 required
               />
@@ -863,15 +888,19 @@ function RuleForm({
         <span className="inline">
           <input
             aria-label="Consecutive intervals before firing"
+            type="number"
+            min="1"
+            required
             value={forIntervals}
-            size={3}
             onChange={(e) => setForIntervals(e.target.value)}
           />
           <span className="unit">consecutive intervals, clearing after</span>
           <input
             aria-label="Intervals before clearing"
+            type="number"
+            min="1"
+            required
             value={clearIntervals}
-            size={3}
             onChange={(e) => setClearIntervals(e.target.value)}
           />
         </span>
@@ -887,8 +916,9 @@ function RuleForm({
           <option value="info">info</option>
         </select>
       </label>
+      {error && <ErrorText id={errId}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={FORM_ERROR_ID} disabled={!name}>
+        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined} disabled={!name}>
           Create
         </button>
         <button className="pill" type="button" onClick={onCancel}>

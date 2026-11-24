@@ -38,17 +38,17 @@ export function useAction(load: () => Promise<void>) {
     void reload()
   }, [reload])
 
-  const run = useCallback(
+  // Runs a change and reloads; hands the failure to the caller, so a form can
+  // show it next to its own button.
+  const attempt = useCallback(
     async (fn: () => Promise<unknown>) => {
       setBusy(true)
-      setError(null)
       try {
         await fn()
         await reload()
-        return true
+        return null
       } catch (e) {
-        setError((e as Error).message)
-        return false
+        return (e as Error).message
       } finally {
         setBusy(false)
       }
@@ -56,7 +56,19 @@ export function useAction(load: () => Promise<void>) {
     [reload],
   )
 
-  return { error, busy, reload, run }
+  // The same, for everything that is not a form: the failure goes to the
+  // screen-level error.
+  const run = useCallback(
+    async (fn: () => Promise<unknown>) => {
+      setError(null)
+      const failure = await attempt(fn)
+      setError(failure)
+      return failure === null
+    },
+    [attempt],
+  )
+
+  return { error, busy, reload, run, attempt }
 }
 
 let announcement = ''
@@ -90,9 +102,6 @@ export function Announcer() {
     </div>
   )
 }
-
-/** The id of the server error a form's submit button points at (one per screen). */
-export const FORM_ERROR_ID = 'form-error'
 
 /** An error line that screen readers announce when it appears. */
 export function ErrorText({ children, id }: { children: ReactNode; id?: string }) {

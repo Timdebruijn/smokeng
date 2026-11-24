@@ -550,6 +550,16 @@ main:focus {
   padding: 0.9rem 1rem;
 }
 
+/* size= does nothing on type=number; this is about what size 3-5 gave, plus the spinner. */
+.rule-form input[type='number'] {
+  width: 6ch;
+}
+
+.add-child .error {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .rule-form .inline {
   display: flex;
   gap: 0.35rem;
