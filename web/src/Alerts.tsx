@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useAction, StatusDot, ErrorText, FORM_ERROR_ID } from './shared'
+import { useAction, useLiveRefresh, LivePill, StatusDot, ErrorText, FORM_ERROR_ID } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -83,10 +83,8 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   }, [])
   const { error, reload, run } = useAction(load)
 
-  useEffect(() => {
-    const id = setInterval(() => void reload(), REFRESH_MS)
-    return () => clearInterval(id)
-  }, [reload])
+  const refresh = useCallback(() => void reload(), [reload])
+  const { live, toggleLive } = useLiveRefresh(refresh, REFRESH_MS)
 
   const ackAlert = (a: FiringAlert) => run(() => acknowledgeAlert(a, !a.acked))
 
@@ -107,6 +105,8 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
       <section className="card section-card">
         <div className="section-card-head">
           <h2 className="section-card-title">Firing</h2>
+          <span className="spacer" />
+          <LivePill live={live} onToggle={toggleLive} />
         </div>
         {firing.length === 0 ? (
           <p className="hint">Nothing is firing.</p>

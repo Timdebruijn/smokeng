@@ -25,7 +25,7 @@ import {
   type FamilyChoice,
   type PlotSeries,
 } from './util'
-import { Announcer, ErrorText, keepInView, useTimeWindow } from './shared'
+import { Announcer, ErrorText, keepInView, LivePill, useTimeWindow } from './shared'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
@@ -435,13 +435,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           >
             log
           </button>
-          <button
-            className={live ? 'pill active' : 'pill'}
-            aria-pressed={live}
-            onClick={toggleLive}
-          >
-            {live ? '● live' : '○ paused'}
-          </button>
+          <LivePill live={live} onToggle={toggleLive} />
           <button
             className={custom ? 'pill active' : 'pill'}
             aria-pressed={custom !== null}

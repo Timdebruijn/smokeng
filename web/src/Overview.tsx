@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   fetchAgents,
   fetchAlertEvents,
@@ -11,7 +11,7 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { Stat, StatusDot, ErrorText } from './shared'
+import { Stat, StatusDot, ErrorText, LivePill, useLiveRefresh } from './shared'
 import {
   afterName,
   alertKey,
@@ -82,10 +82,8 @@ export default function Overview({
   // pattern Graphs (App.tsx) uses for the same reason.
   const [refreshTick, setRefreshTick] = useState(0)
 
-  useEffect(() => {
-    const id = setInterval(() => setRefreshTick((t) => t + 1), REFRESH_MS)
-    return () => clearInterval(id)
-  }, [])
+  const bump = useCallback(() => setRefreshTick((t) => t + 1), [])
+  const { live, toggleLive } = useLiveRefresh(bump, REFRESH_MS)
 
   useEffect(() => {
     let cancelled = false
@@ -154,8 +152,8 @@ export default function Overview({
       <div className="page-head">
         <h1>Network overview</h1>
         <span className="live-note">
-          <span className="dot pulse" style={{ background: 'var(--good)' }} aria-hidden="true" />
-          live · last hour
+          <LivePill live={live} onToggle={toggleLive} />
+          last hour
         </span>
       </div>
 
