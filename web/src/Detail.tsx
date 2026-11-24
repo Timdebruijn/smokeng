@@ -15,7 +15,7 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { Stat, StatusDot, ErrorText, useTimeWindow } from './shared'
+import { Stat, StatusDot, ErrorText, LivePill, useTimeWindow } from './shared'
 import {
   RANGES,
   csvCell,
@@ -248,9 +248,7 @@ export default function Detail({
               </button>
             ))}
           </div>
-          <button className={live ? 'pill active' : 'pill'} aria-pressed={live} onClick={toggleLive}>
-            {live ? '● live' : '○ paused'}
-          </button>
+          <LivePill live={live} onToggle={toggleLive} />
           {zoom && (
             <button className="pill accent" onClick={() => setZoom(null)}>
               reset zoom

@@ -330,6 +330,35 @@ export function useTimeWindow(initialRangeS = 3600) {
   return { rangeS, from, to, refreshKey, live: live && !zoom, zoom, setZoom, pickRange, onZoomOut, toggleLive }
 }
 
+/** The live/paused toggle every self-refreshing screen shows (WCAG 2.2.2). */
+export function LivePill({ live, onToggle }: { live: boolean; onToggle: () => void }) {
+  return (
+    <button className={live ? 'pill active' : 'pill'} aria-pressed={live} onClick={onToggle}>
+      {live ? '● live' : '○ paused'}
+    </button>
+  )
+}
+
+/**
+ * Calls `fn` every `ms` while live; resuming calls it once at once. `fn` must
+ * be stable (useCallback), or the timer restarts on every render. Not called
+ * on mount: the screens load themselves.
+ */
+export function useLiveRefresh(fn: () => void, ms: number) {
+  const [live, setLive] = useState(true)
+  useEffect(() => {
+    if (!live) return
+    const id = setInterval(fn, ms)
+    return () => clearInterval(id)
+  }, [live, fn, ms])
+  const toggleLive = () => {
+    announce(live ? 'Paused' : 'Live')
+    setLive(!live)
+    if (!live) fn()
+  }
+  return { live, toggleLive }
+}
+
 /**
  * A status dot whose colour carries a state: the same span as before, plus the
  * state in words for assistive technology. A dot beside text that already says

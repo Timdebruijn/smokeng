@@ -337,6 +337,9 @@ main:focus {
 
 .tree-row {
   display: flex;
+  /* The host drops below a name it does not fit beside; .tree would cut it off. */
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
   align-items: baseline;
   gap: 0.4rem;
   width: 100%;
@@ -1423,13 +1426,13 @@ html {
   min-width: 0;
 }
 
+/* Title and host wrap instead of ending in an ellipsis: a cut-off name cannot
+   be read at all, and wider text spacing (WCAG 1.4.12) cut every one. */
 .health-title {
   display: block;
   font-size: 13.5px;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .health-host {
@@ -1437,6 +1440,7 @@ html {
   font-size: 12px;
   color: var(--dim);
   font-family: var(--mono);
+  overflow-wrap: anywhere;
 }
 
 .health-legend {
@@ -1849,11 +1853,13 @@ dialog.modal-host::backdrop {
     display: none;
   }
 
-  /* Fixed figure columns: auto-sized ones collided ("181µs1.5ms") once the
-     row had less room than the numbers. */
+  /* Figure columns with a floor: ones that could shrink collided
+     ("181µs1.5ms") once the row had less room than the numbers. They grow
+     past it only when a figure is wider, as with wider text spacing; the
+     name gives way and wraps. */
   .health-row,
   .health-legend {
-    grid-template-columns: 8px minmax(0, 1fr) 48px repeat(3, 48px);
+    grid-template-columns: 8px minmax(0, 1fr) 48px repeat(3, minmax(48px, auto));
     gap: 6px;
     padding-left: 12px;
     padding-right: 12px;
@@ -1861,12 +1867,6 @@ dialog.modal-host::backdrop {
 
   .health-row .spark {
     width: 48px;
-  }
-
-  .health-host {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .health-legend {
