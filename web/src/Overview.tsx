@@ -244,11 +244,9 @@ export default function Overview({
                         )}
                       </span>
                       <span className="health-host">
-                        {/* The family comes first on the host line. Title and
-                            host are both cut off with an ellipsis when they do
-                            not fit, and anything after them goes with the cut:
-                            the two rows of a target measured over both families
-                            would then read exactly alike. */}
+                        {/* The family comes first on the host line, so the two
+                            rows of a target measured over both families differ
+                            at the start of the line, not after a long host. */}
                         {r.family ? `${r.family} · ` : ''}
                         {r.target.host}
                         {/* Only when it is not the default. On a dense list a
