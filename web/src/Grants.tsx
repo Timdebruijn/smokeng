@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   createGrant,
   deleteGrant,
@@ -7,7 +7,7 @@ import {
   type Grant,
   type Target,
 } from './api'
-import { ConfirmButton, useAction, ErrorText, FORM_ERROR_ID } from './shared'
+import { ConfirmButton, useAction, ErrorText } from './shared'
 import { orderedTargets } from './util'
 
 const ROLES: { value: Grant['role']; label: string }[] = [
@@ -40,7 +40,7 @@ export default function Grants({
     setGrants(g)
     setTargets(t)
   }, [])
-  const { error, busy, run } = useAction(load)
+  const { error, busy, run, attempt } = useAction(load)
 
   // Grouped by OIDC group name — the list should read as "who can reach
   // what", not as a flat table of unrelated rows.
@@ -58,7 +58,7 @@ export default function Grants({
   return (
     <>
       <h1 className="visually-hidden">Access</h1>
-      {error && <ErrorText id={FORM_ERROR_ID}>{error}</ErrorText>}
+      {error && <ErrorText>{error}</ErrorText>}
 
       <section className="card section-card">
         <div className="section-card-head">
@@ -132,7 +132,9 @@ export default function Grants({
               busy={busy}
               onCancel={() => setAdding(false)}
               onSubmit={async (group, targetId, role) => {
-                if (await run(() => createGrant({ group, target_id: targetId, role }))) setAdding(false)
+                const err = await attempt(() => createGrant({ group, target_id: targetId, role }))
+                if (!err) setAdding(false)
+                return err
               }}
             />
           ) : (
@@ -204,7 +206,7 @@ function AddGrantForm({
 }: {
   targets: Target[]
   busy: boolean
-  onSubmit: (group: string, targetId: number, role: Grant['role']) => void
+  onSubmit: (group: string, targetId: number, role: Grant['role']) => Promise<string | null>
   onCancel: () => void
 }) {
   const ordered = orderedTargets(targets)
@@ -213,15 +215,18 @@ function AddGrantForm({
   // Until the user chooses, the first target.
   const targetId = pick ?? ordered[0]?.target.id
   const [role, setRole] = useState<Grant['role']>('viewer')
+  const [error, setError] = useState<string | null>(null)
+  const errId = useId()
 
   return (
     <form
       className="card rule-form"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault()
         const trimmed = group.trim()
         if (!trimmed || targetId === undefined) return
-        onSubmit(trimmed, targetId, role)
+        setError(null)
+        setError(await onSubmit(trimmed, targetId, role))
       }}
     >
       <label className="field">
@@ -262,8 +267,9 @@ function AddGrantForm({
         Applies to the target and everything beneath it. Adding a grant for a group and target
         that already has one replaces its role rather than adding a second grant.
       </p>
+      {error && <ErrorText id={errId}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={FORM_ERROR_ID} disabled={busy || !group.trim() || targetId === undefined}>
+        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined} disabled={busy || !group.trim() || targetId === undefined}>
           Add grant
         </button>
         <button className="pill" type="button" disabled={busy} onClick={onCancel}>

@@ -14,7 +14,7 @@ import {
   type SettingValue,
   type Target,
 } from './api'
-import { useAction, ErrorText, FORM_ERROR_ID } from './shared'
+import { useAction, ErrorText } from './shared'
 import { orderedTargets } from './util'
 
 interface SettingDef {
@@ -188,7 +188,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
     setAgents(enrolled)
     setSelectedId((cur) => (cur !== null && list.some((t) => t.id === cur) ? cur : (list[0]?.id ?? null)))
   }, [])
-  const { error, busy: saving, reload, run } = useAction(load)
+  const { error, busy: saving, reload, run, attempt } = useAction(load)
   // A viewer may look at the tree but not change it. The server enforces this
   // regardless; disabling the controls only saves them a refused request.
   const busy = saving || readOnly
@@ -239,7 +239,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
         ))}
       </aside>
       <section className="detail">
-        {error && <ErrorText id={FORM_ERROR_ID}>{error}</ErrorText>}
+        {error && <ErrorText>{error}</ErrorText>}
         {selected ? (
           <TargetDetail
             key={selected.id}
@@ -253,7 +253,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
                 return ok
               })
             }
-            onAddChild={(body) => run(() => createTarget({ ...body, parent_id: selected.id }))}
+            onAddChild={(body) => attempt(() => createTarget({ ...body, parent_id: selected.id }))}
           />
         ) : (
           <p>Select a target.</p>
@@ -309,7 +309,7 @@ interface DetailProps {
   busy: boolean
   onPatch: (body: Parameters<typeof updateTarget>[1]) => Promise<boolean>
   onDelete: (recursive: boolean) => Promise<boolean>
-  onAddChild: (body: { name: string; host?: string; address_family?: string }) => Promise<boolean>
+  onAddChild: (body: { name: string; host?: string; address_family?: string }) => Promise<string | null>
 }
 
 function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: DetailProps) {
@@ -438,7 +438,9 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
             busy={busy}
             onCancel={() => setAdding(false)}
             onSubmit={async (body) => {
-              if (await onAddChild(body)) setAdding(false)
+              const err = await onAddChild(body)
+              if (!err) setAdding(false)
+              return err
             }}
           />
         ) : (
@@ -702,18 +704,21 @@ function AddChildForm({
   onCancel,
 }: {
   busy: boolean
-  onSubmit: (body: { name: string; host?: string; address_family?: string }) => void
+  onSubmit: (body: { name: string; host?: string; address_family?: string }) => Promise<string | null>
   onCancel: () => void
 }) {
   const [name, setName] = useState('')
   const [host, setHost] = useState('')
   const [family, setFamily] = useState('v4')
+  const [error, setError] = useState<string | null>(null)
+  const errId = useId()
   return (
     <form
       className="add-child"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault()
-        onSubmit(host ? { name, host, address_family: family } : { name })
+        setError(null)
+        setError(await onSubmit(host ? { name, host, address_family: family } : { name }))
       }}
     >
       <input aria-label="Name" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required />
@@ -723,7 +728,8 @@ function AddChildForm({
         <option value="v6">v6</option>
         <option value="both">v4 + v6</option>
       </select>
-      <button type="submit" aria-describedby={FORM_ERROR_ID} disabled={busy || !name}>
+      {error && <ErrorText id={errId}>{error}</ErrorText>}
+      <button type="submit" aria-describedby={error ? errId : undefined} disabled={busy || !name}>
         Create
       </button>
       <button type="button" onClick={onCancel} disabled={busy}>

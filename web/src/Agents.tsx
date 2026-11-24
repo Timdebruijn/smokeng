@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import {
   createAgentToken,
   deleteAgent,
@@ -10,7 +10,7 @@ import {
   type AgentToken,
   type NewAgentToken,
 } from './api'
-import { ConfirmButton, StatusDot, useAction, useCopy, ErrorText, FORM_ERROR_ID } from './shared'
+import { ConfirmButton, StatusDot, useAction, useCopy, ErrorText } from './shared'
 
 const TTL_OPTIONS: { seconds: number; label: string }[] = [
   { seconds: 900, label: '15 minutes' },
@@ -47,7 +47,7 @@ export default function Agents({
     setAgents(a)
     setTokens(t)
   }, [])
-  const { error, busy, run } = useAction(load)
+  const { error, busy, run, attempt } = useAction(load)
 
   const agentName = (id: number | undefined) => {
     if (id === undefined) return undefined
@@ -57,7 +57,7 @@ export default function Agents({
   return (
     <>
       <h1 className="visually-hidden">Agents</h1>
-      {error && <ErrorText id={FORM_ERROR_ID}>{error}</ErrorText>}
+      {error && <ErrorText>{error}</ErrorText>}
 
       <section className="card section-card">
         <div className="section-card-head">
@@ -104,8 +104,9 @@ export default function Agents({
               busy={busy}
               onCancel={() => setAdding(false)}
               onSubmit={async (name, ttlS) => {
-                const ok = await run(async () => setMinted(await createAgentToken(name, ttlS)))
-                if (ok) setAdding(false)
+                const err = await attempt(async () => setMinted(await createAgentToken(name, ttlS)))
+                if (!err) setAdding(false)
+                return err
               }}
             />
           ) : (
@@ -288,17 +289,20 @@ function AddAgentForm({
   onCancel,
 }: {
   busy: boolean
-  onSubmit: (name: string, ttlS: number) => void
+  onSubmit: (name: string, ttlS: number) => Promise<string | null>
   onCancel: () => void
 }) {
   const [name, setName] = useState('')
   const [ttlS, setTtlS] = useState(3600)
+  const [error, setError] = useState<string | null>(null)
+  const errId = useId()
   return (
     <form
       className="card rule-form"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault()
-        onSubmit(name.trim(), ttlS)
+        setError(null)
+        setError(await onSubmit(name.trim(), ttlS))
       }}
     >
       <label className="field">
@@ -315,8 +319,9 @@ function AddAgentForm({
           ))}
         </select>
       </label>
+      {error && <ErrorText id={errId}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={FORM_ERROR_ID} disabled={busy || !name.trim()}>
+        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined} disabled={busy || !name.trim()}>
           Create token
         </button>
         <button className="pill" type="button" disabled={busy} onClick={onCancel}>
