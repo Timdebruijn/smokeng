@@ -1,6 +1,6 @@
 # Accessibility statement for smokeng
 
-This statement covers the web interface that the smokeng binary serves. It follows the structure of the [W3C accessibility statement](https://www.w3.org/WAI/planning/statements/) and was last reviewed on 25 November 2026, against the main branch after v0.28.1.
+This statement covers the web interface that the smokeng binary serves. It follows the structure of the [W3C accessibility statement](https://www.w3.org/WAI/planning/statements/) and describes smokeng v0.29.0. It was last reviewed on 25 November 2026.
 
 ## Conformance status
 
@@ -10,7 +10,7 @@ smokeng is **partially conformant** with the [Web Content Accessibility Guidelin
 
 This is a self-evaluation. Nobody outside the project has audited smokeng.
 
-In November 2026 the interface was audited against all 55 level A and AA criteria of WCAG 2.2: by reading the source, with automated checks in a browser, with scripted keyboard walks through every screen, and with measurements of contrast and layout in Chrome at 1280, 900 and 390 px, in the light and the dark theme. Most of what that found was fixed in v0.28.0, in v0.28.1 and on the main branch since, and each fix was measured again in a running instance. What is left is listed under [Known limitations](#known-limitations).
+In November 2026 the interface was audited against all 55 level A and AA criteria of WCAG 2.2: by reading the source, with automated checks in a browser, with scripted keyboard walks through every screen, and with measurements of contrast and layout in Chrome at 1280, 900 and 390 px, in the light and the dark theme. Most of what that found was fixed in v0.28.0, v0.28.1 and v0.29.0, and each fix was measured again in a running instance. What is left is listed under [Known limitations](#known-limitations).
 
 Not part of that assessment:
 
