@@ -41,18 +41,19 @@ export interface RoundTripData {
  * interval carried (in a pooled column: that any of its intervals carried), as
  * the badges beside the plot do. `intervalS` is the target's interval now, with
  * which a pooled column's coverage is estimated as the readout does (0: unknown).
+ * A pooled read carries no per-interval details, so its file has no `icmp_error`
+ * or `send_error` column: an empty cell there would read as "none".
  */
 export function roundTripRows(d: RoundTripData, flagDefs: { bit: number; label: string }[], intervalS: number): Row[] {
   const p = d.pooled
   const rows: Row[] = [
     [
-      ...(p ? ['column_start_utc', 'column_end_utc', 'intervals', 'covered_percent'] : ['interval_start_utc']),
+      ...(p ? ['column_start_utc', 'column_end_utc', 'intervals', 'covered_percent_estimate'] : ['interval_start_utc']),
       'median_us',
       'sent',
       'received',
       'loss_percent',
-      'icmp_error',
-      'send_error',
+      ...(p ? [] : ['icmp_error', 'send_error']),
       'flags',
     ],
   ]
@@ -75,8 +76,12 @@ export function roundTripRows(d: RoundTripData, flagDefs: { bit: number; label: 
       d.sent[i],
       d.received[i],
       round6(d.loss[i] * 100),
-      err === null || err === undefined ? NaN : icmpErrorName(err),
-      se === null || se === undefined ? NaN : sendReasonName(se),
+      ...(p
+        ? []
+        : [
+            err === null || err === undefined ? NaN : icmpErrorName(err),
+            se === null || se === undefined ? NaN : sendReasonName(se),
+          ]),
       labels.join('; '),
     ])
   }
@@ -114,15 +119,28 @@ export function extraSeriesRows(d: ExtraSeriesData): Row[] {
 }
 
 /**
- * The comparison: one row per start time that any series has a row at, one
- * column per series. An empty cell is a series with no median at that time: it
- * has no row there, or its row has no replies. Nothing is filled in between.
+ * The comparison: one row per start time that any series has a row at; per
+ * series a median and a status. An empty median is one of three facts, which
+ * `status` tells apart: "no row" (the series has no row at that time), "no
+ * replies" (probes were sent and none came back) and "nothing sent". Nothing is
+ * filled in between.
  */
-export function compareRows(lines: { label: string; ts: ArrayLike<number>; med: (number | null)[] }[]): Row[] {
-  const at = lines.map((l) => new Map(Array.from(l.ts, (t, i) => [t, l.med[i]] as const)))
+export function compareRows(
+  lines: { label: string; ts: ArrayLike<number>; med: (number | null)[]; sent: ArrayLike<number> }[],
+): Row[] {
+  const at = lines.map((l) => new Map(Array.from(l.ts, (t, i) => [t, i] as const)))
   const times = [...new Set(lines.flatMap((l) => Array.from(l.ts)))].sort((a, b) => a - b)
   return [
-    ['start_utc', ...lines.map((l) => `${l.label} median_us`)],
-    ...times.map((t) => [isoUTC(t), ...at.map((m) => m.get(t) ?? NaN)]),
+    ['start_utc', ...lines.flatMap((l) => [`${l.label} median_us`, `${l.label} status`])],
+    ...times.map((t) => [
+      isoUTC(t),
+      ...lines.flatMap((l, k) => {
+        const i = at[k].get(t)
+        if (i === undefined) return [NaN, 'no row']
+        const v = l.med[i]
+        if (v !== null) return [v, 'measured']
+        return [NaN, l.sent[i] > 0 ? 'no replies' : 'nothing sent']
+      }),
+    ]),
   ]
 }

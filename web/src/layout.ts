@@ -119,18 +119,19 @@ export function compareColumns(tss: ArrayLike<number>[]): number[] {
 
 /**
  * The Compare readout at column t: the time, then each series' median there.
- * A series with no row covering t has no data; a row with no samples has no
- * replies. Neither is written as a number.
+ * A series with no row covering t, or whose row sent nothing, has no data; a
+ * row that sent probes and got no sample back has no replies. None of them is
+ * written as a number.
  */
 export function compareReadout(
   t: number,
-  lines: { label: string; ts: ArrayLike<number>; med: (number | null)[] }[],
+  lines: { label: string; ts: ArrayLike<number>; med: (number | null)[]; sent: ArrayLike<number> }[],
 ): string {
   const per = lines.map((l) => {
     const i = rowAt(l.ts, t)
     if (i < 0 || t >= l.ts[i] + inferSpan(l.ts, l.ts.length)) return `${l.label}: no data`
     const v = l.med[i]
-    return `${l.label}: ${v === null ? 'no replies' : `median ${fmtUs(v)}`}`
+    return `${l.label}: ${v !== null ? `median ${fmtUs(v)}` : l.sent[i] > 0 ? 'no replies' : 'no data'}`
   })
   return [fmtWhen(t), ...per].join(' · ')
 }

@@ -48,6 +48,8 @@ interface RowIndex {
   flags: Uint8Array
   lossPositions: (number[] | null)[]
   span: number
+  /** The window these rows were fetched for, which the props may have left since. */
+  range: { from: number; to: number }
   /** A pooled read: each row is a pixel column [ts, ends), of `rounds` intervals. */
   pooled?: { ends: Float64Array; rounds: Float64Array; positional: Float64Array }
 }
@@ -408,6 +410,7 @@ export default function Plot({
           flags: series.flags.slice(),
           lossPositions: series.lossPositions,
           span: inferSpan(series.ts, n),
+          range: { from, to },
           pooled: series.pooled && {
             ends: series.pooled.ends.slice(),
             rounds: series.pooled.rounds.slice(),
@@ -567,7 +570,7 @@ export default function Plot({
     const rows = rowsRef.current
     if (!rows) return
     downloadCSV(
-      csvFileName([target.title ?? target.path, family, agentName], from, to),
+      csvFileName([target.title ?? target.path, family, agentName], rows.range.from, rows.range.to),
       roundTripRows(
         rows,
         [...FLAGS, { bit: FLAG_ICMP_ERROR, label: 'ICMP errors' }],
