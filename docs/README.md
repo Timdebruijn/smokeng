@@ -35,6 +35,7 @@ not a line — and keeps every sample of every interval, at the resolution it wa
 **Reference**
 - [CLI](cli.md): every command and flag
 - [API](api.md): routes, the auth model, the webhook payload
+- [Testing accessibility by hand](accessibility-testing.md): seven tasks for a keyboard, screen reader and zoom round
 
 [DESIGN.md](../DESIGN.md) explains *why* smokeng is built this way. It is the reference for
 behaviour that looks surprising; these pages are the reference for running it.
