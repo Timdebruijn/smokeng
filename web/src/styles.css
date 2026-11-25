@@ -378,6 +378,12 @@ main:focus {
   overflow: hidden;
 }
 
+.tree-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .tree-row {
   display: flex;
   /* The host drops below a name it does not fit beside; .tree would cut it off. */
@@ -397,7 +403,7 @@ main:focus {
   cursor: pointer;
 }
 
-.tree-row:last-child,
+.tree li:last-child > .tree-row,
 .setting-line:last-child {
   border-bottom: none;
 }
