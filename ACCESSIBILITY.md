@@ -20,6 +20,8 @@ Not part of that assessment:
 - the sign-in screen and the user menu, because the test instance ran without authentication;
 - an alert that is firing on real packet loss.
 
+The round that would cover most of this is written out in [Testing accessibility by hand](docs/accessibility-testing.md).
+
 ## What the interface provides
 
 - Keyboard use: a skip link, one visible focus ring on every control, and plots whose cursor moves with the arrow keys.
