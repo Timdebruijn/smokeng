@@ -1639,6 +1639,9 @@ dialog.modal-host::backdrop {
   box-shadow: var(--shadow-pop);
   padding: 18px 20px;
   max-height: 84vh;
+  /* In a window lower than the panel's content (400% zoom) the buttons at the
+     bottom are reached by scrolling the panel; the host itself does not scroll. */
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
@@ -2036,6 +2039,17 @@ dialog.modal-host::backdrop {
   .sidebar {
     top: 14px;
     max-height: calc(100vh - 90px);
+  }
+
+  /* 260px of textarea is more than such a window has. The panel takes its
+     full height here and the textarea what is left of it, down to 48px; at
+     320 by 256 that shows the whole panel, Copy and Close included. */
+  .modal {
+    height: 84vh;
+  }
+
+  .modal textarea {
+    min-height: 48px;
   }
 }
 
