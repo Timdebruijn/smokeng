@@ -340,8 +340,10 @@ export default function Overview({
           <div className="card panel">
             <h2>Measurement quality</h2>
             <p className="hint small">
-              A number is only worth the conditions it was taken under. Series carrying flags in the
-              last hour, not counting the userspace timing every tcp, http(s) and irtt probe has:
+              A figure is only as good as the conditions it was measured under, and smokeng flags
+              a measurement it cannot fully vouch for. Series that carried a flag in the last
+              hour, not counting the userspace-timing flag that every tcp, http(s) and irtt probe
+              has:
             </p>
             {flagged === 0 ? (
               <p className="quiet-line">
