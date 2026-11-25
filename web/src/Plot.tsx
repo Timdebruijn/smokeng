@@ -591,9 +591,19 @@ export default function Plot({
       <div className="plot-head">
         <StatusDot background={dotColour(flagged)} label={measurementLabel({ flagged })} />
         {onOpenDetail ? (
-          <button className="plot-title link-title" onClick={onOpenDetail}>
-            {target.title ?? target.path}
-          </button>
+          <h2>
+            <button className="plot-title link-title" onClick={onOpenDetail}>
+              {target.title ?? target.path}
+            </button>
+            {/* Two plots of one target differ in family or agent only; a list
+                of headings must tell them apart as well. */}
+            {(family || agentName) && (
+              <span className="visually-hidden">
+                {' '}
+                {[family, agentName && `from ${agentName}`].filter(Boolean).join(' ')}
+              </span>
+            )}
+          </h2>
         ) : (
           <span className="plot-title">{target.title ?? target.path}</span>
         )}

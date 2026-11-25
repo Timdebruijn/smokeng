@@ -103,37 +103,39 @@ export default function Bell({
           {alerts.length === 0 ? (
             <p className="hint small">All quiet — nothing is firing.</p>
           ) : (
-            alerts.map((a) => {
-              const muted = a.acked || a.silenced
-              return (
-                <div key={alertKey(a)} className={muted ? 'bell-item acked' : 'bell-item'}>
-                  <button className="bell-row" onClick={onOpenAlerts}>
-                    <span className="bell-rule">
-                      <StatusDot className={muted ? 'dot' : 'dot firing'} label={muted ? 'acknowledged or silenced' : 'firing'} />
-                      {a.rule} — {a.describes}
-                    </span>
-                    <span className="hint small mono">
-                      {a.target}
-                      {afterName(seriesLabel(a.agent, a.family))}
-                      {a.since ? ` · since ${new Date(a.since * 1000).toLocaleTimeString()}` : ''}
-                      {a.silenced ? ' · silenced' : a.acked && a.acked_by ? ` · ack ${a.acked_by}` : ''}
-                    </span>
-                  </button>
-                  {/* A silence is managed on the Alerts page, so the bell only
-                      offers the per-episode acknowledge. */}
-                  {!a.silenced && (
-                    <button
-                      className="pill small"
-                      title={a.acked ? 'Unacknowledge' : 'Acknowledge — still fires, just stops nagging'}
-                      aria-label={`${a.acked ? 'Unacknowledge' : 'Acknowledge'} ${alertName(a)}`}
-                      onClick={() => void ack(a)}
-                    >
-                      {a.acked ? 'unack' : 'ack'}
+            <ul className="plain-list" role="list">
+              {alerts.map((a) => {
+                const muted = a.acked || a.silenced
+                return (
+                  <li key={alertKey(a)} className={muted ? 'bell-item acked' : 'bell-item'}>
+                    <button className="bell-row" onClick={onOpenAlerts}>
+                      <span className="bell-rule">
+                        <StatusDot className={muted ? 'dot' : 'dot firing'} label={muted ? 'acknowledged or silenced' : 'firing'} />
+                        {a.rule} — {a.describes}
+                      </span>
+                      <span className="hint small mono">
+                        {a.target}
+                        {afterName(seriesLabel(a.agent, a.family))}
+                        {a.since ? ` · since ${new Date(a.since * 1000).toLocaleTimeString()}` : ''}
+                        {a.silenced ? ' · silenced' : a.acked && a.acked_by ? ` · ack ${a.acked_by}` : ''}
+                      </span>
                     </button>
-                  )}
-                </div>
-              )
-            })
+                    {/* A silence is managed on the Alerts page, so the bell only
+                        offers the per-episode acknowledge. */}
+                    {!a.silenced && (
+                      <button
+                        className="pill small"
+                        title={a.acked ? 'Unacknowledge' : 'Acknowledge — still fires, just stops nagging'}
+                        aria-label={`${a.acked ? 'Unacknowledge' : 'Acknowledge'} ${alertName(a)}`}
+                        onClick={() => void ack(a)}
+                      >
+                        {a.acked ? 'unack' : 'ack'}
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
           )}
         </div>
       )}

@@ -575,9 +575,11 @@ function Unmeasured({
     <section className="card plot">
       <div className="plot-head">
         <span className="dot" style={{ background: 'var(--dim)' }} aria-hidden="true" />
-        <button className="plot-title link-title" onClick={onOpenDetail}>
-          {target.title ?? target.path}
-        </button>
+        <h2>
+          <button className="plot-title link-title" onClick={onOpenDetail}>
+            {target.title ?? target.path}
+          </button>
+        </h2>
         <span className="host">
           {target.host} · {target.address_family}
         </span>
@@ -644,16 +646,20 @@ function TargetSidebar({
       {rows.map((r) => (
         <Fragment key={r.group}>
           <p className="side-group">{r.group}</p>
-          {r.items.map((t) => (
-            <label key={t.id} className="side-leaf">
-              <input
-                type="checkbox"
-                checked={!hidden.has(t.id)}
-                onChange={() => onToggle(t.id)}
-              />
-              <span className="side-name">{t.title ?? t.name}</span>
-            </label>
-          ))}
+          <ul className="plain-list" role="list">
+            {r.items.map((t) => (
+              <li key={t.id}>
+                <label className="side-leaf">
+                  <input
+                    type="checkbox"
+                    checked={!hidden.has(t.id)}
+                    onChange={() => onToggle(t.id)}
+                  />
+                  <span className="side-name">{t.title ?? t.name}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
         </Fragment>
       ))}
       {matching.length === 0 && <p className="hint small">Nothing matches that filter.</p>}
