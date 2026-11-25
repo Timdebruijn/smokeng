@@ -302,36 +302,40 @@ export default function Detail({
       <div className="detail-columns">
         <div className="card panel">
           <h2>Effective settings</h2>
-          {SETTING_LABELS.filter(
-            (s) => !s.types || s.types.includes(probeType),
-          ).map((s) => {
-            const v = target.settings[s.key] as SettingValue<number | string | boolean>
-            return (
-              <div key={s.key} className="setting-line">
-                <span className="setting-label">{s.label}</span>
-                <span className="mono">
-                  {/* An unset optional setting has no value to print; an empty
-                      cell would read as a blank the page failed to fill. */}
-                  {isUnset(v)
-                    ? '—'
-                    : s.render
-                      ? s.render(v.effective)
-                      : String(v.effective)}
-                  {!isUnset(v) && s.unit && !s.render && <span className="unit">{s.unit}</span>}
-                </span>
-                <span className="spacer" />
-                <span className={v.source === 'local' ? 'chip local' : 'chip'}>
-                  {isUnset(v)
-                    ? 'not set anywhere'
-                    : v.source === 'local'
-                      ? 'set here'
-                      : v.source === 'outside'
-                        ? 'from outside your scope'
-                        : `inherited from ${v.source.path}`}
-                </span>
-              </div>
-            )
-          })}
+          <dl className="plain-list">
+            {SETTING_LABELS.filter(
+              (s) => !s.types || s.types.includes(probeType),
+            ).map((s) => {
+              const v = target.settings[s.key] as SettingValue<number | string | boolean>
+              return (
+                <div key={s.key} className="setting-line">
+                  <dt className="setting-label">{s.label}</dt>
+                  <dd>
+                    <span className="mono">
+                      {/* An unset optional setting has no value to print; an empty
+                          cell would read as a blank the page failed to fill. */}
+                      {isUnset(v)
+                        ? '—'
+                        : s.render
+                          ? s.render(v.effective)
+                          : String(v.effective)}
+                      {!isUnset(v) && s.unit && !s.render && <span className="unit">{s.unit}</span>}
+                    </span>
+                    <span className="spacer" />
+                    <span className={v.source === 'local' ? 'chip local' : 'chip'}>
+                      {isUnset(v)
+                        ? 'not set anywhere'
+                        : v.source === 'local'
+                          ? 'set here'
+                          : v.source === 'outside'
+                            ? 'from outside your scope'
+                            : `inherited from ${v.source.path}`}
+                    </span>
+                  </dd>
+                </div>
+              )
+            })}
+          </dl>
         </div>
 
         <div className="detail-side">

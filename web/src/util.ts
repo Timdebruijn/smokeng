@@ -51,6 +51,13 @@ export const RANGES: { label: string; seconds: number }[] = [
   { label: '30d', seconds: 30 * 86400 },
 ]
 
+/** 21600 -> "6 hours": the spoken form of a RANGES button. */
+export function rangeWords(seconds: number): string {
+  const [n, unit] =
+    seconds >= 86400 ? [seconds / 86400, 'day'] : seconds >= 3600 ? [seconds / 3600, 'hour'] : [seconds / 60, 'minute']
+  return `${n} ${unit}${n === 1 ? '' : 's'}`
+}
+
 /**
  * How often a trailing window of `rangeS` seconds refreshes: every REFRESH_MS,
  * or about once per pixel column of a 1000-pixel plot if that is longer. A month

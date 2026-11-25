@@ -260,9 +260,16 @@ export default function Overview({
                       </span>
                     </span>
                     <Spark values={r.spark} />
-                    <span className="mono">{r.median === null ? '—' : fmtUs(r.median)}</span>
-                    <span className="mono dimmed">{r.p95 === null ? '—' : fmtUs(r.p95)}</span>
+                    <span className="mono">
+                      <span className="visually-hidden">median </span>
+                      {r.median === null ? '—' : fmtUs(r.median)}
+                    </span>
+                    <span className="mono dimmed">
+                      <span className="visually-hidden">p95 </span>
+                      {r.p95 === null ? '—' : fmtUs(r.p95)}
+                    </span>
                     <span className={!noData && r.loss > 0 ? 'mono bad' : 'mono dimmed'}>
+                      <span className="visually-hidden">loss </span>
                       {noData ? '—' : fmtLoss(r.loss)}
                     </span>
                   </button>
@@ -297,18 +304,20 @@ export default function Overview({
                 All quiet — no alerts firing.
               </p>
             ) : (
-              firing.map((a) => (
-                <div key={alertKey(a)} className="firing-card">
-                  <span className="firing-title">
-                    <span className="dot pulse" style={{ background: 'var(--bad)' }} aria-hidden="true" />
-                    {a.rule}
-                  </span>
-                  <span className="hint small">
-                    {a.describes} on <code>{a.target}</code>
-                    {afterName(seriesLabel(a.agent, a.family))}
-                  </span>
-                </div>
-              ))
+              <ul className="plain-list" role="list">
+                {firing.map((a) => (
+                  <li key={alertKey(a)} className="firing-card">
+                    <span className="firing-title">
+                      <span className="dot pulse" style={{ background: 'var(--bad)' }} aria-hidden="true" />
+                      {a.rule}
+                    </span>
+                    <span className="hint small">
+                      {a.describes} on <code>{a.target}</code>
+                      {afterName(seriesLabel(a.agent, a.family))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 
@@ -319,21 +328,23 @@ export default function Overview({
                 Nothing has fired or cleared yet. Transitions are recorded as they happen.
               </p>
             ) : (
-              recent.map((e) => (
-                <div key={e.id} className="activity-line">
-                  <span
-                    className="dot"
-                    style={{ background: e.firing ? 'var(--bad)' : 'var(--good)' }}
-                    aria-hidden="true"
-                  />
-                  <span className="activity-what">
-                    <strong>{e.firing ? 'fired' : 'cleared'}</strong> · {e.rule} on{' '}
-                    <code>{e.target}</code>
-                    {afterName(e.family)}
-                  </span>
-                  <span className="activity-when">{rel(e.ts)}</span>
-                </div>
-              ))
+              <ul className="plain-list" role="list">
+                {recent.map((e) => (
+                  <li key={e.id} className="activity-line">
+                    <span
+                      className="dot"
+                      style={{ background: e.firing ? 'var(--bad)' : 'var(--good)' }}
+                      aria-hidden="true"
+                    />
+                    <span className="activity-what">
+                      <strong>{e.firing ? 'fired' : 'cleared'}</strong> · {e.rule} on{' '}
+                      <code>{e.target}</code>
+                      {afterName(e.family)}
+                    </span>
+                    <span className="activity-when">{rel(e.ts)}</span>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 

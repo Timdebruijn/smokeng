@@ -1,5 +1,5 @@
 import TomlDialog from './TomlDialog'
-import { useCallback, useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import {
   SERIES_LABELS,
   SERIES_NAMES,
@@ -14,7 +14,7 @@ import {
   type SettingValue,
   type Target,
 } from './api'
-import { ConfirmButton, useAction, useFormError, ErrorText } from './shared'
+import { ConfirmButton, useAction, useFormError, ErrorText, announce } from './shared'
 import { orderedTargets } from './util'
 
 interface SettingDef {
@@ -221,13 +221,17 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
       )}
       <div className="admin">
       <aside className="tree" aria-label="Target tree">
+        <ul className="tree-list" role="list">
         {ordered.map(({ target, depth }) => (
+          <li key={target.id}>
           <button
-            key={target.id}
             className={`tree-row${target.id === selectedId ? ' selected' : ''}`}
             aria-current={target.id === selectedId ? 'true' : undefined}
             style={{ paddingLeft: 8 + depth * 14 }}
-            onClick={() => setSelectedId(target.id)}
+            onClick={() => {
+              setSelectedId(target.id)
+              announce(`Selected ${target.path}`)
+            }}
           >
             <span className={target.is_group ? 'group' : 'leaf'}>
               {target.parent_id === null ? '/' : target.name}
@@ -235,8 +239,13 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
             {!target.enabled && <span className="badge">disabled</span>}
             {target.hidden && <span className="badge">hidden</span>}
             {target.host && <span className="dim">{target.host}</span>}
+            <span className="visually-hidden">
+              {`, ${target.is_group ? 'group' : 'target'}, level ${depth + 1}`}
+            </span>
           </button>
+          </li>
         ))}
+        </ul>
       </aside>
       <section className="detail">
         {error && <ErrorText>{error}</ErrorText>}
@@ -246,14 +255,14 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
             target={selected}
             agents={agents}
             busy={busy}
-            onPatch={(body) => run(() => updateTarget(selected.id, body))}
+            onPatch={(body, done) => run(() => updateTarget(selected.id, body), done)}
             onDelete={(recursive) =>
-              run(() => deleteTarget(selected.id, recursive)).then((ok) => {
+              run(() => deleteTarget(selected.id, recursive), `Target ${selected.path} deleted`).then((ok) => {
                 if (ok) setSelectedId(null)
                 return ok
               })
             }
-            onAddChild={(body) => attempt(() => createTarget({ ...body, parent_id: selected.id }))}
+            onAddChild={(body) => attempt(() => createTarget({ ...body, parent_id: selected.id }), `Target ${body.name} created`)}
           />
         ) : (
           <p>Select a target.</p>
@@ -307,7 +316,7 @@ interface DetailProps {
   target: Target
   agents: AgentInfo[]
   busy: boolean
-  onPatch: (body: Parameters<typeof updateTarget>[1]) => Promise<boolean>
+  onPatch: (body: Parameters<typeof updateTarget>[1], done: string) => Promise<boolean>
   onDelete: (recursive: boolean) => Promise<boolean>
   onAddChild: (body: { name: string; host?: string; address_family?: string }) => Promise<string | null>
 }
@@ -315,6 +324,13 @@ interface DetailProps {
 function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: DetailProps) {
   const isRoot = target.parent_id === null
   const [adding, setAdding] = useState(false)
+  // The form replaces the button that opened it; give focus back when it closes.
+  const addButton = useRef<HTMLButtonElement>(null)
+  const wasAdding = useRef(false)
+  useEffect(() => {
+    if (wasAdding.current && !adding) addButton.current?.focus()
+    wasAdding.current = adding
+  }, [adding])
 
   return (
     <>
@@ -325,20 +341,20 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
 
       <div className="fields">
         {!isRoot && (
-          <TextField label="Name" value={target.name} busy={busy} onSave={(v) => onPatch({ name: v })} />
+          <TextField label="Name" value={target.name} busy={busy} onSave={(v) => onPatch({ name: v }, 'Name saved')} />
         )}
         <TextField
           label="Title"
           value={target.title ?? ''}
           busy={busy}
           placeholder="(display name)"
-          onSave={(v) => onPatch({ title: v === '' ? null : v })}
+          onSave={(v) => onPatch({ title: v === '' ? null : v }, 'Title saved')}
         />
         <TextField
           label="Notes"
           value={target.notes ?? ''}
           busy={busy}
-          onSave={(v) => onPatch({ notes: v === '' ? null : v })}
+          onSave={(v) => onPatch({ notes: v === '' ? null : v }, 'Notes saved')}
         />
         {!isRoot && (
           <>
@@ -349,7 +365,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
               placeholder="(empty = group node)"
               onSave={(v) =>
                 // Host and address family are set together or not at all.
-                onPatch(v === '' ? { host: null, address_family: null } : { host: v })
+                onPatch(v === '' ? { host: null, address_family: null } : { host: v }, 'Host saved')
               }
             />
             <label className="field">
@@ -357,7 +373,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
               <select
                 value={target.address_family ?? ''}
                 disabled={busy || target.host === null}
-                onChange={(e) => void onPatch({ address_family: e.target.value })}
+                onChange={(e) => void onPatch({ address_family: e.target.value }, `Address family set to ${e.target.value}`)}
               >
                 <option value="v4">v4</option>
                 <option value="v6">v6</option>
@@ -371,7 +387,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
             type="checkbox"
             checked={target.enabled}
             disabled={busy}
-            onChange={(e) => void onPatch({ enabled: e.target.checked })}
+            onChange={(e) => void onPatch({ enabled: e.target.checked }, `${target.path} ${e.target.checked ? 'enabled' : 'disabled'}`)}
           />
           <span>Enabled — measured by the prober</span>
         </label>
@@ -380,7 +396,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
             type="checkbox"
             checked={target.hidden}
             disabled={busy}
-            onChange={(e) => void onPatch({ hidden: e.target.checked })}
+            onChange={(e) => void onPatch({ hidden: e.target.checked }, `${target.path} ${e.target.checked ? 'hidden from' : 'shown on'} the graphs page`)}
           />
           <span>Hidden — measured, but not shown on the graphs page</span>
         </label>
@@ -425,7 +441,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
               agents={agents}
               busy={busy}
               validate={(v) => validateSetting(target, s, v)}
-              onSet={(v) => onPatch({ settings: { [s.key]: v } })}
+              onSet={(v) => onPatch({ settings: { [s.key]: v } }, `${s.label} ${v === null ? 'reverted to inherited' : 'saved'}`)}
             />
           ))}
         </tbody>
@@ -444,14 +460,14 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
             }}
           />
         ) : (
-          <button onClick={() => setAdding(true)} disabled={busy}>
+          <button ref={addButton} onClick={() => setAdding(true)} disabled={busy}>
             Add child…
           </button>
         )}
         {!isRoot && (
           <>
-            <ConfirmButton className="" busy={busy} label="Delete" onConfirm={() => onDelete(false)} />
-            <ConfirmButton className="" busy={busy} label="Delete with descendants" onConfirm={() => onDelete(true)} />
+            <ConfirmButton className="" busy={busy} label="Delete" subject={target.name} onConfirm={() => onDelete(false)} />
+            <ConfirmButton className="" busy={busy} label="Delete with descendants" subject={target.name} onConfirm={() => onDelete(true)} />
           </>
         )}
       </div>
@@ -721,7 +737,7 @@ function AddChildForm({
         <span>
           Name <span className="note">(required)</span>
         </span>
-        <input placeholder="core-router" value={name} onChange={(e) => setName(e.target.value)} required {...field('name')} />
+        <input placeholder="core-router" autoFocus value={name} onChange={(e) => setName(e.target.value)} required {...field('name')} />
       </label>
       <label>
         <span>

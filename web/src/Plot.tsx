@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import {
   fetchPathChanges,
   fetchSeries,
@@ -256,6 +256,7 @@ export default function Plot({
   const probeType = String(target.settings.probe_type.effective || 'icmp')
   // What names this plot to assistive technology: the family and agent are what
   // tell the plots of one target apart.
+  const hintId = useId()
   const plotName = [target.title ?? target.path, family, agentName && `from ${agentName}`].filter(Boolean).join(' ')
 
   // Pixel ↔ time mapping, in CSS pixels over the density area only.
@@ -591,9 +592,19 @@ export default function Plot({
       <div className="plot-head">
         <StatusDot background={dotColour(flagged)} label={measurementLabel({ flagged })} />
         {onOpenDetail ? (
-          <button className="plot-title link-title" onClick={onOpenDetail}>
-            {target.title ?? target.path}
-          </button>
+          <h2>
+            <button className="plot-title link-title" onClick={onOpenDetail}>
+              {target.title ?? target.path}
+            </button>
+            {/* Two plots of one target differ in family or agent only; a list
+                of headings must tell them apart as well. */}
+            {(family || agentName) && (
+              <span className="visually-hidden">
+                {' '}
+                {[family, agentName && `from ${agentName}`].filter(Boolean).join(' ')}
+              </span>
+            )}
+          </h2>
         ) : (
           <span className="plot-title">{target.title ?? target.path}</span>
         )}
@@ -632,7 +643,8 @@ export default function Plot({
         onMouseLeave={onLeave}
         tabIndex={0}
         role="group"
-        aria-label={`${plotName}: readout, use the arrow keys`}
+        aria-label={`${plotName} values`}
+        aria-describedby={hintId}
         onKeyDown={onKey}
         onBlur={onBlur}
       >
@@ -644,6 +656,9 @@ export default function Plot({
         />
         <canvas ref={overlayRef} className="overlay" aria-hidden="true" style={{ width: '100%', height: PLOT_HEIGHT }} />
         <div ref={liveRef} className="visually-hidden" aria-live="polite" />
+        <span id={hintId} hidden>
+          Use the arrow keys to move the cursor through the values; Escape clears it.
+        </span>
       </div>
     </section>
   )
