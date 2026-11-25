@@ -82,12 +82,18 @@ export function chartSummary(p: {
   return `${head}: ${parts.join(', ')}.`
 }
 
-/** The compare graph's alternative: one clause per plotted line, same figures as chartSummary. */
-export function compareSummary(when: string, lines: { label: string; medians: (number | null)[] }[]): string {
+/**
+ * The compare graph's alternative: one clause per plotted line, same figures as chartSummary.
+ * A line that sent nothing in the window has no data; "no replies" says probes went out.
+ */
+export function compareSummary(
+  when: string,
+  lines: { label: string; medians: (number | null)[]; sent: ArrayLike<number> }[],
+): string {
   if (lines.length === 0) return `Compare, ${when}: no series selected.`
   const per = lines.map((l) => {
     const v = sortedFinite(l.medians.filter((x): x is number => x !== null))
-    if (v.length === 0) return `${l.label}: no replies`
+    if (v.length === 0) return `${l.label}: ${Array.from(l.sent).some((n) => n > 0) ? 'no replies' : 'no data'}`
     return `${l.label}: typical median ${fmtUs(v[v.length >> 1])}, highest ${fmtUs(v[v.length - 1])}`
   })
   return `Compare pooled medians, ${when}. ${per.join('. ')}.`

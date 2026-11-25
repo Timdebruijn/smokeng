@@ -29,10 +29,12 @@ test('an empty plot says there is no data, and an all-lost one says no replies',
 test('the compare summary names every line, also one without replies', () => {
   assert.equal(
     compareSummary('10:00 – 11:00', [
-      { label: 'a', medians: [1000, null, 3000] },
-      { label: 'b', medians: [null] },
+      { label: 'a', medians: [1000, null, 3000], sent: [20, 20, 20] },
+      { label: 'b', medians: [null], sent: [20] },
+      { label: 'c', medians: [null, null], sent: [0, 0] },
+      { label: 'd', medians: [], sent: [] },
     ]),
-    'Compare pooled medians, 10:00 – 11:00. a: typical median 3.0ms, highest 3.0ms. b: no replies.',
+    'Compare pooled medians, 10:00 – 11:00. a: typical median 3.0ms, highest 3.0ms. b: no replies. c: no data. d: no data.',
   )
   assert.equal(compareSummary('w', []), 'Compare, w: no series selected.')
 })
