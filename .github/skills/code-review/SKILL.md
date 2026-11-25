@@ -98,6 +98,24 @@ here:
 - A layout checked at one width. Every UI change is looked at at 1280, 900 and
   390px wide, and `document.documentElement.scrollWidth` must not exceed the
   window.
+- A dialog checked in a tall window. A window of 1280 by 1024px at 400% zoom
+  is 320 by 256px; the TOML dialog's buttons sat below its edge in a panel
+  that did not scroll.
+- A change that tells a screen reader nothing. Acknowledging an alert only
+  renamed a button. An action through `useAction` passes a message that names
+  what it acted on; it is announced once the change went through, never for
+  one that failed. Any announcement says what is known: the range that was
+  chosen, not that the data arrived.
+- A control that removes itself. A form that replaced its button, a delete
+  that took its row, a silence that took its control: focus fell to `body`.
+  What opens takes the focus, what closes gives it back, and what removes
+  itself parks it (`useParkedFocus`, or `ResetZoom` for the zoom button).
+- A name that needs its row to make sense. "Delete" twelve times in a list of
+  buttons. The name contains the visible text, at its start where it can,
+  and says what it acts on (`subject` on `ConfirmButton`).
+- The same sentence read twice. An error line that was an alert and also the
+  description of the field that took the focus; a hint that was both visually
+  hidden text and a description.
 
 If a change removes or adds a barrier, the known limitations in
 `ACCESSIBILITY.md` change with it, in the same pull request.
