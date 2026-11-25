@@ -10,7 +10,7 @@ import {
   type AgentToken,
   type NewAgentToken,
 } from './api'
-import { ConfirmButton, StatusDot, useAction, useFormError, useCopy, ErrorText } from './shared'
+import { ConfirmButton, StatusDot, useAction, useFormError, useCopy, useParkedFocus, ErrorText } from './shared'
 
 const TTL_OPTIONS: { seconds: number; label: string }[] = [
   { seconds: 900, label: '15 minutes' },
@@ -119,7 +119,17 @@ export default function Agents({
           ))}
 
         {minted && (
-        <TokenReveal token={minted} externalURL={externalURL} onDismiss={() => setMinted(null)} />
+        <TokenReveal
+          token={minted}
+          externalURL={externalURL}
+          onDismiss={() => {
+            // The panel goes, and its button with it. When "Add an agent…" is
+            // not there to take the focus (its form is open), TokenReveal
+            // parks it.
+            setMinted(null)
+            addButton.current?.focus()
+          }}
+        />
       )}
       </section>
 
@@ -352,6 +362,7 @@ function TokenReveal({
   externalURL?: string
   onDismiss: () => void
 }) {
+  const dismissed = useParkedFocus()
   // The agent refuses a plain-HTTP master unless told otherwise, because this
   // request is the one carrying a usable credential. Show the command that
   // actually works here, and say why it needs the flag, rather than handing
@@ -396,7 +407,13 @@ function TokenReveal({
         <button className="pill accent" onClick={() => void copy()}>
           {copied ? 'Copied' : 'Copy command'}
         </button>
-        <button className="pill" onClick={onDismiss}>
+        <button
+          className="pill"
+          onClick={() => {
+            dismissed.current = true
+            onDismiss()
+          }}
+        >
           I have saved it — dismiss
         </button>
       </div>

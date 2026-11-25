@@ -15,7 +15,7 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { Stat, StatusDot, ErrorText, LivePill, downloadCSV, useTimeWindow } from './shared'
+import { Stat, StatusDot, ErrorText, LivePill, ResetZoom, downloadCSV, useTimeWindow } from './shared'
 import {
   RANGES,
   measurementLabel,
@@ -248,11 +248,7 @@ export default function Detail({
             ))}
           </div>
           <LivePill live={live} onToggle={toggleLive} />
-          {zoom && (
-            <button className="pill accent" onClick={() => setZoom(null)}>
-              reset zoom
-            </button>
-          )}
+          {zoom && <ResetZoom onReset={() => setZoom(null)} />}
         </div>
         {agentId === null ? (
           <p className="hint">
