@@ -409,8 +409,8 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
         String(target.settings.probe_type.effective) === 'https' &&
         target.settings.tls_skip_verify.effective === true && (
           <p className="hint warn-line">
-            Certificates are not verified for this target, so a measurement here shows that
-            something answered — not that it was the right service. Trusting the issuing CA with{' '}
+            Certificates are not verified for this target. A measurement here shows that
+            something answered, not that it was the right service. Trusting the issuing CA with{' '}
             <code>--tls-ca-file</code> does the same job with verification left on.
           </p>
         )}

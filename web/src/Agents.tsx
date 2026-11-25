@@ -64,9 +64,10 @@ export default function Agents({
           <h2 className="section-card-title">Agents</h2>
         </div>
         <p className="hint">
-          Each agent measures from its own vantage point, and each is its own series — two
-          vantage points that disagree is the finding, not something to average away. The local
-          prober is this master itself, and cannot be renamed, disabled or removed.
+          Each agent measures from its own vantage point: the place in the network where it
+          runs. The measurements of each agent are a series of their own. When two vantage
+          points disagree, that difference is the finding, so they are never averaged. The local
+          prober is this master itself; it cannot be renamed, disabled or removed.
         </p>
         {agents.length === 0 ? (
           <p className="hint">No agents.</p>
@@ -361,8 +362,8 @@ function TokenReveal({
     <div className="token-reveal">
       <h3>Token for “{token.name}”</h3>
       <p className="hint">
-        This token is shown once, here, and cannot be retrieved again — if it is lost, revoke it
-        and issue a new one. Run this on the agent host to enrol it with this master:
+        This token is shown once, here. It cannot be retrieved again: if it is lost, revoke it
+        and issue a new one. Run this command on the agent host to enrol it with this master:
       </p>
       <div className="command">
         <code>{command}</code>
@@ -375,10 +376,10 @@ function TokenReveal({
       )}
       {!overTLS && (
         <p className="hint">
-          This master is not on TLS, so the command carries{' '}
-          <code>--insecure-allow-http</code>. The token is a credential and this sends it in
-          the clear; put a TLS-terminating proxy in front before doing this over a network
-          you do not trust.
+          This master is not served over TLS, so the command carries{' '}
+          <code>--insecure-allow-http</code>. The token is a credential, and this sends it
+          unencrypted. Put a proxy that terminates TLS in front of the master before you do
+          this over a network you do not trust.
         </p>
       )}
       <div className="pill-row">

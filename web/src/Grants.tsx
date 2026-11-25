@@ -65,10 +65,11 @@ export default function Grants({
           <h2 className="section-card-title">Access</h2>
         </div>
         <p className="hint">
-          A grant gives an OIDC group a role on a target and everything beneath it. A group scoped
-          this way sees that subtree as though it were the whole installation — there is no way for
-          it to learn that anything else exists. <code>admin</code> is not offered as a role here:
-          it is a global role assigned by the identity provider, not something granted per target.
+          A grant gives a group from your identity provider (an OIDC group) a role on one target
+          and on everything beneath it. A group that only has such grants sees its part of the
+          tree as if it were the whole installation: it cannot find out that anything else
+          exists. <code>admin</code> is not offered as a role here. It is a global role that the
+          identity provider assigns, not one that is granted per target.
         </p>
         {!authEnabled && (
           <p className="hint warn">
@@ -80,10 +81,10 @@ export default function Grants({
         {authEnabled && defaultRole === 'viewer' && (
           <p className="hint warn">
             These grants are not in force yet. This instance runs with{' '}
-            <code>--default-role viewer</code>, so every authenticated user can already read
-            everything and a grant only ever adds. Write the grants you want, check them, then
-            restart with <code>--default-role none</code> — at which point access comes from
-            this list alone.
+            <code>--default-role viewer</code>, so every signed-in user can already read
+            everything, and a grant can only add to that. Write the grants you want and check
+            them. Then restart with <code>--default-role none</code>: from then on, access
+            comes from this list alone.
           </p>
         )}
 
@@ -264,8 +265,8 @@ function AddGrantForm({
         </select>
       </label>
       <p className="hint">
-        Applies to the target and everything beneath it. Adding a grant for a group and target
-        that already has one replaces its role rather than adding a second grant.
+        Applies to the target and everything beneath it. If the group already has a grant on
+        this target, the new one replaces its role; it does not add a second grant.
       </p>
       {error && <ErrorText id={errId}>{error}</ErrorText>}
       <div className="pill-row">

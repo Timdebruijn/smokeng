@@ -25,7 +25,7 @@ import {
   type FamilyChoice,
   type PlotSeries,
 } from './util'
-import { Announcer, ErrorText, keepInView, LivePill, useTimeWindow } from './shared'
+import { Announcer, ErrorText, Hint, keepInView, LivePill, useTimeWindow } from './shared'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
@@ -455,6 +455,12 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           >
             compare
           </button>
+          <Hint
+            className="pill"
+            text="custom: choose the start and the end of the window yourself. zoom out: show twice as much time around the same centre. compare: draw the medians of the targets shown as lines on one axis."
+          >
+            help
+          </Hint>
           <span className="spacer" />
           <span className="span-label">{spanLabel}</span>
           {zoom ? (

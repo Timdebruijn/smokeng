@@ -229,6 +229,13 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
             </tbody>
           </table>
         )}
+        {firing.length > 0 && (
+          <p className="hint small">
+            Acknowledging marks an alert as seen: it keeps firing and keeps being delivered, but
+            stops asking for attention here. Silencing stops its delivery for a while; the rule is
+            not changed.
+          </p>
+        )}
       </section>
 
       <section className="card section-card">
@@ -236,10 +243,11 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
           <h2 className="section-card-title">Rules</h2>
         </div>
         <p className="hint">
-          A rule applies to the node it is defined on and everything below it. A node with its own
-          rules replaces the inherited set rather than adding to it. Rules only fire after the
-          condition has held for the given number of consecutive intervals, and only clear after it
-          has failed for as many — so a single bad interval never pages anyone.
+          A rule applies to the node it is defined on, a group or a target, and to everything
+          below it. A node that has rules of its own uses those instead of the rules it would
+          inherit; they are not added together. A rule fires only after its condition has held
+          for the given number of intervals in a row, and clears only after the condition has
+          failed for as many. One bad interval therefore never pages anyone.
         </p>
         {rules.length === 0 && <p className="hint">No rules defined.</p>}
         {rules.length > 0 && (
@@ -308,6 +316,12 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
               ))}
             </tbody>
           </table>
+        )}
+        {isAdmin && rules.some((r) => r.baseline === 'golden') && (
+          <p className="hint small">
+            Capture reference stores the last hour as what the path looks like when it is healthy.
+            Clear drops that reference; the rule then has nothing to compare with and stays quiet.
+          </p>
         )}
 
         {isAdmin &&
@@ -448,10 +462,10 @@ function SilencesSection({
         <h2 className="section-card-title">Silences &amp; maintenance windows</h2>
       </div>
       <p className="hint">
-        A silence suppresses delivery and mutes matching alerts over a time window, without
-        touching the rule. Scope it to a node and its subtree, or leave it global. A window that
-        starts in the future is a maintenance window: planned work stops paging without anyone
-        editing a rule.
+        A silence stops matching alerts from being delivered during a time window and shows
+        them as muted. The rule itself is not changed. Scope it to a node, which covers
+        everything below that node too, or leave it global. A silence that starts in the future
+        is a maintenance window: planned work pages nobody, and nobody has to edit a rule.
       </p>
 
       {live.length === 0 ? (
@@ -885,9 +899,9 @@ function RuleForm({
         <p className="hint small">
           {metric === 'shape'
             ? baseline === 'golden'
-              ? 'Fires when the distribution drifts from a reference you capture once — "this is what good looks like". Capture it from the rule list after creating the rule; until then the rule has nothing to compare against and stays quiet.'
-              : 'Fires when the distribution shifts from its recent history (Wasserstein distance). Auto scores the shift against the series’ own recent variability — no threshold to tune.'
-            : 'Fires when the distribution splits into two clusters — a load-balanced or flapping path. Auto uses the 0.6 bimodality mark.'}
+              ? 'Fires when the distribution drifts away from a reference that you capture once: "this is what good looks like". Capture the reference from the rule list after you create the rule. Until then the rule has nothing to compare with and stays quiet.'
+              : 'Fires when the distribution shifts away from its own recent history. The shift is the Wasserstein distance: the average distance the measurements would have to move to turn one distribution into the other. Auto scores that shift against how much the series normally varies, so there is no threshold to tune.'
+            : 'Fires when the distribution splits into two clusters, as on a path that is load-balanced over two routes or that flaps between them. Auto uses the mark of 0.6 on the bimodality coefficient, which runs from 0 to 1.'}
         </p>
       )}
       <div className="field" role="group" aria-labelledby={`${id}-for`}>
