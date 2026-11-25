@@ -14,7 +14,7 @@ import {
   type SettingValue,
   type Target,
 } from './api'
-import { useAction, ErrorText } from './shared'
+import { ConfirmButton, useAction, ErrorText } from './shared'
 import { orderedTargets } from './util'
 
 interface SettingDef {
@@ -450,12 +450,8 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
         )}
         {!isRoot && (
           <>
-            <button className="danger" disabled={busy} onClick={() => void onDelete(false)}>
-              Delete
-            </button>
-            <button className="danger" disabled={busy} onClick={() => void onDelete(true)}>
-              Delete with descendants
-            </button>
+            <ConfirmButton className="" busy={busy} label="Delete" onConfirm={() => onDelete(false)} />
+            <ConfirmButton className="" busy={busy} label="Delete with descendants" onConfirm={() => onDelete(true)} />
           </>
         )}
       </div>

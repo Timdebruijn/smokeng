@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useAction, useLiveRefresh, LivePill, StatusDot, ErrorText } from './shared'
+import { ConfirmButton, useAction, useLiveRefresh, LivePill, StatusDot, ErrorText } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -81,7 +81,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
     setSilences(s)
     setBaselines(b)
   }, [])
-  const { error, reload, run, attempt } = useAction(load)
+  const { error, busy, reload, run, attempt } = useAction(load)
 
   const refresh = useCallback(() => void reload(), [reload])
   const { live, toggleLive } = useLiveRefresh(refresh, REFRESH_MS)
@@ -301,9 +301,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                           )}
                         </>
                       )}
-                      <button className="pill danger" onClick={() => void run(() => deleteAlertRule(r.id))}>
-                        Delete
-                      </button>
+                      <ConfirmButton busy={busy} label="Delete" onConfirm={() => run(() => deleteAlertRule(r.id))} />
                     </td>
                   )}
                 </tr>
@@ -337,6 +335,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
         targets={targets}
         onCreate={(body) => attempt(() => createSilence(body))}
         onCancel={(id) => run(() => deleteSilence(id))}
+        busy={busy}
       />
 
       <AlertHistory />
@@ -429,9 +428,11 @@ function SilencesSection({
   targets,
   onCreate,
   onCancel,
+  busy,
 }: {
   silences: Silence[]
   targets: Target[]
+  busy: boolean
   onCreate: (body: Parameters<typeof createSilence>[0]) => Promise<string | null>
   onCancel: (id: number) => Promise<boolean>
 }) {
@@ -493,9 +494,13 @@ function SilencesSection({
                 </td>
                 <td className="hint">{s.reason}</td>
                 <td>
-                  <button className="pill small danger" onClick={() => void onCancel(s.id)}>
-                    cancel
-                  </button>
+                  <ConfirmButton
+                    className="pill small"
+                    busy={busy}
+                    label="cancel"
+                    confirmLabel="Confirm cancel silence"
+                    onConfirm={() => onCancel(s.id)}
+                  />
                 </td>
               </tr>
             ))}
