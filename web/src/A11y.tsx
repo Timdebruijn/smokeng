@@ -109,7 +109,6 @@ export default function A11yMenu({
     <div className="a11y">
       <button
         className="icon-button"
-        title="Accessibility options"
         aria-label="Aa, accessibility options"
         aria-expanded={open}
         aria-controls="a11y-popover"

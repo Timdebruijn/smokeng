@@ -71,7 +71,6 @@ export default function Bell({
     <div className="bell">
       <button
         className="icon-button"
-        title={unacked ? `${unacked} firing` : 'Firing alerts'}
         aria-label={unacked ? `${unacked} alerts firing` : 'Firing alerts'}
         aria-expanded={open}
         aria-controls="bell-popover"

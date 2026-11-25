@@ -11,7 +11,7 @@ import { countedFlags, measurementLabel, type Family } from './util'
 import { setCursor, subscribeCursor } from './crosshair'
 import { chartSummary, positionalTitle, replyLines } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt, stepRow } from './layout'
-import { useRenderWorker, useWidth, StatusDot, ErrorText } from './shared'
+import { useRenderWorker, useWidth, StatusDot, ErrorText, Hint } from './shared'
 
 interface Props {
   target: Target
@@ -576,10 +576,10 @@ export default function Plot({
         {family && <span className="agent">{family}</span>}
         {agentName && <span className="agent">from {agentName}</span>}
         {quality.map((q) => (
-          <span key={q.label} className={q.expected ? 'quality expected' : 'quality'} title={q.title}>
+          <Hint key={q.label} className={q.expected ? 'quality expected' : 'quality'} text={q.title}>
             {q.label}
             {rowCount > 0 && q.count < rowCount && <> ({q.count}/{rowCount})</>}
-          </span>
+          </Hint>
         ))}
         {onOpenDetail && (
           <>

@@ -411,7 +411,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
         <div className="card toolbar">
           <button
             className="icon-button"
-            title="Toggle target list"
+            aria-label="Toggle target list"
             onClick={() => setSidebarOpen((v) => !v)}
           >
             ☰

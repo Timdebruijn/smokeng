@@ -209,7 +209,7 @@ export default function Detail({
                 <Stat
                   label="Spread (p95−p5)"
                   value={st?.spread != null ? fmtUs(st.spread) : '—'}
-                  title="The width of the distribution. A link whose median is unchanged but whose spread has tripled is degrading."
+                  hint="The width of the distribution. A link whose median is unchanged but whose spread has tripled is degrading."
                 />
                 <Stat
                   label="Loss"
@@ -567,13 +567,13 @@ function AvailabilityPanel({ target, families }: { target: Target; families: (Fa
                     <Stat
                       label="Availability"
                       value={pct(r.availability)}
-                      title="Uptime over the intervals there is data for"
+                      hint="Uptime over the intervals there is data for"
                       tone={r.availability < 0.999 ? 'bad' : undefined}
                     />
                     <Stat
                       label="Coverage"
                       value={pct(r.coverage)}
-                      title="How much of the period was actually measured — the rest is unknown, not up"
+                      hint="How much of the period was actually measured — the rest is unknown, not up"
                       tone={r.coverage < 0.9 ? 'bad' : undefined}
                     />
                     <Stat label="Downtime" value={fmtDur(r.down_s)} />
