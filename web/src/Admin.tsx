@@ -459,8 +459,8 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
         )}
         {!isRoot && (
           <>
-            <ConfirmButton className="" busy={busy} label="Delete" onConfirm={() => onDelete(false)} />
-            <ConfirmButton className="" busy={busy} label="Delete with descendants" onConfirm={() => onDelete(true)} />
+            <ConfirmButton className="" busy={busy} label="Delete" subject={target.name} onConfirm={() => onDelete(false)} />
+            <ConfirmButton className="" busy={busy} label="Delete with descendants" subject={target.name} onConfirm={() => onDelete(true)} />
           </>
         )}
       </div>

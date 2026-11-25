@@ -416,6 +416,8 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           <button
             className="icon-button"
             aria-label="Toggle target list"
+            aria-expanded={sidebarOpen}
+            aria-controls={sidebarOpen ? 'target-list' : undefined}
             onClick={() => setSidebarOpen((v) => !v)}
           >
             ☰
@@ -637,7 +639,7 @@ function TargetSidebar({
   const allShown = leaves.every((t) => !hidden.has(t.id))
 
   return (
-    <aside className="card sidebar" aria-label="Targets shown">
+    <aside id="target-list" className="card sidebar" aria-label="Targets shown">
       <input
         className="filter"
         value={search}

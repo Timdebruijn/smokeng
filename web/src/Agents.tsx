@@ -215,10 +215,15 @@ function AgentRow({
       <td>
         {!agent.is_local && !readOnly && (
           <>
-            <button className={agent.enabled ? 'pill active' : 'pill'} disabled={busy} onClick={() => void onToggle()}>
+            <button
+              className={agent.enabled ? 'pill active' : 'pill'}
+              aria-label={`${agent.enabled ? 'Disable' : 'Enable'} ${agent.name}`}
+              disabled={busy}
+              onClick={() => void onToggle()}
+            >
               {agent.enabled ? 'Disable' : 'Enable'}
             </button>
-            <ConfirmButton busy={busy} onConfirm={onRemove} />
+            <ConfirmButton busy={busy} subject={agent.name} onConfirm={onRemove} />
           </>
         )}
       </td>
@@ -275,7 +280,12 @@ function TokenRow({
       <td>{state !== 'unspent' && <span className="badge">{state}</span>}</td>
       <td>
         {state === 'unspent' && !readOnly && (
-          <button className="pill danger" disabled={busy} onClick={() => void onRevoke()}>
+          <button
+            className="pill danger"
+            aria-label={`Revoke ${token.name}`}
+            disabled={busy}
+            onClick={() => void onRevoke()}
+          >
             Revoke
           </button>
         )}
