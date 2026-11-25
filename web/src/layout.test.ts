@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { gapsBefore, lineStyle, stepRow } from './layout.ts'
 
@@ -39,7 +40,15 @@ test('a pooled read with fewer intervals than columns joins neighbours', () => {
 test('the first Compare line is solid and no two of the eight share a colour or a dash', () => {
   assert.deepEqual(lineStyle(0).dash, [])
   const seen = (f: (i: number) => string) => new Set(Array.from({ length: 8 }, (_, i) => f(i))).size
-  assert.equal(seen((i) => lineStyle(i).colour), 8)
+  assert.equal(seen((i) => lineStyle(i).prop), 8)
   assert.equal(seen((i) => lineStyle(i).dash.join()), 8)
   assert.deepEqual(lineStyle(8), lineStyle(0))
+  // Each property is defined in the stylesheet, for both themes, with a pair of its own.
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+  const values = Array.from({ length: 8 }, (_, i) => {
+    const m = css.match(new RegExp(`${lineStyle(i).prop}: (light-dark\\(#\\w+, #\\w+\\));`))
+    assert.ok(m, `${lineStyle(i).prop} is not defined with light-dark()`)
+    return m[1]
+  })
+  assert.equal(new Set(values).size, 8)
 })
