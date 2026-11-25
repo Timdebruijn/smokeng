@@ -108,6 +108,33 @@ export function rowAt(ts: ArrayLike<number>, t: number): number {
   return idx
 }
 
+/**
+ * Every column any of the series has a row at, ascending: what the keyboard
+ * steps through on Compare, so a gap in one series never makes it skip a
+ * column another series has.
+ */
+export function compareColumns(tss: ArrayLike<number>[]): number[] {
+  return [...new Set(tss.flatMap((a) => Array.from(a)))].sort((a, b) => a - b)
+}
+
+/**
+ * The Compare readout at column t: the time, then each series' median there.
+ * A series with no row covering t has no data; a row with no samples has no
+ * replies. Neither is written as a number.
+ */
+export function compareReadout(
+  t: number,
+  lines: { label: string; ts: ArrayLike<number>; med: (number | null)[] }[],
+): string {
+  const per = lines.map((l) => {
+    const i = rowAt(l.ts, t)
+    if (i < 0 || t >= l.ts[i] + inferSpan(l.ts, l.ts.length)) return `${l.label}: no data`
+    const v = l.med[i]
+    return `${l.label}: ${v === null ? 'no replies' : `median ${fmtUs(v)}`}`
+  })
+  return [fmtWhen(t), ...per].join(' · ')
+}
+
 /** Median gap between consecutive rows: the interval, inferred from the data. */
 export function inferSpan(ts: Float64Array | ArrayLike<number>, n: number): number {
   if (n < 2) return 60

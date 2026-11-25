@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchSeries, type Series } from './api'
 import { compareSummary, fmtUs } from './format'
-import { fmtWhen, gapsBefore, lineStyle } from './layout'
+import { compareColumns, compareReadout, fmtWhen, gapsBefore, lineStyle, rowAt, stepRow } from './layout'
 import { useWidth, downloadCSV } from './shared'
 import { compareRows, csvFileName } from './seriesCSV'
 import type { Family } from './util'
@@ -81,6 +81,44 @@ export default function Compare({
   const [theme, setTheme] = useState(0)
 
   const keys = series.map((s) => s.key).join('|')
+
+  // The keyboard cursor: the start of the column under it, or null. Outside the
+  // window (it moved since) it reads as no cursor.
+  const [cursor, setCursor] = useState<number | null>(null)
+  const liveRef = useRef<HTMLDivElement>(null)
+  const keyedRef = useRef(false)
+  const at = cursor !== null && cursor >= from && cursor <= to ? cursor : null
+  const lines = series.map((s) => ({
+    label: s.label,
+    ts: data.get(s.key)?.ts ?? [],
+    med: data.get(s.key)?.med ?? [],
+  }))
+  const readout = at === null ? null : compareReadout(at, lines)
+  // Every series' columns, so one series' gap does not make the cursor skip.
+  const columns = compareColumns(lines.map((l) => l.ts))
+
+  const onKey = (e: React.KeyboardEvent) => {
+    const live = liveRef.current
+    if (e.key === 'Escape') {
+      keyedRef.current = false
+      setCursor(null)
+      if (live) live.textContent = ''
+      return
+    }
+    const next = stepRow(e.key, at === null ? -1 : rowAt(columns, at), columns.length)
+    if (next === null) return
+    e.preventDefault()
+    keyedRef.current = true
+    setCursor(columns[next])
+    if (live) live.textContent = compareReadout(columns[next], lines)
+  }
+
+  const onBlur = () => {
+    if (!keyedRef.current) return
+    keyedRef.current = false
+    setCursor(null)
+    if (liveRef.current) liveRef.current.textContent = ''
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -227,7 +265,18 @@ export default function Compare({
       }
       ctx.stroke()
     })
-  }, [data, series, from, to, logScale, boxW, theme])
+
+    if (at !== null) {
+      const x = Math.round(xOf(at)) + 0.5
+      ctx.setLineDash([])
+      ctx.strokeStyle = dim
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(x, padT)
+      ctx.lineTo(x, padT + h)
+      ctx.stroke()
+    }
+  }, [data, series, from, to, logScale, boxW, theme, at])
 
   // Only the series that were read: one that failed has no column, rather than
   // an empty one that would read as "no replies".
@@ -268,15 +317,25 @@ export default function Compare({
           CSV
         </button>
       </div>
-      <canvas
-        ref={canvasRef}
-        className="compare-canvas"
-        role="img"
-        aria-label={compareSummary(
-          `${fmtWhen(from)} – ${fmtWhen(to)}`,
-          series.map((s) => ({ label: s.label, medians: data.get(s.key)?.med ?? [] })),
-        )}
-      />
+      <div
+        tabIndex={0}
+        role="group"
+        aria-label="Compare pooled medians: readout, use the arrow keys"
+        onKeyDown={onKey}
+        onBlur={onBlur}
+      >
+        <canvas
+          ref={canvasRef}
+          className="compare-canvas"
+          role="img"
+          aria-label={compareSummary(
+            `${fmtWhen(from)} – ${fmtWhen(to)}`,
+            series.map((s) => ({ label: s.label, medians: data.get(s.key)?.med ?? [] })),
+          )}
+        />
+        <div ref={liveRef} className="visually-hidden" aria-live="polite" />
+      </div>
+      {readout && <p className="series-readout compare-readout">{readout}</p>}
       {error && <p className="hint small error">{error}</p>}
       <p className="hint small">
         Vantage points are never averaged — each line is its own measurement. Uncheck targets in the

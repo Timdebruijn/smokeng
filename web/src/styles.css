@@ -1790,6 +1790,12 @@ dialog.modal-host::backdrop {
   flex: none;
 }
 
+/* Many series make a long readout; let it wrap rather than widen the page. */
+.series-readout.compare-readout {
+  white-space: normal;
+  margin: 0.4rem 0 0;
+}
+
 .compare-canvas {
   display: block;
   width: 100%;

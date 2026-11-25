@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { gapsBefore, lineStyle, stepRow } from './layout.ts'
+import { compareColumns, compareReadout, gapsBefore, lineStyle, stepRow } from './layout.ts'
 
 test('the keyboard steps one row, stops at the ends and starts from the right side', () => {
   assert.equal(stepRow('ArrowRight', 2, 5), 3)
@@ -42,4 +42,12 @@ test('the first Compare line is solid and no two of the eight share a colour or 
   assert.equal(seen((i) => lineStyle(i).colour), 8)
   assert.equal(seen((i) => lineStyle(i).dash.join()), 8)
   assert.deepEqual(lineStyle(8), lineStyle(0))
+})
+
+test('the Compare cursor visits a column one series lacks and reads it as no data, not zero', () => {
+  const a = { label: 'A', ts: [0, 60, 120, 180, 240, 300], med: [10000, null, 14000, 9000, 8000, 7000] }
+  const b = { label: 'B', ts: [0, 60, 120, 180, 300], med: [5000, 6000, 7000, 8000, 9000] }
+  assert.deepEqual(compareColumns([a.ts, b.ts]), [0, 60, 120, 180, 240, 300])
+  assert.ok(compareReadout(240, [a, b]).endsWith(' · A: median 8.0ms · B: no data'))
+  assert.ok(compareReadout(60, [a, b]).endsWith(' · A: no replies · B: median 6.0ms'))
 })
