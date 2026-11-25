@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { fetchTargets, type Target } from './api'
-import { Modal } from './shared'
+import { announce, Modal } from './shared'
 
 export interface PaletteAction {
   id: string
@@ -54,6 +54,13 @@ export default function Palette({
   ).slice(0, 12)
 
   useEffect(() => setCursor(0), [query])
+
+  // The line below the field says it to the eye; this says it to a screen
+  // reader, and takes it back when there is something to choose from again.
+  const empty = items.length === 0
+  useEffect(() => {
+    announce(empty ? 'Nothing matches' : '')
+  }, [empty])
 
   const choose = (a: PaletteAction | undefined) => {
     if (!a) return
