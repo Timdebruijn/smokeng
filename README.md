@@ -4,7 +4,7 @@
 
 Self-hosted latency and packet-loss monitoring that keeps every round-trip time, alerts when the distribution changes shape, and flags any measurement it can't vouch for.
 
-[![Release](https://img.shields.io/github/v/release/Timdebruijn/smokeng)](https://github.com/Timdebruijn/smokeng/releases/latest) [![CI](https://github.com/Timdebruijn/smokeng/actions/workflows/ci.yml/badge.svg)](https://github.com/Timdebruijn/smokeng/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Timdebruijn/smokeng)](https://github.com/Timdebruijn/smokeng/releases/latest) [![CI](https://github.com/Timdebruijn/smokeng/actions/workflows/ci.yml/badge.svg)](https://github.com/Timdebruijn/smokeng/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Accessibility: WCAG 2.2 AA, partially conformant](https://img.shields.io/badge/accessibility-WCAG_2.2_AA%3A_partially_conformant-blue.svg)](ACCESSIBILITY.md)
 
 [Quick start](#quick-start) · [Why](#averages-lie) · [Compare](#how-it-compares) · [Limits](#limits-up-front) · [Docs](docs/README.md)
 
@@ -139,7 +139,7 @@ with `--default-role none`.) [Access control →](docs/access-control.md)
 | **Access** | OIDC login (Authentik, Keycloak, Entra, Okta, …). Viewer and editor grants per subtree; admin is global. [Access control →](docs/access-control.md) |
 | **Reports** | Availability per vantage point over 24 h, 7 d or 30 d, with an outage list, CSV export and an API. |
 | **Operations** | Prometheus `/metrics` for smokeng's own health, documented systemd hardening, an Ansible role, and releases with SHA256SUMS and signed build provenance. [Operations →](docs/operations.md) |
-| **Accessibility** | Higher-contrast, larger-text and colour-blind-safe palettes; ⌘K / Ctrl+K jumps to any target. |
+| **Accessibility** | Higher-contrast, larger-text and colour-blind-safe palettes; ⌘K / Ctrl+K jumps to any target. Partially conformant with WCAG 2.2 AA, by self-evaluation. [Statement →](ACCESSIBILITY.md) |
 
 <table>
 <tr>
