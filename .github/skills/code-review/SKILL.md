@@ -77,6 +77,31 @@ permanent outage for that agent, not a hiccup. This has been introduced three
 separate times: prefer normalising or skipping the offending row over failing
 the write.
 
+**The interface for someone who does not use it the way you do.** The web UI
+claims partial conformance with WCAG 2.2 AA in `ACCESSIBILITY.md`, and a change
+under `web/src/` can quietly make that untrue. What has actually gone wrong
+here:
+
+- State carried by colour or a class alone. Status dots that differed only in
+  hue, an active tab that was only a different background. A state needs text
+  or a shape a person can see and a name or attribute a screen reader can read.
+- An explanation that only exists in a `title`. A keyboard or a touch screen
+  cannot open a tooltip.
+- A colour judged in one theme. A darker line colour chosen for the light card
+  measured 2.33:1 on the dark one. Text needs 4.5:1 and a line, border or icon
+  3:1, against the background it really sits on, in both themes: compute it.
+- A pixel value standing in for a measurement. The scroll offset under the
+  sticky header was set from an estimated header height of 135px; measured, the
+  header was 117px at one width and 149px at another.
+- A focus ring that a clipping container cuts off. `overflow: hidden` on the
+  target tree took the sides off every row's ring.
+- A layout checked at one width. Every UI change is looked at at 1280, 900 and
+  390px wide, and `document.documentElement.scrollWidth` must not exceed the
+  window.
+
+If a change removes or adds a barrier, the known limitations in
+`ACCESSIBILITY.md` change with it, in the same pull request.
+
 ## How to check, not guess
 
 - Read the vendored library rather than assuming its behaviour. Two real bugs

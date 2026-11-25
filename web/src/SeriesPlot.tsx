@@ -3,7 +3,8 @@ import { SERIES_LABELS, fetchSeries, type SeriesName } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
 import { chartSummary, fmtUs } from './format'
 import { AXIS_W, fmtClock, fmtSigned, fmtWhen, inferSpan, rowAt, stepRow } from './layout'
-import { useRenderWorker, useWidth } from './shared'
+import { useRenderWorker, useWidth, downloadCSV } from './shared'
+import { csvFileName, extraSeriesRows } from './seriesCSV'
 import type { Family } from './util'
 
 interface Props {
@@ -279,12 +280,20 @@ export default function SeriesPlot({
     setCursor(from + (x / plotW) * (to - from))
   }
 
+  const exportCSV = () => {
+    const rows = rowsRef.current
+    if (rows) downloadCSV(csvFileName([targetName, family, name], from, to), extraSeriesRows(rows))
+  }
+
   return (
     <figure className="series-plot">
       <figcaption>
         <strong>{label?.title ?? name}</strong>
         {family && <span className="agent">{family}</span>}
         <span className="series-help">{label?.help}</span>
+        <button className="pill" onClick={exportCSV} disabled={state !== 'ok'} aria-label={`Download ${plotName} as CSV`}>
+          CSV
+        </button>
         {readout && <span className="series-readout">{readout}</span>}
       </figcaption>
       <div
