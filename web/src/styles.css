@@ -1993,6 +1993,21 @@ dialog.modal-host::backdrop {
     box-sizing: border-box;
   }
 
+  /* The triangle's clip would cut that border off its sloping sides, so its
+     outline is a triangular frame drawn over the fill instead. */
+  .dot[style*="--warn"] {
+    position: relative;
+    border: 0;
+  }
+
+  .dot[style*="--warn"]::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: CanvasText;
+    clip-path: polygon(evenodd, 50% 0, 100% 100%, 0 100%, 50% 0, 50% 25%, 18% 89%, 82% 89%, 50% 25%);
+  }
+
   .dot,
   .swatch,
   .compare-swatch {
