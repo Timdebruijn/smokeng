@@ -59,13 +59,15 @@ export function useAction(load: () => Promise<void>) {
   }, [reload])
 
   // Runs a change and reloads; hands the failure to the caller, so a form can
-  // show it next to its own button.
+  // show it next to its own button. `done` is announced only after the change
+  // went through; a failure is never announced here.
   const attempt = useCallback(
-    async (fn: () => Promise<unknown>) => {
+    async (fn: () => Promise<unknown>, done?: string) => {
       setBusy(true)
       try {
         await fn()
         await reload()
+        if (done) announce(done)
         return null
       } catch (e) {
         return (e as Error).message
@@ -79,9 +81,9 @@ export function useAction(load: () => Promise<void>) {
   // The same, for everything that is not a form: the failure goes to the
   // screen-level error.
   const run = useCallback(
-    async (fn: () => Promise<unknown>) => {
+    async (fn: () => Promise<unknown>, done?: string) => {
       setError(null)
-      const failure = await attempt(fn)
+      const failure = await attempt(fn, done)
       setError(failure)
       return failure === null
     },
@@ -228,6 +230,8 @@ export function ConfirmButton({
   label = 'Remove',
   confirmLabel = `Confirm ${label.toLowerCase()}`,
   className = 'pill',
+  subject,
+  confirmSubject = subject,
 }: {
   busy: boolean
   onConfirm: () => Promise<boolean>
@@ -235,6 +239,10 @@ export function ConfirmButton({
   confirmLabel?: string
   /** Base class of both buttons; `danger` is added to the destructive one. */
   className?: string
+  /** The row this acts on; goes into the accessible name of all three buttons. */
+  subject?: string
+  /** For a `confirmLabel` that already says part of the subject. */
+  confirmSubject?: string
 }) {
   const [confirming, setConfirming] = useState(false)
   const confirmRef = useRef<HTMLButtonElement>(null)
@@ -253,18 +261,30 @@ export function ConfirmButton({
     <>
       <button
         ref={confirmRef}
+        aria-label={confirmSubject ? `${confirmLabel} ${confirmSubject}` : undefined}
         className={`${className} danger`.trim()}
         disabled={busy}
         onClick={() => void onConfirm().then((ok) => ok && setConfirming(false))}
       >
         {confirmLabel}
       </button>
-      <button className={className || undefined} disabled={busy} onClick={() => setConfirming(false)}>
+      <button
+        aria-label={subject ? `Cancel, keep ${subject}` : undefined}
+        className={className || undefined}
+        disabled={busy}
+        onClick={() => setConfirming(false)}
+      >
         Cancel
       </button>
     </>
   ) : (
-    <button ref={removeRef} className={`${className} danger`.trim()} disabled={busy} onClick={() => setConfirming(true)}>
+    <button
+      ref={removeRef}
+      aria-label={subject ? `${label} ${subject}` : undefined}
+      className={`${className} danger`.trim()}
+      disabled={busy}
+      onClick={() => setConfirming(true)}
+    >
       {label}
     </button>
   )

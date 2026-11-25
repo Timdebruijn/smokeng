@@ -6,6 +6,8 @@ import {
   afterName,
   alertKey,
   alertName,
+  RANGES,
+  rangeWords,
   countedFlags,
   countUnacked,
   csvCell,
@@ -316,4 +318,8 @@ test('screenTitle names every screen, detail after its target', () => {
   assert.equal(screenTitle('signin'), 'Sign in - smokeng')
   assert.equal(screenTitle('detail', 'core/router'), 'core/router - smokeng')
   assert.equal(screenTitle('detail', null), 'Target - smokeng')
+})
+
+test('rangeWords speaks a range button', () => {
+  assert.deepEqual(RANGES.map((r) => rangeWords(r.seconds)), ['15 minutes', '1 hour', '6 hours', '1 day', '7 days', '30 days'])
 })

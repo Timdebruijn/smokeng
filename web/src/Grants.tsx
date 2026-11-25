@@ -114,9 +114,9 @@ export default function Grants({
                       grant={g}
                       readOnly={readOnly}
                       busy={busy}
-                      onRemove={() => run(() => deleteGrant(g.id))}
+                      onRemove={() => run(() => deleteGrant(g.id), `Grant for ${g.group} on ${g.path === '' ? '/' : g.path} removed`)}
                       onRerole={(role) =>
-                        run(() => createGrant({ group: g.group, target_id: g.target_id, role }))
+                        run(() => createGrant({ group: g.group, target_id: g.target_id, role }), `Grant for ${g.group} on ${g.path === '' ? '/' : g.path} set to ${role}`)
                       }
                     />
                   ))}
@@ -133,7 +133,7 @@ export default function Grants({
               busy={busy}
               onCancel={() => setAdding(false)}
               onSubmit={async (group, targetId, role) => {
-                const err = await attempt(() => createGrant({ group, target_id: targetId, role }))
+                const err = await attempt(() => createGrant({ group, target_id: targetId, role }), `Grant for ${group} created`)
                 if (!err) setAdding(false)
                 return err
               }}
@@ -193,7 +193,13 @@ function GrantRow({
         )}
       </td>
       <td>
-        {!readOnly && <ConfirmButton busy={busy} onConfirm={onRemove} />}
+        {!readOnly && (
+          <ConfirmButton
+            busy={busy}
+            subject={`${grant.group} on ${grant.path === '' ? '/' : grant.path}`}
+            onConfirm={onRemove}
+          />
+        )}
       </td>
     </tr>
   )

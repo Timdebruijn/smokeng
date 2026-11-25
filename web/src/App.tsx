@@ -15,6 +15,7 @@ import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
 import {
   RANGES,
+  rangeWords,
   filterByFamily,
   fromLocalInput,
   resolveSeries,
@@ -25,7 +26,7 @@ import {
   type FamilyChoice,
   type PlotSeries,
 } from './util'
-import { Announcer, ErrorText, Hint, keepInView, LivePill, useTimeWindow } from './shared'
+import { announce, Announcer, ErrorText, Hint, keepInView, LivePill, useTimeWindow } from './shared'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
@@ -218,23 +219,27 @@ function AppHeader({
 }) {
   const who = me?.name ?? me?.email ?? me?.subject ?? ''
 
-  // An open popover closes on Esc (focus back on its trigger) and on a press
-  // anywhere outside the header menus.
+  // An open popover closes on Esc (focus back on its trigger), on a press
+  // outside its own menu, and when focus moves out of it: left open after a
+  // Tab it lies over the control that focus went to.
   useEffect(() => {
     if (!menu) return
+    const own = { a11y: '.a11y', bell: '.bell', user: '.usermenu' }[menu]
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       onMenu(null)
       document.querySelector<HTMLElement>('[aria-controls$="-popover"][aria-expanded="true"]')?.focus()
     }
-    const onDown = (e: PointerEvent) => {
-      if (!(e.target as Element).closest('.a11y, .bell, .usermenu')) onMenu(null)
+    const onOutside = (e: Event) => {
+      if (!(e.target as Element).closest(own)) onMenu(null)
     }
     window.addEventListener('keydown', onKey)
-    window.addEventListener('pointerdown', onDown)
+    window.addEventListener('pointerdown', onOutside)
+    window.addEventListener('focusin', onOutside)
     return () => {
       window.removeEventListener('keydown', onKey)
-      window.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('pointerdown', onOutside)
+      window.removeEventListener('focusin', onOutside)
     }
   }, [menu, onMenu])
   return (
@@ -412,6 +417,8 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           <button
             className="icon-button"
             aria-label="Toggle target list"
+            aria-expanded={sidebarOpen}
+            aria-controls={sidebarOpen ? 'target-list' : undefined}
             onClick={() => setSidebarOpen((v) => !v)}
           >
             ☰
@@ -422,7 +429,10 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
                 key={r.label}
                 className={!zoom && r.seconds === rangeS ? 'pill active' : 'pill'}
                 aria-pressed={!zoom && r.seconds === rangeS}
-                onClick={() => pickRange(r.seconds)}
+                onClick={() => {
+                  pickRange(r.seconds)
+                  announce(`Window: last ${rangeWords(r.seconds)}`)
+                }}
               >
                 {r.label}
               </button>
@@ -431,7 +441,10 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           <button
             className={logScale ? 'pill active' : 'pill'}
             aria-pressed={logScale}
-            onClick={() => setLogScale(!logScale)}
+            onClick={() => {
+              setLogScale(!logScale)
+              announce(`Log scale ${logScale ? 'off' : 'on'}`)
+            }}
           >
             log
           </button>
@@ -633,7 +646,7 @@ function TargetSidebar({
   const allShown = leaves.every((t) => !hidden.has(t.id))
 
   return (
-    <aside className="card sidebar" aria-label="Targets shown">
+    <aside id="target-list" className="card sidebar" aria-label="Targets shown">
       <input
         className="filter"
         value={search}
