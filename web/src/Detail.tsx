@@ -15,10 +15,9 @@ import {
   type Target,
 } from './api'
 import { fmtLoss, fmtUs } from './format'
-import { Stat, StatusDot, ErrorText, LivePill, useTimeWindow } from './shared'
+import { Stat, StatusDot, ErrorText, LivePill, downloadCSV, useTimeWindow } from './shared'
 import {
   RANGES,
-  csvCell,
   measurementLabel,
   seriesLabel,
   shownFamilies,
@@ -403,16 +402,6 @@ function fmtDur(s: number): string {
 
 function pct(x: number): string {
   return `${(x * 100).toFixed(x >= 0.9995 ? 3 : 2)}%`
-}
-
-function downloadCSV(filename: string, rows: (string | number)[][]) {
-  const text = rows.map((r) => r.map(csvCell).join(',')).join('\n')
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
 }
 
 /**
