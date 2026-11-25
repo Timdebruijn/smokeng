@@ -260,9 +260,16 @@ export default function Overview({
                       </span>
                     </span>
                     <Spark values={r.spark} />
-                    <span className="mono">{r.median === null ? '—' : fmtUs(r.median)}</span>
-                    <span className="mono dimmed">{r.p95 === null ? '—' : fmtUs(r.p95)}</span>
+                    <span className="mono">
+                      <span className="visually-hidden">median </span>
+                      {r.median === null ? '—' : fmtUs(r.median)}
+                    </span>
+                    <span className="mono dimmed">
+                      <span className="visually-hidden">p95 </span>
+                      {r.p95 === null ? '—' : fmtUs(r.p95)}
+                    </span>
                     <span className={!noData && r.loss > 0 ? 'mono bad' : 'mono dimmed'}>
+                      <span className="visually-hidden">loss </span>
                       {noData ? '—' : fmtLoss(r.loss)}
                     </span>
                   </button>
