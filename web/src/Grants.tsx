@@ -193,7 +193,13 @@ function GrantRow({
         )}
       </td>
       <td>
-        {!readOnly && <ConfirmButton busy={busy} onConfirm={onRemove} />}
+        {!readOnly && (
+          <ConfirmButton
+            busy={busy}
+            subject={`${grant.group} on ${grant.path === '' ? '/' : grant.path}`}
+            onConfirm={onRemove}
+          />
+        )}
       </td>
     </tr>
   )

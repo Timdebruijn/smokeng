@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { fetchSeries, type Series } from './api'
 import { compareSummary, fmtUs } from './format'
 import { compareColumns, compareReadout, fmtWhen, gapsBefore, lineStyle, rowAt, stepRow } from './layout'
@@ -88,6 +88,7 @@ export default function Compare({
   // window (it moved since) it reads as no cursor.
   const [cursor, setCursor] = useState<number | null>(null)
   const liveRef = useRef<HTMLDivElement>(null)
+  const hintId = useId()
   const keyedRef = useRef(false)
   const at = cursor !== null && cursor >= from && cursor <= to ? cursor : null
   const lines = series.map((s) => ({
@@ -326,7 +327,8 @@ export default function Compare({
       <div
         tabIndex={0}
         role="group"
-        aria-label="Compare pooled medians: readout, use the arrow keys"
+        aria-label="Compare pooled medians values"
+        aria-describedby={hintId}
         onKeyDown={onKey}
         onBlur={onBlur}
       >
@@ -340,6 +342,9 @@ export default function Compare({
           )}
         />
         <div ref={liveRef} className="visually-hidden" aria-live="polite" />
+        <span id={hintId} hidden>
+          Use the arrow keys to move the cursor through the values; Escape clears it.
+        </span>
       </div>
       {readout && <p className="series-readout compare-readout">{readout}</p>}
       {error && <p className="hint small error">{error}</p>}

@@ -286,6 +286,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                     <td>
                       <button
                         className="pill"
+                        aria-label={`${r.enabled ? 'Disable' : 'Enable'} ${r.name}`}
                         onClick={() => void run(() => updateAlertRule(r.id, { enabled: !r.enabled }))}
                       >
                         {r.enabled ? 'Disable' : 'Enable'}
@@ -294,6 +295,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                         <>
                           <button
                             className="pill"
+                            aria-label={`Capture reference for ${r.name}`}
                             title="Capture the last hour as this rule's reference — what the path looks like when it is healthy"
                             onClick={() => void run(() => captureBaseline(r.id, {}))}
                           >
@@ -302,6 +304,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                           {baselines.some((b) => b.rule_id === r.id) && (
                             <button
                               className="pill"
+                              aria-label={`Clear reference of ${r.name}`}
                               title="Drop the captured reference; the rule then has nothing to compare against and stays quiet"
                               onClick={() => void run(() => clearBaseline(r.id))}
                             >
@@ -310,7 +313,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                           )}
                         </>
                       )}
-                      <ConfirmButton busy={busy} label="Delete" onConfirm={() => run(() => deleteAlertRule(r.id))} />
+                      <ConfirmButton busy={busy} label="Delete" subject={r.name} onConfirm={() => run(() => deleteAlertRule(r.id))} />
                     </td>
                   )}
                 </tr>
@@ -425,7 +428,7 @@ function SilenceQuick({
           {c.label}
         </button>
       ))}
-      <button className="pill small" onClick={() => setOpen(false)}>
+      <button className="pill small" aria-label={`Cancel silence for ${label}`} onClick={() => setOpen(false)}>
         ✕
       </button>
     </span>
@@ -514,6 +517,8 @@ function SilencesSection({
                     className="pill small"
                     busy={busy}
                     label="cancel"
+                    subject={`silence on ${s.target ?? 'everything'}`}
+                    confirmSubject={`on ${s.target ?? 'everything'}`}
                     confirmLabel="Confirm cancel silence"
                     onConfirm={() => onCancel(s.id)}
                   />
