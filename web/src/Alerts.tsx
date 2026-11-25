@@ -232,8 +232,8 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
         {firing.length > 0 && (
           <p className="hint small">
             Acknowledging marks an alert as seen: it keeps firing and keeps being delivered, but
-            stops asking for attention here. Silencing stops its delivery for a while; the rule is
-            not changed.
+            stops asking for attention here, until it clears. If it fires again, it asks again.
+            Silencing stops its delivery for a while; the rule is not changed.
           </p>
         )}
       </section>
@@ -246,8 +246,9 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
           A rule applies to the node it is defined on, a group or a target, and to everything
           below it. A node that has rules of its own uses those instead of the rules it would
           inherit; they are not added together. A rule fires only after its condition has held
-          for the given number of intervals in a row, and clears only after the condition has
-          failed for as many. One bad interval therefore never pages anyone.
+          for as many intervals in a row as the rule asks, and clears only after the condition
+          has failed for as many as it asks for clearing: two numbers, three each unless you
+          change them. With more than one, a single bad interval pages nobody.
         </p>
         {rules.length === 0 && <p className="hint">No rules defined.</p>}
         {rules.length > 0 && (
@@ -464,8 +465,9 @@ function SilencesSection({
       <p className="hint">
         A silence stops matching alerts from being delivered during a time window and shows
         them as muted. The rule itself is not changed. Scope it to a node, which covers
-        everything below that node too, or leave it global. A silence that starts in the future
-        is a maintenance window: planned work pages nobody, and nobody has to edit a rule.
+        everything below that node too, or leave it global to cover every target. A silence
+        that starts in the future is a maintenance window: planned work pages nobody, and
+        nobody has to edit a rule.
       </p>
 
       {live.length === 0 ? (

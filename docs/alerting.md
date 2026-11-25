@@ -70,7 +70,7 @@ noise.
 | --- | --- | --- | --- |
 | `metric` | string | required | One of the metrics above |
 | `op` | string | required | `>` or `<`. `shape` and `bimodality` accept only `>` |
-| `threshold` | float | required | The value to compare against. For `shape` and `bimodality` in `auto` mode it is the z cutoff, see below |
+| `threshold` | float | required | The value to compare against. For `shape` in `auto` mode it is the z cutoff; for `bimodality` it is the coefficient in either mode, see below |
 | `for_intervals` | int | `3` | Consecutive breaching intervals before firing |
 | `clear_intervals` | int | `3` | Consecutive non-breaching intervals before clearing |
 | `disabled` | bool | `false` | Keep the rule but stop evaluating it (`enabled` in the API) |
@@ -106,8 +106,10 @@ Each shape rule picks how strict it is:
   variability (a robust z-score: median and MAD, so one past spike does not inflate the
   scale and mask the next). A jittery Wi-Fi link and a stable fibre have very different
   normal wobbles, and the same absolute distance means different things on each — auto
-  handles that without a per-target threshold. `threshold` is the z cutoff. The UI form
-  suggests 4 for `shape` and 0.6 for `bimodality`; the backend has no built-in default.
+  handles that without a per-target threshold. For `shape`, `threshold` is the z cutoff.
+  `bimodality` has no history to score against: it is a property of the interval itself,
+  so its `threshold` is the coefficient in `auto` as well. The UI form sends 4 for `shape`
+  and 0.6 for `bimodality`; the backend has no built-in default.
 - **tunable** compares the raw measure to a threshold you set: milliseconds of movement
   for `shape`, or the coefficient itself for `bimodality`.
 
