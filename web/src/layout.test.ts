@@ -101,3 +101,20 @@ test('each Compare line is at least 3:1 against the card, in both themes', () =>
     assert.ok(contrast(dark, cardDark) >= 3, `${lineStyle(i).prop} dark: ${contrast(dark, cardDark).toFixed(2)}`)
   }
 })
+
+test('text on a --bad or --accent-text fill is at least 4.5:1 in both themes, in every palette', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+  const on = css.match(/--on-fill: light-dark\((#\w{6}), (#\w{6})\);/)
+  assert.ok(on, '--on-fill is not a light-dark() pair of #rrggbb')
+  // Every definition of the two fills: the default ones and the colour-blind-safe --bad.
+  const fills = [...css.matchAll(/--(bad|accent-text): light-dark\((#\w{6}), (#\w{6})\);/g)]
+  assert.equal(fills.length, 3)
+  for (const [, name, light, dark] of fills) {
+    assert.ok(contrast(on[1], light) >= 4.5, `--${name} light, on ${light}: ${contrast(on[1], light).toFixed(2)}`)
+    assert.ok(contrast(on[2], dark) >= 4.5, `--${name} dark, on ${dark}: ${contrast(on[2], dark).toFixed(2)}`)
+  }
+  // The two rules that put text on those fills use the token and the fill it was computed for.
+  const rule = (selector: string) => css.match(new RegExp(`\\n${selector} \\{[^}]*\\}`))?.[0] ?? ''
+  assert.match(rule('\\.bell-badge'), /background: var\(--bad\);[^}]*color: var\(--on-fill\);/)
+  assert.match(rule('\\.button\\.primary'), /background: var\(--accent-text\);[^}]*color: var\(--on-fill\);/)
+})

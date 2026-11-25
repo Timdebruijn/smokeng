@@ -17,6 +17,10 @@
   --warn: light-dark(#c07d08, #eab84a);
   --warn-text: light-dark(#996100, #eab84a);
   --bad: light-dark(#c93a3a, #f27d7d);
+  /* Text on a fill of --bad or --accent-text (the count on the bell, the
+     sign-in button): those are dark in the light theme and light in the dark
+     one, so the text on them turns with the theme. */
+  --on-fill: light-dark(#ffffff, #141f29);
   /* Compare lines: Okabe-Ito, moved per theme only where it fell under 3:1
      against --card. Not touched by the colour-blind setting. */
   --line-1: light-dark(#0072b2, #0072b2);
@@ -153,7 +157,7 @@
   padding: 0 4px;
   border-radius: 9px;
   background: var(--bad);
-  color: #ffffff;
+  color: var(--on-fill);
   font-size: 11px;
   font-weight: 600;
   display: grid;
@@ -995,9 +999,10 @@ html {
 }
 
 .button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  /* --accent-text, not --accent: white on --accent is 4.36:1 in the light theme. */
+  background: var(--accent-text);
+  border-color: var(--accent-text);
+  color: var(--on-fill);
   font-weight: 600;
 }
 
