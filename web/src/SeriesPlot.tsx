@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { SERIES_LABELS, fetchSeries, type SeriesName } from './api'
 import { setCursor, subscribeCursor } from './crosshair'
 import { chartSummary, fmtUs } from './format'
@@ -76,6 +76,7 @@ export default function SeriesPlot({
   const width = useWidth(wrapRef)
   const workerRef = useRenderWorker(canvasRef, `series ${targetId}${family ? `/${family}` : ''}/${name}`)
   const label = SERIES_LABELS[name]
+  const hintId = useId()
   const plotName = [targetName, label?.title ?? name, family].filter(Boolean).join(' ')
   const when = `${fmtWhen(from)} – ${fmtWhen(to)}`
 
@@ -307,13 +308,17 @@ export default function SeriesPlot({
         onMouseLeave={() => setCursor(null)}
         tabIndex={0}
         role="group"
-        aria-label={`${plotName}: readout, use the arrow keys`}
+        aria-label={`${plotName} values`}
+        aria-describedby={hintId}
         onKeyDown={onKey}
         onBlur={onBlur}
       >
         <canvas ref={canvasRef} role="img" aria-label={summary || `${plotName}: loading.`} />
         <canvas ref={overlayRef} className="series-overlay" aria-hidden="true" />
         <div ref={liveRef} className="visually-hidden" aria-live="polite" />
+        <span id={hintId} hidden>
+          Use the arrow keys to move the cursor through the values; Escape clears it.
+        </span>
         {state === 'empty' && <p className="series-note">No measurements in this window.</p>}
         {state === 'unmeasured' && (
           <p className="series-note">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { ConfirmButton, useAction, useLiveRefresh, LivePill, StatusDot, ErrorText } from './shared'
+import { ConfirmButton, useAction, useLiveRefresh, useParkedFocus, LivePill, StatusDot, ErrorText } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -86,7 +86,8 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   const refresh = useCallback(() => void reload(), [reload])
   const { live, toggleLive } = useLiveRefresh(refresh, REFRESH_MS)
 
-  const ackAlert = (a: FiringAlert) => run(() => acknowledgeAlert(a, !a.acked))
+  const ackAlert = (a: FiringAlert) =>
+    run(() => acknowledgeAlert(a, !a.acked), `${a.acked ? 'Unacknowledged' : 'Acknowledged'} ${alertName(a)}`)
 
   const pathOf = (id: number) => targets.find((t) => t.id === id)?.path ?? `target ${id}`
 
@@ -195,6 +196,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                                   duration_s,
                                   reason: `silenced from the firing list`,
                                 }),
+                                `Silenced ${alertName(a)}`,
                               )
                             }
                           />
@@ -286,7 +288,8 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                     <td>
                       <button
                         className="pill"
-                        onClick={() => void run(() => updateAlertRule(r.id, { enabled: !r.enabled }))}
+                        aria-label={`${r.enabled ? 'Disable' : 'Enable'} ${r.name}`}
+                        onClick={() => void run(() => updateAlertRule(r.id, { enabled: !r.enabled }), `Rule ${r.name} ${r.enabled ? 'disabled' : 'enabled'}`)}
                       >
                         {r.enabled ? 'Disable' : 'Enable'}
                       </button>
@@ -294,23 +297,25 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                         <>
                           <button
                             className="pill"
+                            aria-label={`Capture reference for ${r.name}`}
                             title="Capture the last hour as this rule's reference — what the path looks like when it is healthy"
-                            onClick={() => void run(() => captureBaseline(r.id, {}))}
+                            onClick={() => void run(() => captureBaseline(r.id, {}), `Reference captured for rule ${r.name}`)}
                           >
                             Capture reference
                           </button>
                           {baselines.some((b) => b.rule_id === r.id) && (
                             <button
                               className="pill"
+                              aria-label={`Clear reference of ${r.name}`}
                               title="Drop the captured reference; the rule then has nothing to compare against and stays quiet"
-                              onClick={() => void run(() => clearBaseline(r.id))}
+                              onClick={() => void run(() => clearBaseline(r.id), `Reference cleared for rule ${r.name}`)}
                             >
                               Clear
                             </button>
                           )}
                         </>
                       )}
-                      <ConfirmButton busy={busy} label="Delete" onConfirm={() => run(() => deleteAlertRule(r.id))} />
+                      <ConfirmButton busy={busy} label="Delete" subject={r.name} onConfirm={() => run(() => deleteAlertRule(r.id), `Rule ${r.name} deleted`)} />
                     </td>
                   )}
                 </tr>
@@ -331,7 +336,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
               targets={targets}
               onCancel={() => setAdding(false)}
               onSubmit={async (body) => {
-                const err = await attempt(() => createAlertRule(body))
+                const err = await attempt(() => createAlertRule(body), `Rule ${body.name} created`)
                 if (!err) setAdding(false)
                 return err
               }}
@@ -348,8 +353,8 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
       <SilencesSection
         silences={silences}
         targets={targets}
-        onCreate={(body) => attempt(() => createSilence(body))}
-        onCancel={(id) => run(() => deleteSilence(id))}
+        onCreate={(body) => attempt(() => createSilence(body), 'Silence created')}
+        onCancel={(id) => run(() => deleteSilence(id), 'Silence cancelled')}
         busy={busy}
       />
 
@@ -393,6 +398,17 @@ function SilenceQuick({
   onSilence: (durationS: number) => void
 }) {
   const [open, setOpen] = useState(false)
+  const firstChoice = useRef<HTMLButtonElement>(null)
+  const openButton = useRef<HTMLButtonElement>(null)
+  const moved = useRef(false)
+  // Each swap removes the button that had focus; put focus on its replacement,
+  // but not on first render.
+  useEffect(() => {
+    if (moved.current) (open ? firstChoice : openButton).current?.focus()
+    moved.current = true
+  }, [open])
+  // A silence that goes through takes this control out of the row.
+  const acted = useParkedFocus()
   const CHOICES: { label: string; s: number }[] = [
     { label: '1h', s: 3600 },
     { label: '4h', s: 4 * 3600 },
@@ -401,6 +417,7 @@ function SilenceQuick({
   if (!open) {
     return (
       <button
+        ref={openButton}
         className="pill small"
         title="Silence this alert for a while — suppresses delivery and mutes it, without touching the rule"
         aria-label={`Silence ${label}`}
@@ -412,12 +429,14 @@ function SilenceQuick({
   }
   return (
     <span className="pill-row">
-      {CHOICES.map((c) => (
+      {CHOICES.map((c, i) => (
         <button
           key={c.s}
+          ref={i === 0 ? firstChoice : undefined}
           className="pill small"
           aria-label={`Silence ${label} for ${c.label}`}
           onClick={() => {
+            acted.current = true
             setOpen(false)
             onSilence(c.s)
           }}
@@ -425,7 +444,7 @@ function SilenceQuick({
           {c.label}
         </button>
       ))}
-      <button className="pill small" onClick={() => setOpen(false)}>
+      <button className="pill small" aria-label={`Cancel silence for ${label}`} onClick={() => setOpen(false)}>
         ✕
       </button>
     </span>
@@ -452,6 +471,13 @@ function SilencesSection({
   onCancel: (id: number) => Promise<boolean>
 }) {
   const [adding, setAdding] = useState(false)
+  // The form replaces the button that opened it; give focus back when it closes.
+  const addButton = useRef<HTMLButtonElement>(null)
+  const wasAdding = useRef(false)
+  useEffect(() => {
+    if (wasAdding.current && !adding) addButton.current?.focus()
+    wasAdding.current = adding
+  }, [adding])
   const now = Date.now() / 1000
   // Active first, then upcoming, then the spent ones for reference.
   const live = silences.filter((s) => s.active || s.upcoming)
@@ -514,6 +540,8 @@ function SilencesSection({
                     className="pill small"
                     busy={busy}
                     label="cancel"
+                    subject={`silence on ${s.target ?? 'everything'}`}
+                    confirmSubject={`on ${s.target ?? 'everything'}`}
                     confirmLabel="Confirm cancel silence"
                     onConfirm={() => onCancel(s.id)}
                   />
@@ -563,7 +591,7 @@ function SilencesSection({
         />
       ) : (
         <div className="pill-row">
-          <button className="pill accent" onClick={() => setAdding(true)}>
+          <button ref={addButton} className="pill accent" onClick={() => setAdding(true)}>
             Schedule a silence…
           </button>
         </div>
@@ -615,7 +643,7 @@ function SilenceForm({
     >
       <label className="field">
         <span>Scope</span>
-        <select value={scope} onChange={(e) => setScope(Number(e.target.value))}>
+        <select autoFocus value={scope} onChange={(e) => setScope(Number(e.target.value))}>
           <option value={0}>Everything</option>
           <TargetOptions targets={targets} />
         </select>

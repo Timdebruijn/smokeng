@@ -59,13 +59,15 @@ export function useAction(load: () => Promise<void>) {
   }, [reload])
 
   // Runs a change and reloads; hands the failure to the caller, so a form can
-  // show it next to its own button.
+  // show it next to its own button. `done` is announced only after the change
+  // went through; a failure is never announced here.
   const attempt = useCallback(
-    async (fn: () => Promise<unknown>) => {
+    async (fn: () => Promise<unknown>, done?: string) => {
       setBusy(true)
       try {
         await fn()
         await reload()
+        if (done) announce(done)
         return null
       } catch (e) {
         return (e as Error).message
@@ -79,9 +81,9 @@ export function useAction(load: () => Promise<void>) {
   // The same, for everything that is not a form: the failure goes to the
   // screen-level error.
   const run = useCallback(
-    async (fn: () => Promise<unknown>) => {
+    async (fn: () => Promise<unknown>, done?: string) => {
       setError(null)
-      const failure = await attempt(fn)
+      const failure = await attempt(fn, done)
       setError(failure)
       return failure === null
     },
@@ -196,6 +198,31 @@ export function useRenderWorker(canvasRef: RefObject<HTMLCanvasElement | null>, 
   return workerRef
 }
 
+/**
+ * For a control whose own action removes it from the page (a confirmed delete,
+ * a silence that takes the row's silence button away): focus has then fallen
+ * to body, and this parks it on <main>, which every screen keeps. Set the
+ * returned ref to true once the action is under way. It does not scroll: a
+ * mouse user must not see the page jump. The cleanup of an unmounting
+ * component runs after the DOM update, so the removed control no longer has
+ * focus there.
+ * ponytail: <main> is coarse, the next Tab goes to the first control of the
+ * screen; a caller that keeps a heading or an add button could pass a nearer
+ * target.
+ */
+export function useParkedFocus() {
+  const acted = useRef(false)
+  useEffect(
+    () => () => {
+      if (acted.current && document.activeElement === document.body) {
+        document.getElementById('main')?.focus({ preventScroll: true })
+      }
+    },
+    [],
+  )
+  return acted
+}
+
 /** Remove, then confirm or cancel: a delete is never one click. */
 export function ConfirmButton({
   busy,
@@ -203,6 +230,8 @@ export function ConfirmButton({
   label = 'Remove',
   confirmLabel = `Confirm ${label.toLowerCase()}`,
   className = 'pill',
+  subject,
+  confirmSubject = subject,
 }: {
   busy: boolean
   onConfirm: () => Promise<boolean>
@@ -210,6 +239,10 @@ export function ConfirmButton({
   confirmLabel?: string
   /** Base class of both buttons; `danger` is added to the destructive one. */
   className?: string
+  /** The row this acts on; goes into the accessible name of all three buttons. */
+  subject?: string
+  /** For a `confirmLabel` that already says part of the subject. */
+  confirmSubject?: string
 }) {
   const [confirming, setConfirming] = useState(false)
   const confirmRef = useRef<HTMLButtonElement>(null)
@@ -221,22 +254,37 @@ export function ConfirmButton({
     if (moved.current) (confirming ? confirmRef : removeRef).current?.focus()
     moved.current = true
   }, [confirming])
+  // A confirmed delete removes the row, and this button with it.
+  const acted = useParkedFocus()
+  acted.current = confirming
   return confirming ? (
     <>
       <button
         ref={confirmRef}
+        aria-label={confirmSubject ? `${confirmLabel} ${confirmSubject}` : undefined}
         className={`${className} danger`.trim()}
         disabled={busy}
         onClick={() => void onConfirm().then((ok) => ok && setConfirming(false))}
       >
         {confirmLabel}
       </button>
-      <button className={className || undefined} disabled={busy} onClick={() => setConfirming(false)}>
+      <button
+        aria-label={subject ? `Cancel, keep ${subject}` : undefined}
+        className={className || undefined}
+        disabled={busy}
+        onClick={() => setConfirming(false)}
+      >
         Cancel
       </button>
     </>
   ) : (
-    <button ref={removeRef} className={`${className} danger`.trim()} disabled={busy} onClick={() => setConfirming(true)}>
+    <button
+      ref={removeRef}
+      aria-label={subject ? `${label} ${subject}` : undefined}
+      className={`${className} danger`.trim()}
+      disabled={busy}
+      onClick={() => setConfirming(true)}
+    >
       {label}
     </button>
   )
