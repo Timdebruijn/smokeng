@@ -15,7 +15,6 @@ import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
 import {
   RANGES,
-  rangeWords,
   filterByFamily,
   fromLocalInput,
   resolveSeries,
@@ -26,7 +25,7 @@ import {
   type FamilyChoice,
   type PlotSeries,
 } from './util'
-import { announce, Announcer, ErrorText, Hint, keepInView, LivePill, useTimeWindow } from './shared'
+import { announce, Announcer, ErrorText, Hint, keepInView, LivePill, ResetZoom, useTimeWindow } from './shared'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
@@ -351,6 +350,8 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
 
   // A window typed in: the free range the presets are sugar over.
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(null)
+  // "show" removes the form it sits in; the focus goes back to the toggle.
+  const customButton = useRef<HTMLButtonElement>(null)
   const customFrom = custom ? fromLocalInput(custom.from) : null
   const customTo = custom ? fromLocalInput(custom.to) : null
   const customOk = customFrom !== null && customTo !== null && customFrom < customTo
@@ -429,10 +430,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
                 key={r.label}
                 className={!zoom && r.seconds === rangeS ? 'pill active' : 'pill'}
                 aria-pressed={!zoom && r.seconds === rangeS}
-                onClick={() => {
-                  pickRange(r.seconds)
-                  announce(`Window: last ${rangeWords(r.seconds)}`)
-                }}
+                onClick={() => pickRange(r.seconds)}
               >
                 {r.label}
               </button>
@@ -450,6 +448,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           </button>
           <LivePill live={live} onToggle={toggleLive} />
           <button
+            ref={customButton}
             className={custom ? 'pill active' : 'pill'}
             aria-pressed={custom !== null}
             onClick={() => setCustom(custom ? null : { from: toLocalInput(from), to: toLocalInput(to) })}
@@ -477,9 +476,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           <span className="spacer" />
           <span className="span-label">{spanLabel}</span>
           {zoom ? (
-            <button className="pill accent" onClick={() => setZoom(null)}>
-              reset zoom
-            </button>
+            <ResetZoom onReset={() => setZoom(null)} />
           ) : (
             <span className="hint small">drag on a plot to zoom</span>
           )}
@@ -491,6 +488,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
                 if (!customOk) return
                 setZoom({ from: customFrom!, to: customTo! })
                 setCustom(null)
+                customButton.current?.focus()
               }}
             >
               <label>

@@ -199,9 +199,9 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
 
   return (
     <>
-      {!readOnly && (
-        <div className="page-head">
-          <h1>Targets</h1>
+      <div className="page-head">
+        <h1>Targets</h1>
+        {!readOnly && (
           <div className="pill-row">
             <button className="pill" onClick={() => setToml('export')}>
               Export TOML
@@ -210,8 +210,8 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
               Import TOML
             </button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
       {toml && (
         <TomlDialog
           mode={toml}
