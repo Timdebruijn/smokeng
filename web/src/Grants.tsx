@@ -224,13 +224,13 @@ function AddGrantForm({
       onSubmit={async (e) => {
         e.preventDefault()
         const trimmed = group.trim()
-        if (!trimmed || targetId === undefined) return
+        if (targetId === undefined) return
         setError(null)
         setError(await onSubmit(trimmed, targetId, role))
       }}
     >
       <label className="field">
-        <span>Group</span>
+        <span>Group <span className="note">(required)</span></span>
         <input
           value={group}
           autoFocus
@@ -269,7 +269,7 @@ function AddGrantForm({
       </p>
       {error && <ErrorText id={errId}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined} disabled={busy || !group.trim() || targetId === undefined}>
+        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined} disabled={busy || targetId === undefined}>
           Add grant
         </button>
         <button className="pill" type="button" disabled={busy} onClick={onCancel}>

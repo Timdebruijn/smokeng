@@ -9,10 +9,13 @@
   --card: light-dark(#ffffff, #161d25);
   --card2: light-dark(#f7f9fb, #1b242e);
   --border: light-dark(#e2e8ee, #263140);
+  --control-border: light-dark(#818e9b, #6b7a8a);
   --accent: light-dark(#0e7fc0, #56c4ec);
+  --accent-text: light-dark(#0072af, #56c4ec);
   --accent-soft: light-dark(#e3f2fb, #123243);
   --good: light-dark(#0e9a6c, #34d29b);
   --warn: light-dark(#c07d08, #eab84a);
+  --warn-text: light-dark(#996100, #eab84a);
   --bad: light-dark(#c93a3a, #f27d7d);
   --shadow: 0 1px 2px light-dark(rgba(20, 35, 50, 0.06), rgba(0, 0, 0, 0.4));
   --shadow-pop: 0 10px 30px light-dark(rgba(20, 35, 50, 0.14), rgba(0, 0, 0, 0.6));
@@ -27,9 +30,22 @@
   --fg: light-dark(#0a1118, #ffffff);
   --dim: light-dark(#2e3b47, #c9d4de);
   --border: light-dark(#5a6b7c, #a3b3c2);
+  --control-border: var(--border);
   /* Shadows soften exactly the edges this setting exists to harden. */
   --shadow: none;
   --shadow-pop: 0 10px 30px light-dark(rgba(20, 35, 50, 0.3), rgba(0, 0, 0, 0.8));
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The tree and, on a phone, the tab bar clip what sticks out of them, so the
+   ring of their buttons goes inside, deep enough for the 3px one too. */
+.tree-row:focus-visible,
+.tab:focus-visible {
+  outline-offset: -3px;
 }
 
 :root[data-contrast="high"] :focus-visible {
@@ -50,6 +66,7 @@
 :root[data-cb="safe"] {
   --good: light-dark(#0072b2, #56b4e9);
   --warn: light-dark(#a86e02, #e69f00);
+  --warn-text: light-dark(#996100, #e69f00);
   --bad: light-dark(#b13487, #f2a0ce);
 }
 
@@ -230,7 +247,7 @@ main:focus {
   padding: 0.5rem 0.9rem;
   border-radius: 9px;
   background: var(--card);
-  color: var(--accent);
+  color: var(--accent-text);
   border: 1px solid var(--accent);
   font-weight: 600;
   transform: translateY(-300%);
@@ -287,7 +304,7 @@ main:focus {
   padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
-  color: var(--warn);
+  color: var(--warn-text);
   cursor: help;
 }
 
@@ -301,13 +318,6 @@ main:focus {
 .series-canvas {
   position: relative;
   cursor: crosshair;
-}
-
-/* The container is the keyboard's tab stop; a click never shows the ring. */
-.plot-stack:focus-visible,
-.series-canvas:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .plot-stack canvas {
@@ -434,6 +444,12 @@ main:focus {
 
 .field.checkbox {
   grid-template-columns: auto 1fr;
+  min-height: 24px;
+  padding: 2px 0;
+}
+
+.note {
+  color: var(--dim);
 }
 
 .field input[type='text'],
@@ -448,7 +464,7 @@ main:focus {
   font: inherit;
   font-size: 0.85rem;
   padding: 0.2rem 0.4rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 4px;
   background: transparent;
   color: var(--fg);
@@ -486,7 +502,7 @@ main:focus {
 }
 
 .chip.local {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .settings button,
@@ -518,7 +534,14 @@ main:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  align-items: center;
+  align-items: flex-end;
+}
+
+.add-child label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
 }
 
 .hint {
@@ -598,7 +621,7 @@ a.button {
   padding: 0.25rem 0.7rem;
   border: 1px solid var(--accent);
   border-radius: 6px;
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
 }
 
@@ -719,7 +742,7 @@ html {
 
 /* "ng" is next gen, and the wordmark says so in the accent. */
 .brand-ng {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .brand-mark {
@@ -750,7 +773,7 @@ html {
 
 .tab.active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -777,7 +800,7 @@ html {
   font: inherit;
   font-size: 13px;
   padding: 6px 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 9px;
   background: var(--card2);
   color: var(--fg);
@@ -822,7 +845,7 @@ html {
   height: 26px;
   border-radius: 50%;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   display: grid;
   place-items: center;
   font-weight: 600;
@@ -1003,7 +1026,7 @@ html {
   width: 100%;
   box-sizing: border-box;
   padding: 7px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 8px;
   background: var(--card2);
   color: var(--fg);
@@ -1069,7 +1092,7 @@ html {
 .icon-button:hover,
 .search-button:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .pill {
@@ -1090,14 +1113,14 @@ html {
 .pill.active {
   background: var(--accent-soft);
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
 .pill.accent {
   background: var(--accent-soft);
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .pill.danger {
@@ -1171,6 +1194,23 @@ html {
   height: 9px;
   border-radius: 50%;
   flex: none;
+}
+
+/* The colour is set inline from --good, --warn, --bad or --dim, so the shape is
+   keyed on that value and every dot for a state looks the same wherever it is
+   drawn: circle healthy, triangle warning, square bad, ring no data. */
+.dot[style*="--warn"] {
+  border-radius: 0;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.dot[style*="--bad"],
+.dot.firing {
+  border-radius: 0;
+}
+
+.dot[style*="--dim"] {
+  mask: radial-gradient(circle, transparent 2px, #000 2.5px);
 }
 
 /* ── Target detail ─────────────────────────────────────────────────────── */
@@ -1352,7 +1392,7 @@ html {
 }
 
 .link-title:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* ── Overview ──────────────────────────────────────────────────────────── */
@@ -1400,7 +1440,7 @@ html {
 }
 
 .stat-value .warn {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 
 .overview-columns {
@@ -1528,7 +1568,7 @@ html {
 /* A caveat about how a measurement was taken, not a failure — the same
    register as the .quality chips on the graphs. */
 .warn-line {
-  color: var(--warn);
+  color: var(--warn-text);
   border-left: 2px solid color-mix(in srgb, var(--warn) 50%, transparent);
   padding-left: 0.6rem;
 }
@@ -1604,14 +1644,13 @@ dialog.modal-host::backdrop {
   min-height: 260px;
   resize: vertical;
   padding: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 10px;
   background: var(--card2);
   color: var(--fg);
   font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.55;
-  outline: none;
   margin-top: 8px;
 }
 
@@ -1676,12 +1715,11 @@ dialog.modal-host::backdrop {
   width: 100%;
   box-sizing: border-box;
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 10px;
   background: var(--card2);
   color: var(--fg);
   font-size: 14px;
-  outline: none;
   margin-bottom: 8px;
 }
 
@@ -1703,7 +1741,7 @@ dialog.modal-host::backdrop {
 
 .palette-item.active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .palette-empty {
@@ -1749,9 +1787,7 @@ dialog.modal-host::backdrop {
 }
 
 .compare-swatch {
-  width: 0.7rem;
-  height: 0.2rem;
-  border-radius: 2px;
+  flex: none;
 }
 
 .compare-canvas {
@@ -1845,24 +1881,28 @@ dialog.modal-host::backdrop {
 /* ── Phones ────────────────────────────────────────────────────────────── */
 
 @media (max-width: 640px) {
-  /* One row for the brand and the header actions, the tabs on a second row
-     that scrolls sideways instead of wrapping into a third. */
+  /* One row for the brand and the header actions, the tabs below it,
+     wrapping onto as many rows as they need so none is out of sight. */
   .appbar-inner {
     gap: 8px;
     row-gap: 0;
   }
 
+  /* With two rows of tabs the bar is 117px high at 390px wide and 149px at
+     320px. */
   html {
-    scroll-padding-top: 104px;
+    scroll-padding-top: 156px;
   }
 
   .tabs {
     order: 9;
     flex: 1 0 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
     margin: 0 -4px 6px;
+  }
+
+  .sidebar {
+    top: 156px;
+    max-height: calc(100vh - 176px);
   }
 
   .tab {
@@ -1965,8 +2005,7 @@ dialog.modal-host::backdrop {
 /* ── Low windows (zoom, landscape phones) ──────────────────────────────── */
 
 /* At 400% zoom the sticky bar took 113 of a 256px high window. In a window
-   lower than 480px the bar scrolls away with the page, and the tabs wrap so
-   that none sits out of sight in a row that scrolls sideways. */
+   lower than 480px the bar scrolls away with the page. */
 @media (max-height: 480px) {
   .appbar {
     position: static;
@@ -1976,14 +2015,11 @@ dialog.modal-host::backdrop {
     scroll-padding-top: 0;
   }
 
-  .tabs {
-    flex-wrap: wrap;
-    overflow-x: visible;
-  }
-
-  /* It sticks below the bar; with the bar gone it sticks near the top. */
+  /* It sticks below the bar; with the bar gone it sticks near the top, and
+     gets back the height the phone block took for the taller bar. */
   .sidebar {
     top: 14px;
+    max-height: calc(100vh - 90px);
   }
 }
 
@@ -1992,11 +2028,27 @@ dialog.modal-host::backdrop {
 @media (forced-colors: active) {
   /* Status dots and legend swatches are filled shapes; system colours would
      replace the fill and hide them. Keep the fill and add an outline in a
-     system colour. The compare line samples are all fill, so they only keep it. */
+     system colour. The compare line samples are strokes, so they only keep
+     their colour. */
   .dot,
   .swatch {
     border: 1px solid CanvasText;
     box-sizing: border-box;
+  }
+
+  /* The triangle's clip would cut that border off its sloping sides, so its
+     outline is a triangular frame drawn over the fill instead. */
+  .dot[style*="--warn"] {
+    position: relative;
+    border: 0;
+  }
+
+  .dot[style*="--warn"]::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: CanvasText;
+    clip-path: polygon(evenodd, 50% 0, 100% 100%, 0 100%, 50% 0, 50% 25%, 18% 89%, 82% 89%, 50% 25%);
   }
 
   .dot,

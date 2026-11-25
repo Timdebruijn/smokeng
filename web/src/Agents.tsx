@@ -306,7 +306,7 @@ function AddAgentForm({
       }}
     >
       <label className="field">
-        <span>Name</span>
+        <span>Name <span className="note">(required)</span></span>
         <input value={name} autoFocus onChange={(e) => setName(e.target.value)} required />
       </label>
       <label className="field">
@@ -321,7 +321,7 @@ function AddAgentForm({
       </label>
       {error && <ErrorText id={errId}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined} disabled={busy || !name.trim()}>
+        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined} disabled={busy}>
           Create token
         </button>
         <button className="pill" type="button" disabled={busy} onClick={onCancel}>
