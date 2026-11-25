@@ -59,13 +59,15 @@ export function useAction(load: () => Promise<void>) {
   }, [reload])
 
   // Runs a change and reloads; hands the failure to the caller, so a form can
-  // show it next to its own button.
+  // show it next to its own button. `done` is announced only after the change
+  // went through; a failure is never announced here.
   const attempt = useCallback(
-    async (fn: () => Promise<unknown>) => {
+    async (fn: () => Promise<unknown>, done?: string) => {
       setBusy(true)
       try {
         await fn()
         await reload()
+        if (done) announce(done)
         return null
       } catch (e) {
         return (e as Error).message
@@ -79,9 +81,9 @@ export function useAction(load: () => Promise<void>) {
   // The same, for everything that is not a form: the failure goes to the
   // screen-level error.
   const run = useCallback(
-    async (fn: () => Promise<unknown>) => {
+    async (fn: () => Promise<unknown>, done?: string) => {
       setError(null)
-      const failure = await attempt(fn)
+      const failure = await attempt(fn, done)
       setError(failure)
       return failure === null
     },

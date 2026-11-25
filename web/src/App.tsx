@@ -15,6 +15,7 @@ import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
 import {
   RANGES,
+  rangeWords,
   filterByFamily,
   fromLocalInput,
   resolveSeries,
@@ -25,7 +26,7 @@ import {
   type FamilyChoice,
   type PlotSeries,
 } from './util'
-import { Announcer, ErrorText, Hint, keepInView, LivePill, useTimeWindow } from './shared'
+import { announce, Announcer, ErrorText, Hint, keepInView, LivePill, useTimeWindow } from './shared'
 
 type View = 'overview' | 'graphs' | 'targets' | 'alerts' | 'agents' | 'access' | 'detail'
 type HeaderMenu = 'user' | 'a11y' | 'bell' | null
@@ -422,7 +423,10 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
                 key={r.label}
                 className={!zoom && r.seconds === rangeS ? 'pill active' : 'pill'}
                 aria-pressed={!zoom && r.seconds === rangeS}
-                onClick={() => pickRange(r.seconds)}
+                onClick={() => {
+                  pickRange(r.seconds)
+                  announce(`Window: last ${rangeWords(r.seconds)}`)
+                }}
               >
                 {r.label}
               </button>
@@ -431,7 +435,10 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           <button
             className={logScale ? 'pill active' : 'pill'}
             aria-pressed={logScale}
-            onClick={() => setLogScale(!logScale)}
+            onClick={() => {
+              setLogScale(!logScale)
+              announce(`Log scale ${logScale ? 'off' : 'on'}`)
+            }}
           >
             log
           </button>

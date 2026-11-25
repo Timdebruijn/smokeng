@@ -246,14 +246,14 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
             target={selected}
             agents={agents}
             busy={busy}
-            onPatch={(body) => run(() => updateTarget(selected.id, body))}
+            onPatch={(body, done) => run(() => updateTarget(selected.id, body), done)}
             onDelete={(recursive) =>
-              run(() => deleteTarget(selected.id, recursive)).then((ok) => {
+              run(() => deleteTarget(selected.id, recursive), `Target ${selected.path} deleted`).then((ok) => {
                 if (ok) setSelectedId(null)
                 return ok
               })
             }
-            onAddChild={(body) => attempt(() => createTarget({ ...body, parent_id: selected.id }))}
+            onAddChild={(body) => attempt(() => createTarget({ ...body, parent_id: selected.id }), `Target ${body.name} created`)}
           />
         ) : (
           <p>Select a target.</p>
@@ -307,7 +307,7 @@ interface DetailProps {
   target: Target
   agents: AgentInfo[]
   busy: boolean
-  onPatch: (body: Parameters<typeof updateTarget>[1]) => Promise<boolean>
+  onPatch: (body: Parameters<typeof updateTarget>[1], done: string) => Promise<boolean>
   onDelete: (recursive: boolean) => Promise<boolean>
   onAddChild: (body: { name: string; host?: string; address_family?: string }) => Promise<string | null>
 }
@@ -325,20 +325,20 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
 
       <div className="fields">
         {!isRoot && (
-          <TextField label="Name" value={target.name} busy={busy} onSave={(v) => onPatch({ name: v })} />
+          <TextField label="Name" value={target.name} busy={busy} onSave={(v) => onPatch({ name: v }, 'Name saved')} />
         )}
         <TextField
           label="Title"
           value={target.title ?? ''}
           busy={busy}
           placeholder="(display name)"
-          onSave={(v) => onPatch({ title: v === '' ? null : v })}
+          onSave={(v) => onPatch({ title: v === '' ? null : v }, 'Title saved')}
         />
         <TextField
           label="Notes"
           value={target.notes ?? ''}
           busy={busy}
-          onSave={(v) => onPatch({ notes: v === '' ? null : v })}
+          onSave={(v) => onPatch({ notes: v === '' ? null : v }, 'Notes saved')}
         />
         {!isRoot && (
           <>
@@ -349,7 +349,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
               placeholder="(empty = group node)"
               onSave={(v) =>
                 // Host and address family are set together or not at all.
-                onPatch(v === '' ? { host: null, address_family: null } : { host: v })
+                onPatch(v === '' ? { host: null, address_family: null } : { host: v }, 'Host saved')
               }
             />
             <label className="field">
@@ -357,7 +357,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
               <select
                 value={target.address_family ?? ''}
                 disabled={busy || target.host === null}
-                onChange={(e) => void onPatch({ address_family: e.target.value })}
+                onChange={(e) => void onPatch({ address_family: e.target.value }, `Address family set to ${e.target.value}`)}
               >
                 <option value="v4">v4</option>
                 <option value="v6">v6</option>
@@ -371,7 +371,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
             type="checkbox"
             checked={target.enabled}
             disabled={busy}
-            onChange={(e) => void onPatch({ enabled: e.target.checked })}
+            onChange={(e) => void onPatch({ enabled: e.target.checked }, `${target.path} ${e.target.checked ? 'enabled' : 'disabled'}`)}
           />
           <span>Enabled — measured by the prober</span>
         </label>
@@ -380,7 +380,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
             type="checkbox"
             checked={target.hidden}
             disabled={busy}
-            onChange={(e) => void onPatch({ hidden: e.target.checked })}
+            onChange={(e) => void onPatch({ hidden: e.target.checked }, `${target.path} ${e.target.checked ? 'hidden from' : 'shown on'} the graphs page`)}
           />
           <span>Hidden — measured, but not shown on the graphs page</span>
         </label>
@@ -425,7 +425,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
               agents={agents}
               busy={busy}
               validate={(v) => validateSetting(target, s, v)}
-              onSet={(v) => onPatch({ settings: { [s.key]: v } })}
+              onSet={(v) => onPatch({ settings: { [s.key]: v } }, `${s.label} ${v === null ? 'reverted to inherited' : 'saved'}`)}
             />
           ))}
         </tbody>
