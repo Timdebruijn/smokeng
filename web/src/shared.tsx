@@ -275,6 +275,25 @@ export function useParkedFocus() {
   return acted
 }
 
+/**
+ * "reset zoom" is only there while the window is zoomed, so pressing it
+ * removes it.
+ */
+export function ResetZoom({ onReset }: { onReset: () => void }) {
+  const acted = useParkedFocus()
+  return (
+    <button
+      className="pill accent"
+      onClick={() => {
+        acted.current = true
+        onReset()
+      }}
+    >
+      reset zoom
+    </button>
+  )
+}
+
 /** Remove, then confirm or cancel: a delete is never one click. */
 export function ConfirmButton({
   busy,
