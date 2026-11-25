@@ -164,23 +164,17 @@ export function gapsBefore(ts: ArrayLike<number>): boolean[] {
  * colour. Lengths are in CSS pixels at the line's 1.75 px width, and the
  * longest pattern fits the legend swatch (24 px).
  *
- * The colours are Okabe-Ito. In deuteranopia several of them come out close in
- * lightness (green and pink most of all), which is what the dash is for. A
- * darker pink would part those two, but falls below 3:1 against the dark
- * card. They do not follow the colour-blind-safe setting: a colour here says
- * which target, never how healthy. Past eight lines the pairs repeat.
+ * `prop` names the custom property that holds the colour. The colours are
+ * Okabe-Ito, moved only where one falls under 3:1 against the card in a theme
+ * (see --line-1 to --line-8 in styles.css). In deuteranopia several of them
+ * come out close in lightness (green and pink most of all), which is what the
+ * dash is for. A darker pink on the dark card would part those two, but falls
+ * below 3:1. They do not follow the colour-blind-safe setting: a colour here
+ * says which target, never how healthy. Past eight lines the pairs repeat.
  */
-const LINE_STYLES: { colour: string; dash: number[] }[] = [
-  { colour: '#0072b2', dash: [] },
-  { colour: '#e69f00', dash: [6, 3] },
-  { colour: '#009e73', dash: [2, 3.5] },
-  { colour: '#cc79a7', dash: [9, 3, 2, 3] },
-  { colour: '#56b4e9', dash: [14, 4] },
-  { colour: '#d55e00', dash: [4, 3] },
-  { colour: '#8c62aa', dash: [8, 3, 2, 3, 2, 3] },
-  { colour: '#117733', dash: [14, 3, 4, 3] },
-]
+const DASHES: number[][] = [[], [6, 3], [2, 3.5], [9, 3, 2, 3], [14, 4], [4, 3], [8, 3, 2, 3, 2, 3], [14, 3, 4, 3]]
 
-export function lineStyle(i: number): { colour: string; dash: number[] } {
-  return LINE_STYLES[i % LINE_STYLES.length]
+export function lineStyle(i: number): { prop: string; dash: number[] } {
+  const n = i % DASHES.length
+  return { prop: `--line-${n + 1}`, dash: DASHES[n] }
 }

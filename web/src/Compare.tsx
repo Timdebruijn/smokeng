@@ -240,7 +240,7 @@ export default function Compare({
     series.forEach((s, i) => {
       const d = data.get(s.key)
       if (!d) return
-      ctx.strokeStyle = lineStyle(i).colour
+      ctx.strokeStyle = css.getPropertyValue(lineStyle(i).prop).trim()
       ctx.setLineDash(lineStyle(i).dash)
       ctx.lineWidth = 1.75
       ctx.lineJoin = 'round'
@@ -299,7 +299,7 @@ export default function Compare({
                 x2="24"
                 y1="2"
                 y2="2"
-                stroke={lineStyle(i).colour}
+                stroke={`var(${lineStyle(i).prop})`}
                 strokeWidth="1.75"
                 strokeDasharray={lineStyle(i).dash.join(' ') || undefined}
               />

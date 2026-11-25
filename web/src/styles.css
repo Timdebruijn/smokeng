@@ -17,6 +17,16 @@
   --warn: light-dark(#c07d08, #eab84a);
   --warn-text: light-dark(#996100, #eab84a);
   --bad: light-dark(#c93a3a, #f27d7d);
+  /* Compare lines: Okabe-Ito, moved per theme only where it fell under 3:1
+     against --card. Not touched by the colour-blind setting. */
+  --line-1: light-dark(#0072b2, #0072b2);
+  --line-2: light-dark(#be8300, #e69f00);
+  --line-3: light-dark(#009e73, #009e73);
+  --line-4: light-dark(#c972a3, #cc79a7);
+  --line-5: light-dark(#1d96db, #56b4e9);
+  --line-6: light-dark(#d55e00, #d55e00);
+  --line-7: light-dark(#8c62aa, #8c62aa);
+  --line-8: light-dark(#117733, #127e36);
   --shadow: 0 1px 2px light-dark(rgba(20, 35, 50, 0.06), rgba(0, 0, 0, 0.4));
   --shadow-pop: 0 10px 30px light-dark(rgba(20, 35, 50, 0.14), rgba(0, 0, 0, 0.6));
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
