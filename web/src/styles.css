@@ -1956,9 +1956,11 @@ dialog.modal-host::backdrop {
     scroll-padding-top: 0;
   }
 
-  /* It sticks below the bar; with the bar gone it sticks near the top. */
+  /* It sticks below the bar; with the bar gone it sticks near the top, and
+     gets back the height the phone block took for the taller bar. */
   .sidebar {
     top: 14px;
+    max-height: calc(100vh - 90px);
   }
 }
 
