@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { ConfirmButton, useAction, useLiveRefresh, LivePill, StatusDot, ErrorText } from './shared'
+import { ConfirmButton, useAction, useLiveRefresh, useParkedFocus, LivePill, StatusDot, ErrorText } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -393,6 +393,17 @@ function SilenceQuick({
   onSilence: (durationS: number) => void
 }) {
   const [open, setOpen] = useState(false)
+  const firstChoice = useRef<HTMLButtonElement>(null)
+  const openButton = useRef<HTMLButtonElement>(null)
+  const moved = useRef(false)
+  // Each swap removes the button that had focus; put focus on its replacement,
+  // but not on first render.
+  useEffect(() => {
+    if (moved.current) (open ? firstChoice : openButton).current?.focus()
+    moved.current = true
+  }, [open])
+  // A silence that goes through takes this control out of the row.
+  const acted = useParkedFocus()
   const CHOICES: { label: string; s: number }[] = [
     { label: '1h', s: 3600 },
     { label: '4h', s: 4 * 3600 },
@@ -401,6 +412,7 @@ function SilenceQuick({
   if (!open) {
     return (
       <button
+        ref={openButton}
         className="pill small"
         title="Silence this alert for a while — suppresses delivery and mutes it, without touching the rule"
         aria-label={`Silence ${label}`}
@@ -412,12 +424,14 @@ function SilenceQuick({
   }
   return (
     <span className="pill-row">
-      {CHOICES.map((c) => (
+      {CHOICES.map((c, i) => (
         <button
           key={c.s}
+          ref={i === 0 ? firstChoice : undefined}
           className="pill small"
           aria-label={`Silence ${label} for ${c.label}`}
           onClick={() => {
+            acted.current = true
             setOpen(false)
             onSilence(c.s)
           }}
@@ -452,6 +466,13 @@ function SilencesSection({
   onCancel: (id: number) => Promise<boolean>
 }) {
   const [adding, setAdding] = useState(false)
+  // The form replaces the button that opened it; give focus back when it closes.
+  const addButton = useRef<HTMLButtonElement>(null)
+  const wasAdding = useRef(false)
+  useEffect(() => {
+    if (wasAdding.current && !adding) addButton.current?.focus()
+    wasAdding.current = adding
+  }, [adding])
   const now = Date.now() / 1000
   // Active first, then upcoming, then the spent ones for reference.
   const live = silences.filter((s) => s.active || s.upcoming)
@@ -563,7 +584,7 @@ function SilencesSection({
         />
       ) : (
         <div className="pill-row">
-          <button className="pill accent" onClick={() => setAdding(true)}>
+          <button ref={addButton} className="pill accent" onClick={() => setAdding(true)}>
             Schedule a silence…
           </button>
         </div>
@@ -615,7 +636,7 @@ function SilenceForm({
     >
       <label className="field">
         <span>Scope</span>
-        <select value={scope} onChange={(e) => setScope(Number(e.target.value))}>
+        <select autoFocus value={scope} onChange={(e) => setScope(Number(e.target.value))}>
           <option value={0}>Everything</option>
           <TargetOptions targets={targets} />
         </select>

@@ -1,5 +1,5 @@
 import TomlDialog from './TomlDialog'
-import { useCallback, useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import {
   SERIES_LABELS,
   SERIES_NAMES,
@@ -315,6 +315,13 @@ interface DetailProps {
 function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: DetailProps) {
   const isRoot = target.parent_id === null
   const [adding, setAdding] = useState(false)
+  // The form replaces the button that opened it; give focus back when it closes.
+  const addButton = useRef<HTMLButtonElement>(null)
+  const wasAdding = useRef(false)
+  useEffect(() => {
+    if (wasAdding.current && !adding) addButton.current?.focus()
+    wasAdding.current = adding
+  }, [adding])
 
   return (
     <>
@@ -444,7 +451,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
             }}
           />
         ) : (
-          <button onClick={() => setAdding(true)} disabled={busy}>
+          <button ref={addButton} onClick={() => setAdding(true)} disabled={busy}>
             Add child…
           </button>
         )}
@@ -721,7 +728,7 @@ function AddChildForm({
         <span>
           Name <span className="note">(required)</span>
         </span>
-        <input placeholder="core-router" value={name} onChange={(e) => setName(e.target.value)} required />
+        <input placeholder="core-router" autoFocus value={name} onChange={(e) => setName(e.target.value)} required />
       </label>
       <label>
         <span>

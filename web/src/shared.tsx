@@ -196,6 +196,31 @@ export function useRenderWorker(canvasRef: RefObject<HTMLCanvasElement | null>, 
   return workerRef
 }
 
+/**
+ * For a control whose own action removes it from the page (a confirmed delete,
+ * a silence that takes the row's silence button away): focus has then fallen
+ * to body, and this parks it on <main>, which every screen keeps. Set the
+ * returned ref to true once the action is under way. It does not scroll: a
+ * mouse user must not see the page jump. The cleanup of an unmounting
+ * component runs after the DOM update, so the removed control no longer has
+ * focus there.
+ * ponytail: <main> is coarse, the next Tab goes to the first control of the
+ * screen; a caller that keeps a heading or an add button could pass a nearer
+ * target.
+ */
+export function useParkedFocus() {
+  const acted = useRef(false)
+  useEffect(
+    () => () => {
+      if (acted.current && document.activeElement === document.body) {
+        document.getElementById('main')?.focus({ preventScroll: true })
+      }
+    },
+    [],
+  )
+  return acted
+}
+
 /** Remove, then confirm or cancel: a delete is never one click. */
 export function ConfirmButton({
   busy,
@@ -221,6 +246,9 @@ export function ConfirmButton({
     if (moved.current) (confirming ? confirmRef : removeRef).current?.focus()
     moved.current = true
   }, [confirming])
+  // A confirmed delete removes the row, and this button with it.
+  const acted = useParkedFocus()
+  acted.current = confirming
   return confirming ? (
     <>
       <button
