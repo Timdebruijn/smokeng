@@ -218,23 +218,27 @@ function AppHeader({
 }) {
   const who = me?.name ?? me?.email ?? me?.subject ?? ''
 
-  // An open popover closes on Esc (focus back on its trigger) and on a press
-  // anywhere outside the header menus.
+  // An open popover closes on Esc (focus back on its trigger), on a press
+  // outside its own menu, and when focus moves out of it: left open after a
+  // Tab it lies over the control that focus went to.
   useEffect(() => {
     if (!menu) return
+    const own = { a11y: '.a11y', bell: '.bell', user: '.usermenu' }[menu]
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       onMenu(null)
       document.querySelector<HTMLElement>('[aria-controls$="-popover"][aria-expanded="true"]')?.focus()
     }
-    const onDown = (e: PointerEvent) => {
-      if (!(e.target as Element).closest('.a11y, .bell, .usermenu')) onMenu(null)
+    const onOutside = (e: Event) => {
+      if (!(e.target as Element).closest(own)) onMenu(null)
     }
     window.addEventListener('keydown', onKey)
-    window.addEventListener('pointerdown', onDown)
+    window.addEventListener('pointerdown', onOutside)
+    window.addEventListener('focusin', onOutside)
     return () => {
       window.removeEventListener('keydown', onKey)
-      window.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('pointerdown', onOutside)
+      window.removeEventListener('focusin', onOutside)
     }
   }, [menu, onMenu])
   return (
