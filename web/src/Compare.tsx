@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchSeries, type Series } from './api'
 import { compareSummary, fmtUs } from './format'
 import { compareColumns, compareReadout, fmtWhen, gapsBefore, lineStyle, rowAt, stepRow } from './layout'
-import { useWidth } from './shared'
+import { useWidth, downloadCSV } from './shared'
+import { compareRows, csvFileName } from './seriesCSV'
 import type { Family } from './util'
 
 /**
@@ -277,6 +278,15 @@ export default function Compare({
     }
   }, [data, series, from, to, logScale, boxW, theme, at])
 
+  // Only the series that were read: one that failed has no column, rather than
+  // an empty one that would read as "no replies".
+  const read = series.filter((s) => data.has(s.key))
+  const exportCSV = () =>
+    downloadCSV(
+      csvFileName(['compare'], from, to),
+      compareRows(read.map((s) => ({ label: s.label, ts: data.get(s.key)!.ts, med: data.get(s.key)!.med }))),
+    )
+
   return (
     <div className="card compare">
       <div className="compare-head">
@@ -297,6 +307,15 @@ export default function Compare({
             {s.label}
           </span>
         ))}
+        <span className="spacer" />
+        <button
+          className="pill"
+          onClick={exportCSV}
+          disabled={!read.some((s) => data.get(s.key)!.ts.length > 0)}
+          aria-label="Download comparison as CSV"
+        >
+          CSV
+        </button>
       </div>
       <div
         tabIndex={0}
