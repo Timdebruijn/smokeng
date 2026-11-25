@@ -1858,24 +1858,28 @@ dialog.modal-host::backdrop {
 /* ── Phones ────────────────────────────────────────────────────────────── */
 
 @media (max-width: 640px) {
-  /* One row for the brand and the header actions, the tabs on a second row
-     that scrolls sideways instead of wrapping into a third. */
+  /* One row for the brand and the header actions, the tabs below it,
+     wrapping onto as many rows as they need so none is out of sight. */
   .appbar-inner {
     gap: 8px;
     row-gap: 0;
   }
 
+  /* With two rows of tabs the bar is 117px high at 390px wide and 149px at
+     320px. */
   html {
-    scroll-padding-top: 104px;
+    scroll-padding-top: 156px;
   }
 
   .tabs {
     order: 9;
     flex: 1 0 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
     margin: 0 -4px 6px;
+  }
+
+  .sidebar {
+    top: 156px;
+    max-height: calc(100vh - 176px);
   }
 
   .tab {
@@ -1978,8 +1982,7 @@ dialog.modal-host::backdrop {
 /* ── Low windows (zoom, landscape phones) ──────────────────────────────── */
 
 /* At 400% zoom the sticky bar took 113 of a 256px high window. In a window
-   lower than 480px the bar scrolls away with the page, and the tabs wrap so
-   that none sits out of sight in a row that scrolls sideways. */
+   lower than 480px the bar scrolls away with the page. */
 @media (max-height: 480px) {
   .appbar {
     position: static;
@@ -1989,14 +1992,11 @@ dialog.modal-host::backdrop {
     scroll-padding-top: 0;
   }
 
-  .tabs {
-    flex-wrap: wrap;
-    overflow-x: visible;
-  }
-
-  /* It sticks below the bar; with the bar gone it sticks near the top. */
+  /* It sticks below the bar; with the bar gone it sticks near the top, and
+     gets back the height the phone block took for the taller bar. */
   .sidebar {
     top: 14px;
+    max-height: calc(100vh - 90px);
   }
 }
 
