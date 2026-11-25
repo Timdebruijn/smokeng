@@ -37,6 +37,13 @@
   outline-offset: 2px;
 }
 
+/* The tree and, on a phone, the tab bar clip what sticks out of them, so the
+   ring of their buttons goes inside, deep enough for the 3px one too. */
+.tree-row:focus-visible,
+.tab:focus-visible {
+  outline-offset: -3px;
+}
+
 :root[data-contrast="high"] :focus-visible {
   outline-width: 3px;
 }
