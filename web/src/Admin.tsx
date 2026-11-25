@@ -14,7 +14,7 @@ import {
   type SettingValue,
   type Target,
 } from './api'
-import { useAction, ErrorText } from './shared'
+import { ConfirmButton, useAction, ErrorText } from './shared'
 import { orderedTargets } from './util'
 
 interface SettingDef {
@@ -450,12 +450,8 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
         )}
         {!isRoot && (
           <>
-            <button className="danger" disabled={busy} onClick={() => void onDelete(false)}>
-              Delete
-            </button>
-            <button className="danger" disabled={busy} onClick={() => void onDelete(true)}>
-              Delete with descendants
-            </button>
+            <ConfirmButton className="" busy={busy} label="Delete" onConfirm={() => onDelete(false)} />
+            <ConfirmButton className="" busy={busy} label="Delete with descendants" onConfirm={() => onDelete(true)} />
           </>
         )}
       </div>
@@ -721,15 +717,25 @@ function AddChildForm({
         setError(await onSubmit(host ? { name, host, address_family: family } : { name }))
       }}
     >
-      <input aria-label="Name" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required />
-      <input aria-label="Host" placeholder="host (empty = group)" value={host} onChange={(e) => setHost(e.target.value)} />
+      <label>
+        <span>
+          Name <span className="note">(required)</span>
+        </span>
+        <input placeholder="core-router" value={name} onChange={(e) => setName(e.target.value)} required />
+      </label>
+      <label>
+        <span>
+          Host <span className="note">(leave empty to create a group)</span>
+        </span>
+        <input placeholder="192.0.2.1 or example.org" value={host} onChange={(e) => setHost(e.target.value)} />
+      </label>
       <select aria-label="Address family" value={family} onChange={(e) => setFamily(e.target.value)} disabled={!host}>
         <option value="v4">v4</option>
         <option value="v6">v6</option>
         <option value="both">v4 + v6</option>
       </select>
       {error && <ErrorText id={errId}>{error}</ErrorText>}
-      <button type="submit" aria-describedby={error ? errId : undefined} disabled={busy || !name}>
+      <button type="submit" aria-describedby={error ? errId : undefined} disabled={busy}>
         Create
       </button>
       <button type="button" onClick={onCancel} disabled={busy}>

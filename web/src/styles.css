@@ -9,10 +9,13 @@
   --card: light-dark(#ffffff, #161d25);
   --card2: light-dark(#f7f9fb, #1b242e);
   --border: light-dark(#e2e8ee, #263140);
+  --control-border: light-dark(#818e9b, #6b7a8a);
   --accent: light-dark(#0e7fc0, #56c4ec);
+  --accent-text: light-dark(#0072af, #56c4ec);
   --accent-soft: light-dark(#e3f2fb, #123243);
   --good: light-dark(#0e9a6c, #34d29b);
   --warn: light-dark(#c07d08, #eab84a);
+  --warn-text: light-dark(#996100, #eab84a);
   --bad: light-dark(#c93a3a, #f27d7d);
   --shadow: 0 1px 2px light-dark(rgba(20, 35, 50, 0.06), rgba(0, 0, 0, 0.4));
   --shadow-pop: 0 10px 30px light-dark(rgba(20, 35, 50, 0.14), rgba(0, 0, 0, 0.6));
@@ -27,6 +30,7 @@
   --fg: light-dark(#0a1118, #ffffff);
   --dim: light-dark(#2e3b47, #c9d4de);
   --border: light-dark(#5a6b7c, #a3b3c2);
+  --control-border: var(--border);
   /* Shadows soften exactly the edges this setting exists to harden. */
   --shadow: none;
   --shadow-pop: 0 10px 30px light-dark(rgba(20, 35, 50, 0.3), rgba(0, 0, 0, 0.8));
@@ -62,6 +66,7 @@
 :root[data-cb="safe"] {
   --good: light-dark(#0072b2, #56b4e9);
   --warn: light-dark(#a86e02, #e69f00);
+  --warn-text: light-dark(#996100, #e69f00);
   --bad: light-dark(#b13487, #f2a0ce);
 }
 
@@ -242,7 +247,7 @@ main:focus {
   padding: 0.5rem 0.9rem;
   border-radius: 9px;
   background: var(--card);
-  color: var(--accent);
+  color: var(--accent-text);
   border: 1px solid var(--accent);
   font-weight: 600;
   transform: translateY(-300%);
@@ -276,7 +281,7 @@ main:focus {
   padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
-  color: var(--warn);
+  color: var(--warn-text);
   cursor: help;
 }
 
@@ -416,6 +421,12 @@ main:focus {
 
 .field.checkbox {
   grid-template-columns: auto 1fr;
+  min-height: 24px;
+  padding: 2px 0;
+}
+
+.note {
+  color: var(--dim);
 }
 
 .field input[type='text'],
@@ -430,7 +441,7 @@ main:focus {
   font: inherit;
   font-size: 0.85rem;
   padding: 0.2rem 0.4rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 4px;
   background: transparent;
   color: var(--fg);
@@ -468,7 +479,7 @@ main:focus {
 }
 
 .chip.local {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .settings button,
@@ -500,7 +511,14 @@ main:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  align-items: center;
+  align-items: flex-end;
+}
+
+.add-child label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
 }
 
 .hint {
@@ -580,7 +598,7 @@ a.button {
   padding: 0.25rem 0.7rem;
   border: 1px solid var(--accent);
   border-radius: 6px;
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
 }
 
@@ -701,7 +719,7 @@ html {
 
 /* "ng" is next gen, and the wordmark says so in the accent. */
 .brand-ng {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .brand-mark {
@@ -732,7 +750,7 @@ html {
 
 .tab.active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -759,7 +777,7 @@ html {
   font: inherit;
   font-size: 13px;
   padding: 6px 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 9px;
   background: var(--card2);
   color: var(--fg);
@@ -804,7 +822,7 @@ html {
   height: 26px;
   border-radius: 50%;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   display: grid;
   place-items: center;
   font-weight: 600;
@@ -985,7 +1003,7 @@ html {
   width: 100%;
   box-sizing: border-box;
   padding: 7px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 8px;
   background: var(--card2);
   color: var(--fg);
@@ -1051,7 +1069,7 @@ html {
 .icon-button:hover,
 .search-button:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .pill {
@@ -1072,14 +1090,14 @@ html {
 .pill.active {
   background: var(--accent-soft);
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
 .pill.accent {
   background: var(--accent-soft);
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .pill.danger {
@@ -1334,7 +1352,7 @@ html {
 }
 
 .link-title:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* ── Overview ──────────────────────────────────────────────────────────── */
@@ -1382,7 +1400,7 @@ html {
 }
 
 .stat-value .warn {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 
 .overview-columns {
@@ -1510,7 +1528,7 @@ html {
 /* A caveat about how a measurement was taken, not a failure — the same
    register as the .quality chips on the graphs. */
 .warn-line {
-  color: var(--warn);
+  color: var(--warn-text);
   border-left: 2px solid color-mix(in srgb, var(--warn) 50%, transparent);
   padding-left: 0.6rem;
 }
@@ -1586,7 +1604,7 @@ dialog.modal-host::backdrop {
   min-height: 260px;
   resize: vertical;
   padding: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 10px;
   background: var(--card2);
   color: var(--fg);
@@ -1657,7 +1675,7 @@ dialog.modal-host::backdrop {
   width: 100%;
   box-sizing: border-box;
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 10px;
   background: var(--card2);
   color: var(--fg);
@@ -1683,7 +1701,7 @@ dialog.modal-host::backdrop {
 
 .palette-item.active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .palette-empty {

@@ -176,9 +176,16 @@ export function useRenderWorker(canvasRef: RefObject<HTMLCanvasElement | null>, 
 export function ConfirmButton({
   busy,
   onConfirm,
+  label = 'Remove',
+  confirmLabel = `Confirm ${label.toLowerCase()}`,
+  className = 'pill',
 }: {
   busy: boolean
   onConfirm: () => Promise<boolean>
+  label?: string
+  confirmLabel?: string
+  /** Base class of both buttons; `danger` is added to the destructive one. */
+  className?: string
 }) {
   const [confirming, setConfirming] = useState(false)
   const confirmRef = useRef<HTMLButtonElement>(null)
@@ -194,19 +201,19 @@ export function ConfirmButton({
     <>
       <button
         ref={confirmRef}
-        className="pill danger"
+        className={`${className} danger`.trim()}
         disabled={busy}
         onClick={() => void onConfirm().then((ok) => ok && setConfirming(false))}
       >
-        Confirm remove
+        {confirmLabel}
       </button>
-      <button className="pill" disabled={busy} onClick={() => setConfirming(false)}>
+      <button className={className || undefined} disabled={busy} onClick={() => setConfirming(false)}>
         Cancel
       </button>
     </>
   ) : (
-    <button ref={removeRef} className="pill danger" disabled={busy} onClick={() => setConfirming(true)}>
-      Remove
+    <button ref={removeRef} className={`${className} danger`.trim()} disabled={busy} onClick={() => setConfirming(true)}>
+      {label}
     </button>
   )
 }

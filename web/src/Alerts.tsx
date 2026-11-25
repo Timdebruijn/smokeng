@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useAction, useLiveRefresh, LivePill, StatusDot, ErrorText } from './shared'
+import { ConfirmButton, useAction, useLiveRefresh, LivePill, StatusDot, ErrorText } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -81,7 +81,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
     setSilences(s)
     setBaselines(b)
   }, [])
-  const { error, reload, run, attempt } = useAction(load)
+  const { error, busy, reload, run, attempt } = useAction(load)
 
   const refresh = useCallback(() => void reload(), [reload])
   const { live, toggleLive } = useLiveRefresh(refresh, REFRESH_MS)
@@ -301,9 +301,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                           )}
                         </>
                       )}
-                      <button className="pill danger" onClick={() => void run(() => deleteAlertRule(r.id))}>
-                        Delete
-                      </button>
+                      <ConfirmButton busy={busy} label="Delete" onConfirm={() => run(() => deleteAlertRule(r.id))} />
                     </td>
                   )}
                 </tr>
@@ -337,6 +335,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
         targets={targets}
         onCreate={(body) => attempt(() => createSilence(body))}
         onCancel={(id) => run(() => deleteSilence(id))}
+        busy={busy}
       />
 
       <AlertHistory />
@@ -429,9 +428,11 @@ function SilencesSection({
   targets,
   onCreate,
   onCancel,
+  busy,
 }: {
   silences: Silence[]
   targets: Target[]
+  busy: boolean
   onCreate: (body: Parameters<typeof createSilence>[0]) => Promise<string | null>
   onCancel: (id: number) => Promise<boolean>
 }) {
@@ -493,9 +494,13 @@ function SilencesSection({
                 </td>
                 <td className="hint">{s.reason}</td>
                 <td>
-                  <button className="pill small danger" onClick={() => void onCancel(s.id)}>
-                    cancel
-                  </button>
+                  <ConfirmButton
+                    className="pill small"
+                    busy={busy}
+                    label="cancel"
+                    confirmLabel="Confirm cancel silence"
+                    onConfirm={() => onCancel(s.id)}
+                  />
                 </td>
               </tr>
             ))}
@@ -610,7 +615,7 @@ function SilenceForm({
       </label>
       {mode === 'now' ? (
         <label className="field">
-          <span>Duration</span>
+          <span>Duration <span className="note">(required)</span></span>
           <span className="inline">
             {/* 0 passes here and the server says why not; a positive floor would
                 be stricter than the server, which takes any duration of a second. */}
@@ -628,7 +633,7 @@ function SilenceForm({
       ) : (
         <>
           <label className="field">
-            <span>From</span>
+            <span>From <span className="note">(required)</span></span>
             <input
               type="datetime-local"
               value={startsAt}
@@ -637,7 +642,7 @@ function SilenceForm({
             />
           </label>
           <label className="field">
-            <span>Until</span>
+            <span>Until <span className="note">(required)</span></span>
             <input
               type="datetime-local"
               value={endsAt}
@@ -791,7 +796,7 @@ function RuleForm({
       }}
     >
       <label className="field">
-        <span>Name</span>
+        <span>Name <span className="note">(required)</span></span>
         <input value={name} autoFocus onChange={(e) => setName(e.target.value)} required />
       </label>
       <label className="field">
@@ -801,7 +806,9 @@ function RuleForm({
         </select>
       </label>
       <div className="field" role="group" aria-labelledby={`${id}-when`}>
-        <span id={`${id}-when`}>When</span>
+        <span id={`${id}-when`}>
+          When {(!shape || mode === 'tunable') && <span className="note">(required)</span>}
+        </span>
         <span className="inline">
           <select aria-label="Metric" value={metric} onChange={(e) => setMetric(e.target.value as AlertRule['metric'])}>
             {METRICS.map((m) => (
@@ -884,7 +891,7 @@ function RuleForm({
         </p>
       )}
       <div className="field" role="group" aria-labelledby={`${id}-for`}>
-        <span id={`${id}-for`}>For</span>
+        <span id={`${id}-for`}>For <span className="note">(required)</span></span>
         <span className="inline">
           <input
             aria-label="Consecutive intervals before firing"
@@ -918,7 +925,7 @@ function RuleForm({
       </label>
       {error && <ErrorText id={errId}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined} disabled={!name}>
+        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined}>
           Create
         </button>
         <button className="pill" type="button" onClick={onCancel}>
