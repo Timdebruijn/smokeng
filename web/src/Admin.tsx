@@ -14,7 +14,7 @@ import {
   type SettingValue,
   type Target,
 } from './api'
-import { ConfirmButton, useAction, ErrorText } from './shared'
+import { ConfirmButton, useAction, ErrorText, announce } from './shared'
 import { orderedTargets } from './util'
 
 interface SettingDef {
@@ -221,13 +221,17 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
       )}
       <div className="admin">
       <aside className="tree" aria-label="Target tree">
+        <ul className="tree-list" role="list">
         {ordered.map(({ target, depth }) => (
+          <li key={target.id}>
           <button
-            key={target.id}
             className={`tree-row${target.id === selectedId ? ' selected' : ''}`}
             aria-current={target.id === selectedId ? 'true' : undefined}
             style={{ paddingLeft: 8 + depth * 14 }}
-            onClick={() => setSelectedId(target.id)}
+            onClick={() => {
+              setSelectedId(target.id)
+              announce(`Selected ${target.path}`)
+            }}
           >
             <span className={target.is_group ? 'group' : 'leaf'}>
               {target.parent_id === null ? '/' : target.name}
@@ -235,8 +239,13 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
             {!target.enabled && <span className="badge">disabled</span>}
             {target.hidden && <span className="badge">hidden</span>}
             {target.host && <span className="dim">{target.host}</span>}
+            <span className="visually-hidden">
+              {`, ${target.is_group ? 'group' : 'target'}, level ${depth + 1}`}
+            </span>
           </button>
+          </li>
         ))}
+        </ul>
       </aside>
       <section className="detail">
         {error && <ErrorText>{error}</ErrorText>}
