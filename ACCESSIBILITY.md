@@ -1,6 +1,6 @@
 # Accessibility statement for smokeng
 
-This statement covers the web interface that the smokeng binary serves. It follows the structure of the [W3C accessibility statement](https://www.w3.org/WAI/planning/statements/) and describes smokeng as it is on the main branch on 25 November 2026: v0.29.0 and what was merged after it.
+This statement covers the web interface that the smokeng binary serves. It follows the structure of the [W3C accessibility statement](https://www.w3.org/WAI/planning/statements/) and describes smokeng v0.30.0.
 
 ## Conformance status
 
@@ -10,9 +10,9 @@ smokeng is **partially conformant** with the [Web Content Accessibility Guidelin
 
 This is a self-evaluation. Nobody outside the project has audited smokeng.
 
-In November 2026 the interface was audited against all 55 level A and AA criteria of WCAG 2.2: by reading the source, with automated checks in a browser, with scripted keyboard walks through every screen, and with measurements of contrast and layout in Chrome at 1280, 900 and 390 px, in the light and the dark theme. Most of what that found was fixed in v0.28.0, v0.28.1, v0.29.0 and on the main branch since, and each fix was measured again in a running instance.
+In November 2026 the interface was audited against all 55 level A and AA criteria of WCAG 2.2: by reading the source, with automated checks in a browser, with scripted keyboard walks through every screen, and with measurements of contrast and layout in Chrome at 1280, 900 and 390 px, in the light and the dark theme. Most of what that found was fixed in v0.28.0, v0.28.1 and v0.29.0, and each fix was measured again in a running instance.
 
-On 25 November 2026 the main branch was audited again in the same way. That audit counted 16 of the 55 criteria as not met, most of them in one or two places. What it found that needs no visible change was fixed on main the same day and measured again: that was everything it had listed under seven of the 16, and part of an eighth. Reading the code against this statement afterwards turned up more of the same kind under two of those seven, focus and announcements; that was fixed too, together with two of the visible findings (the contrast of the count on the bell, and revoking a token without confirmation). What is left, from all of this, is listed under [Known limitations](#known-limitations).
+On 25 November 2026 the interface was audited again in the same way. That audit counted 16 of the 55 criteria as not met, most of them in one or two places. What it found that needs no visible change was fixed in v0.30.0 and measured again: that was everything it had listed under seven of the 16, and part of an eighth. Reading the code against this statement afterwards turned up more of the same kind under two of those seven, focus and announcements; that was fixed too, together with two of the visible findings (the contrast of the count on the bell, and revoking a token without confirmation). What is left, from all of this, is listed under [Known limitations](#known-limitations).
 
 Not part of that assessment:
 
@@ -65,4 +65,4 @@ If something in smokeng does not work for you, open an issue at <https://github.
 
 ## Date
 
-This statement was written on 25 November 2026 and is reviewed with every release that changes the interface.
+This statement was written on 25 November 2026 for v0.30.0 and is reviewed with every release that changes the interface.
