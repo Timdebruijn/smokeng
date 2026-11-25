@@ -444,7 +444,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           >
             custom
           </button>
-          <button className="pill" onClick={onZoomOut} title="Show twice as much time around the same centre">
+          <button className="pill" onClick={onZoomOut} title="Show twice as much time">
             zoom out
           </button>
           <button
@@ -457,7 +457,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           </button>
           <Hint
             className="pill"
-            text="custom: choose the start and the end of the window yourself. zoom out: show twice as much time around the same centre. compare: draw the medians of the targets shown as lines on one axis."
+            text="custom: choose the start and the end of the window yourself. zoom out: show twice as much time. compare: draw the medians of the targets shown as lines on one axis."
           >
             help
           </Hint>

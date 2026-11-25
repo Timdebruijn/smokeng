@@ -91,7 +91,7 @@ here:
   measured 2.33:1 on the dark one. Text needs 4.5:1 and a line, border or icon
   3:1, against the background it really sits on, in both themes: compute it.
 - A pixel value standing in for a measurement. The scroll offset under the
-  sticky header was set from an estimated header height of 135px; measured, the
+  sticky header was first set from an estimated header height; measured, the
   header was 117px at one width and 149px at another.
 - A focus ring that a clipping container cuts off. `overflow: hidden` on the
   target tree took the sides off every row's ring.

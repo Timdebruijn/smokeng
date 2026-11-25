@@ -26,7 +26,7 @@ finds the same problem again.
 
 For each task: do it, then write down where you got stuck, what was not announced or not
 visible, and what you had to guess. The expectations say what should happen. Several of them,
-notably in tasks 1, 4 and 7, have never been checked with a screen reader, so a miss there is
+notably in tasks 1, 4 and 7, were read from the code and never checked with a screen reader, so a miss there is
 a finding and not a mistake in your round.
 
 1. **Find your way.** Open smokeng. Use the skip link. Go to every tab and back to Overview.
@@ -57,12 +57,13 @@ a finding and not a mistake in your round.
    without moving the focus; a rule's state is given in words, not only as a coloured dot.
 6. **Manage agents and access.** On Agents, issue a token, copy the command, revoke the
    token. On Access, add a grant and remove it.
-   *Expect:* "Copied" is announced; the one-time token is reachable and readable; removing
-   asks for confirmation.
+   *Expect:* "Copied" is announced; the one-time token is reachable and readable; removing a
+   grant asks for confirmation. Revoking a token does not ask.
 7. **Jump and sign in.** Open the command palette with Cmd K or Ctrl K, find a target, go to
    it. If the instance has authentication, sign out and in again.
-   *Expect:* the palette's field shows its focus; results are announced as you type; after
-   signing in you land where you were going.
+   *Expect:* the palette's field shows its focus; the result under the cursor is announced
+   as you move through the list, and a search that matches nothing is announced; after
+   signing in you are on Overview.
 
 ## Writing it down
 
