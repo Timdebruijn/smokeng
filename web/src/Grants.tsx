@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createGrant,
   deleteGrant,
@@ -7,7 +7,7 @@ import {
   type Grant,
   type Target,
 } from './api'
-import { ConfirmButton, useAction, ErrorText } from './shared'
+import { ConfirmButton, useAction, useFormError, ErrorText } from './shared'
 import { orderedTargets } from './util'
 
 const ROLES: { value: Grant['role']; label: string }[] = [
@@ -216,12 +216,12 @@ function AddGrantForm({
   // Until the user chooses, the first target.
   const targetId = pick ?? ordered[0]?.target.id
   const [role, setRole] = useState<Grant['role']>('viewer')
-  const [error, setError] = useState<string | null>(null)
-  const errId = useId()
+  const { error, setError, errorProps, describedBy, onChange, field } = useFormError('grant')
 
   return (
     <form
       className="card rule-form"
+      onChange={onChange}
       onSubmit={async (e) => {
         e.preventDefault()
         const trimmed = group.trim()
@@ -238,6 +238,7 @@ function AddGrantForm({
           placeholder="OIDC group name"
           onChange={(e) => setGroup(e.target.value)}
           required
+          {...field('group')}
         />
       </label>
       <label className="field">
@@ -268,9 +269,9 @@ function AddGrantForm({
         Applies to the target and everything beneath it. If the group already has a grant on
         this target, the new one replaces its role; it does not add a second grant.
       </p>
-      {error && <ErrorText id={errId}>{error}</ErrorText>}
+      {error && <ErrorText {...errorProps}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined} disabled={busy || targetId === undefined}>
+        <button className="pill accent" type="submit" aria-describedby={describedBy} disabled={busy || targetId === undefined}>
           Add grant
         </button>
         <button className="pill" type="button" disabled={busy} onClick={onCancel}>

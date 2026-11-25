@@ -131,3 +131,42 @@ export function positionalTitle(positions: readonly number[], window: number): s
     'where it happens to: it is consistent with rate limiting by the target, and not necessarily network loss.'
   )
 }
+
+/**
+ * Which field of a form a server error is about, by the field's name in the
+ * message, or null when the message does not name one unambiguously.
+ *
+ * Known ceiling: matching on message text is brittle. A reworded message in
+ * internal/ falls through to null (no field is marked, and the error line is
+ * announced as it was before). The upgrade path is a field name in the API
+ * response.
+ */
+const FIELD_ERRORS = {
+  // The tree wraps a node's error as "target 8 (name): tree: …".
+  target: {
+    name: /^(target \d+ \(.*\): )?tree: (name\b|duplicate sibling name)/,
+    // "host and address_family must be set together" names both fields.
+    host: /^(target \d+ \(.*\): )?tree: host\b(?! and address_family)/,
+    family: /^(target \d+ \(.*\): )?tree: address_family\b/,
+  },
+  rule: {
+    name: /^alert: name is required/,
+    threshold: /^alert: (loss )?threshold must be/,
+    for: /^alert: `for_intervals`/,
+    clear: /^alert: `clear_intervals`/,
+  },
+  // The end is the duration in "now" mode and Until in "window" mode; the form
+  // knows which of the two it shows.
+  silence: { end: /^(a silence needs an end after its start|alert: silence must end after it starts)/ },
+  grant: { group: /^store: a grant needs a group name/ },
+  agent: {
+    name: /^(store: (".*" is not a usable agent name|an agent name is at most|agent name ".*" contains)|an agent named ".*" already exists$)/,
+  },
+} as const
+
+export type ErrorForm = keyof typeof FIELD_ERRORS
+
+export function errorField(form: ErrorForm, message: string): string | null {
+  const hits = Object.entries(FIELD_ERRORS[form]).filter(([, re]) => re.test(message))
+  return hits.length === 1 ? hits[0][0] : null
+}

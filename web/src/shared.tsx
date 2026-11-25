@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react'
 import { csvCell, refreshMs, zoomOut } from './util'
+import { errorField, type ErrorForm } from './format'
 
 /**
  * The reload / run-a-mutation / busy / error shape the admin screens share.
@@ -127,13 +128,63 @@ export function Announcer() {
   )
 }
 
-/** An error line that screen readers announce when it appears. */
-export function ErrorText({ children, id }: { children: ReactNode; id?: string }) {
+/**
+ * An error line that screen readers announce when it appears. `alert` is false
+ * for a line that is read another way: as the description of the field that
+ * takes focus (see useFormError).
+ */
+export function ErrorText({ children, id, alert = true }: { children: ReactNode; id?: string; alert?: boolean }) {
   return (
-    <p className="error" role="alert" id={id}>
+    <p className="error" role={alert ? 'alert' : undefined} id={id}>
       {children}
     </p>
   )
+}
+
+/**
+ * The server error of one form, tied to the field it is about (see errorField).
+ * After a refused submit that field gets aria-invalid and aria-describedby and
+ * the focus, and the error line is read as its description, once, not also as
+ * an alert. When no field is recognised, or the field is not on the page,
+ * nothing is marked and the line is an alert as before. Any edit in the form
+ * removes the mark; a new submit (setError(null)) removes the error. Spread
+ * `errorProps` on ErrorText and `field(name)` on the control, and put
+ * `onChange` on the form.
+ */
+export function useFormError(form: ErrorForm) {
+  const id = useId()
+  const [error, set] = useState<string | null>(null)
+  // The field this error is about, for as long as the error stands, and
+  // whether it is still marked: an edit unmarks it but must not turn the line
+  // into an alert, which would read it a second time.
+  const [about, setAbout] = useState<string | null>(null)
+  const [marked, setMarked] = useState(false)
+  const fields = useRef<Record<string, HTMLElement | null>>({})
+
+  useEffect(() => {
+    if (error && about) fields.current[about]?.focus()
+  }, [error])
+
+  return {
+    error,
+    setError: (message: string | null) => {
+      const name = message ? errorField(form, message) : null
+      const shown = name !== null && fields.current[name] ? name : null
+      set(message)
+      setAbout(shown)
+      setMarked(shown !== null)
+    },
+    errorProps: { id, alert: about === null },
+    describedBy: error ? id : undefined,
+    onChange: () => setMarked(false),
+    field: (name: string) => ({
+      ref: (el: HTMLElement | null) => {
+        fields.current[name] = el
+      },
+      'aria-invalid': marked && about === name ? (true as const) : undefined,
+      'aria-describedby': marked && about === name ? id : undefined,
+    }),
+  }
 }
 
 /** Copy `text`, and say so for two seconds. */
