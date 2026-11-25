@@ -11,7 +11,8 @@ import { countedFlags, measurementLabel, type Family } from './util'
 import { setCursor, subscribeCursor } from './crosshair'
 import { chartSummary, positionalTitle, replyLines } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt, stepRow } from './layout'
-import { useRenderWorker, useWidth, StatusDot, ErrorText, Hint } from './shared'
+import { useRenderWorker, useWidth, StatusDot, ErrorText, Hint, downloadCSV } from './shared'
+import { csvFileName, roundTripRows } from './seriesCSV'
 
 interface Props {
   target: Target
@@ -44,9 +45,11 @@ interface RowIndex {
   received: Float64Array
   icmpErrors: (number | null)[]
   sendErrors: (number | null)[]
+  flags: Uint8Array
+  lossPositions: (number[] | null)[]
   span: number
   /** A pooled read: each row is a pixel column [ts, ends), of `rounds` intervals. */
-  pooled?: { ends: Float64Array; rounds: Float64Array }
+  pooled?: { ends: Float64Array; rounds: Float64Array; positional: Float64Array }
 }
 
 /**
@@ -240,6 +243,7 @@ export default function Plot({
   rangeRef.current = { from, to }
   const [quality, setQuality] = useState<Badge[]>([])
   const [rowCount, setRowCount] = useState(0)
+  const [hasRows, setHasRows] = useState(false)
   const [summary, setSummary] = useState('')
   // Set only when the measurements fetch itself failed — not when it
   // succeeded with zero rows, which is a legitimate (and different) thing to
@@ -401,8 +405,14 @@ export default function Plot({
           received: series.received.slice(),
           icmpErrors: series.icmpErrors,
           sendErrors: series.sendErrors,
+          flags: series.flags.slice(),
+          lossPositions: series.lossPositions,
           span: inferSpan(series.ts, n),
-          pooled: series.pooled && { ends: series.pooled.ends.slice(), rounds: series.pooled.rounds.slice() },
+          pooled: series.pooled && {
+            ends: series.pooled.ends.slice(),
+            rounds: series.pooled.rounds.slice(),
+            positional: series.pooled.positional.slice(),
+          },
         }
         for (let i = 0; i < n; i++) {
           const a = series.offsets[i]
@@ -414,6 +424,7 @@ export default function Plot({
           rows.loss[i] = series.sent[i] > 0 ? 1 - series.received[i] / series.sent[i] : NaN
         }
         rowsRef.current = rows
+        setHasRows(n > 0)
         let intervals = n
         if (rows.pooled) intervals = rows.pooled.rounds.reduce((a, b) => a + b, 0)
         setSummary(
@@ -467,6 +478,7 @@ export default function Plot({
         // isn't. Blank the density canvas and say the fetch failed instead of
         // a wrong-but-plausible-looking plot.
         rowsRef.current = null
+        setHasRows(false)
         setRowCount(0)
         setQuality([])
         setFetchError(e.message)
@@ -551,6 +563,19 @@ export default function Plot({
     if (live) live.textContent = linesRef.current?.join(', ') ?? ''
   }
 
+  const exportCSV = () => {
+    const rows = rowsRef.current
+    if (!rows) return
+    downloadCSV(
+      csvFileName([target.title ?? target.path, family, agentName], from, to),
+      roundTripRows(
+        rows,
+        [...FLAGS, { bit: FLAG_ICMP_ERROR, label: 'ICMP errors' }],
+        Number(target.settings.interval_s.effective) || 0,
+      ),
+    )
+  }
+
   const onBlur = () => {
     if (!keyedRef.current) return
     keyedRef.current = false
@@ -581,9 +606,12 @@ export default function Plot({
             {rowCount > 0 && q.count < rowCount && <> ({q.count}/{rowCount})</>}
           </Hint>
         ))}
+        <span className="spacer" />
+        <button className="pill" onClick={exportCSV} disabled={!hasRows} aria-label={`Download ${plotName} as CSV`}>
+          CSV
+        </button>
         {onOpenDetail && (
           <>
-            <span className="spacer" />
             <button className="pill" onClick={onOpenDetail} aria-label={`Detail: ${target.title ?? target.path}`}>
               Detail <span aria-hidden="true">→</span>
             </button>

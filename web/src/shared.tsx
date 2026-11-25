@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react'
-import { refreshMs, zoomOut } from './util'
+import { csvCell, refreshMs, zoomOut } from './util'
 
 /**
  * The reload / run-a-mutation / busy / error shape the admin screens share.
@@ -398,4 +398,15 @@ export function StatusDot({ className = 'dot', background, label }: { className?
       <span className="visually-hidden">{label}</span>
     </>
   )
+}
+
+/** Offers rows as a CSV file download. */
+export function downloadCSV(filename: string, rows: (string | number)[][]) {
+  const text = rows.map((r) => r.map(csvCell).join(',')).join('\n')
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
