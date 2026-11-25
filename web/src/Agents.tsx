@@ -290,14 +290,7 @@ function TokenRow({
       <td>{state !== 'unspent' && <span className="badge">{state}</span>}</td>
       <td>
         {state === 'unspent' && !readOnly && (
-          <button
-            className="pill danger"
-            aria-label={`Revoke ${token.name}`}
-            disabled={busy}
-            onClick={() => void onRevoke()}
-          >
-            Revoke
-          </button>
+          <ConfirmButton busy={busy} label="Revoke" subject={token.name} onConfirm={onRevoke} />
         )}
       </td>
     </tr>

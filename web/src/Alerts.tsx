@@ -304,14 +304,14 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                             Capture reference
                           </button>
                           {baselines.some((b) => b.rule_id === r.id) && (
-                            <button
-                              className="pill"
-                              aria-label={`Clear reference of ${r.name}`}
-                              title="Drop the captured reference; the rule then has nothing to compare against and stays quiet"
-                              onClick={() => void run(() => clearBaseline(r.id), `Reference cleared for rule ${r.name}`)}
-                            >
-                              Clear
-                            </button>
+                            <ConfirmButton
+                              busy={busy}
+                              label="Clear"
+                              confirmLabel="Confirm clear reference"
+                              subject={`reference of ${r.name}`}
+                              confirmSubject={`of ${r.name}`}
+                              onConfirm={() => run(() => clearBaseline(r.id), `Reference cleared for rule ${r.name}`)}
+                            />
                           )}
                         </>
                       )}
