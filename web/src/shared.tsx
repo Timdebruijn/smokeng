@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react'
 import { refreshMs, zoomOut } from './util'
 
 /**
@@ -19,6 +19,26 @@ export function keepInView(el: HTMLElement | null) {
   if (!el) return
   const over = 8 - el.getBoundingClientRect().left
   if (over > 0) el.style.right = `${-over}px`
+}
+
+/**
+ * Text that explains a label or badge, reachable by keyboard and touch where a
+ * title attribute is not. The children become a button that opens a native
+ * popover; the browser centres it in the window, so it is never cut off, and
+ * handles Esc and a press outside. `className` styles the button.
+ */
+export function Hint({ text, className, children }: { text: string; className?: string; children: ReactNode }) {
+  const id = useId()
+  return (
+    <>
+      <button type="button" className={className ? `hint-button ${className}` : 'hint-button'} popoverTarget={id}>
+        {children}
+      </button>
+      <div id={id} popover="auto" className="hint-pop">
+        {text}
+      </div>
+    </>
+  )
 }
 
 export function useAction(load: () => Promise<void>) {
@@ -223,18 +243,18 @@ export function Stat({
   label,
   value,
   sub,
-  title,
+  hint,
   tone,
 }: {
   label: string
   value: string
   sub?: string
-  title?: string
+  hint?: string
   tone?: 'bad' | 'warn'
 }) {
   return (
-    <div className="card stat" title={title}>
-      <p className="stat-label">{label}</p>
+    <div className="card stat">
+      <div className="stat-label">{hint ? <Hint text={hint}>{label}</Hint> : label}</div>
       <p className="stat-value">
         <span className={tone}>{value}</span>
         {sub && <span className="stat-sub">{sub}</span>}
