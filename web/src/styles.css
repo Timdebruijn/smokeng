@@ -1150,6 +1150,23 @@ html {
   flex: none;
 }
 
+/* The colour is set inline from --good, --warn, --bad or --dim, so the shape is
+   keyed on that value and every dot for a state looks the same wherever it is
+   drawn: circle healthy, triangle warning, square bad, ring no data. */
+.dot[style*="--warn"] {
+  border-radius: 0;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.dot[style*="--bad"],
+.dot.firing {
+  border-radius: 0;
+}
+
+.dot[style*="--dim"] {
+  mask: radial-gradient(circle, transparent 2px, #000 2.5px);
+}
+
 /* ── Target detail ─────────────────────────────────────────────────────── */
 
 .detail-head {
