@@ -1205,6 +1205,30 @@ html {
   margin-bottom: 8px;
 }
 
+/* The title is an h2 around the button; it renders as the bare button did. */
+.plot-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Lists that keep the look of the divs they replaced. The role is restated
+   because Safari drops it from a list with list-style: none. */
+.plain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* One dd per row, laid out as the three spans were in the flex row. */
+.setting-line dd {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+}
+
 .dot {
   width: 9px;
   height: 9px;
