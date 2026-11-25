@@ -60,6 +60,7 @@ export default function Bell({
   const ack = async (a: FiringAlert) => {
     await acknowledgeAlert(a, !a.acked)
     await poll() // reflect the new state at once rather than waiting 30s
+    announce(`${a.acked ? 'Unacknowledged' : 'Acknowledged'} ${alertName(a)}`)
   }
 
   // The badge counts what still needs attention: alerts that are neither

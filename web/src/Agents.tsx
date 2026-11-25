@@ -90,9 +90,9 @@ export default function Agents({
                   agent={a}
                   readOnly={readOnly}
                   busy={busy}
-                  onRename={(name) => run(() => updateAgent(a.id, { name }))}
-                  onToggle={() => run(() => updateAgent(a.id, { enabled: !a.enabled }))}
-                  onRemove={() => run(() => deleteAgent(a.id))}
+                  onRename={(name) => run(() => updateAgent(a.id, { name }), `Agent renamed to ${name}`)}
+                  onToggle={() => run(() => updateAgent(a.id, { enabled: !a.enabled }), `Agent ${a.name} ${a.enabled ? 'disabled' : 'enabled'}`)}
+                  onRemove={() => run(() => deleteAgent(a.id), `Agent ${a.name} deleted`)}
                 />
               ))}
             </tbody>
@@ -105,7 +105,7 @@ export default function Agents({
               busy={busy}
               onCancel={() => setAdding(false)}
               onSubmit={async (name, ttlS) => {
-                const err = await attempt(async () => setMinted(await createAgentToken(name, ttlS)))
+                const err = await attempt(async () => setMinted(await createAgentToken(name, ttlS)), `Token ${name} created`)
                 if (!err) setAdding(false)
                 return err
               }}
@@ -152,7 +152,7 @@ export default function Agents({
                   agentName={agentName(t.agent_id)}
                   readOnly={readOnly}
                   busy={busy}
-                  onRevoke={() => run(() => deleteAgentToken(t.id))}
+                  onRevoke={() => run(() => deleteAgentToken(t.id), `Token ${t.name} revoked`)}
                 />
               ))}
             </tbody>

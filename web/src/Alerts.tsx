@@ -86,7 +86,8 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
   const refresh = useCallback(() => void reload(), [reload])
   const { live, toggleLive } = useLiveRefresh(refresh, REFRESH_MS)
 
-  const ackAlert = (a: FiringAlert) => run(() => acknowledgeAlert(a, !a.acked))
+  const ackAlert = (a: FiringAlert) =>
+    run(() => acknowledgeAlert(a, !a.acked), `${a.acked ? 'Unacknowledged' : 'Acknowledged'} ${alertName(a)}`)
 
   const pathOf = (id: number) => targets.find((t) => t.id === id)?.path ?? `target ${id}`
 
@@ -195,6 +196,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                                   duration_s,
                                   reason: `silenced from the firing list`,
                                 }),
+                                `Silenced ${alertName(a)}`,
                               )
                             }
                           />
@@ -287,7 +289,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                       <button
                         className="pill"
                         aria-label={`${r.enabled ? 'Disable' : 'Enable'} ${r.name}`}
-                        onClick={() => void run(() => updateAlertRule(r.id, { enabled: !r.enabled }))}
+                        onClick={() => void run(() => updateAlertRule(r.id, { enabled: !r.enabled }), `Rule ${r.name} ${r.enabled ? 'disabled' : 'enabled'}`)}
                       >
                         {r.enabled ? 'Disable' : 'Enable'}
                       </button>
@@ -297,7 +299,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                             className="pill"
                             aria-label={`Capture reference for ${r.name}`}
                             title="Capture the last hour as this rule's reference — what the path looks like when it is healthy"
-                            onClick={() => void run(() => captureBaseline(r.id, {}))}
+                            onClick={() => void run(() => captureBaseline(r.id, {}), `Reference captured for rule ${r.name}`)}
                           >
                             Capture reference
                           </button>
@@ -306,14 +308,14 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
                               className="pill"
                               aria-label={`Clear reference of ${r.name}`}
                               title="Drop the captured reference; the rule then has nothing to compare against and stays quiet"
-                              onClick={() => void run(() => clearBaseline(r.id))}
+                              onClick={() => void run(() => clearBaseline(r.id), `Reference cleared for rule ${r.name}`)}
                             >
                               Clear
                             </button>
                           )}
                         </>
                       )}
-                      <ConfirmButton busy={busy} label="Delete" subject={r.name} onConfirm={() => run(() => deleteAlertRule(r.id))} />
+                      <ConfirmButton busy={busy} label="Delete" subject={r.name} onConfirm={() => run(() => deleteAlertRule(r.id), `Rule ${r.name} deleted`)} />
                     </td>
                   )}
                 </tr>
@@ -334,7 +336,7 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
               targets={targets}
               onCancel={() => setAdding(false)}
               onSubmit={async (body) => {
-                const err = await attempt(() => createAlertRule(body))
+                const err = await attempt(() => createAlertRule(body), `Rule ${body.name} created`)
                 if (!err) setAdding(false)
                 return err
               }}
@@ -351,8 +353,8 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
       <SilencesSection
         silences={silences}
         targets={targets}
-        onCreate={(body) => attempt(() => createSilence(body))}
-        onCancel={(id) => run(() => deleteSilence(id))}
+        onCreate={(body) => attempt(() => createSilence(body), 'Silence created')}
+        onCancel={(id) => run(() => deleteSilence(id), 'Silence cancelled')}
         busy={busy}
       />
 
