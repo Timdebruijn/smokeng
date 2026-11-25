@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { chartSummary, compareSummary, fmtPositions, positionalTitle, replyLines } from './format.ts'
+import { chartSummary, compareSummary, errorField, fmtPositions, positionalTitle, replyLines } from './format.ts'
 
 test('a plot says what it shows: window, typical and highest median, loss', () => {
   const base = { name: 'router v4', when: '10:00 – 11:00' }
@@ -64,4 +64,26 @@ test('the readout says no data for an interval that sent nothing, and the replie
   assert.deepEqual(replyLines(0, 0, NaN, NaN), ['no data'])
   assert.deepEqual(replyLines(10, 10, 2500, 0), ['median 2.5ms', '10/10 replies'])
   assert.deepEqual(replyLines(10, 0, NaN, 1), ['no reply', '0/10 replies · 100.0% loss'])
+})
+
+test('a server error marks the field it names, and nothing when it names none', () => {
+  assert.equal(errorField('target', 'tree: name "a/b" must not contain a slash'), 'name')
+  assert.equal(errorField('target', 'tree: duplicate sibling name "core" under target 3'), 'name')
+  // As the running server sends it: wrapped in the node it is about.
+  assert.equal(errorField('target', 'target 8 (a/b): tree: name "a/b" must not contain a slash'), 'name')
+  assert.equal(errorField('target', 'target 8 (x): tree: host and address_family must be set together'), null)
+  assert.equal(errorField('target', 'tree: host "not a host!!" contains \' \', which is not part of a DNS name'), 'host')
+  assert.equal(errorField('target', 'tree: address_family both needs a hostname, and host "192.0.2.1" is an IP address'), 'family')
+  // Names two fields: no field is marked.
+  assert.equal(errorField('target', 'tree: host and address_family must be set together (a node with neither is a group)'), null)
+  assert.equal(errorField('target', 'tree: 600 targets is more than the 500 smokeng will hold'), null)
+  assert.equal(errorField('rule', 'alert: name is required'), 'name')
+  assert.equal(errorField('rule', 'alert: `for_intervals` must be at least 1 interval'), 'for')
+  assert.equal(errorField('rule', 'alert: `clear_intervals` must be at least 1 interval'), 'clear')
+  assert.equal(errorField('rule', 'alert: loss threshold must be a percentage between 0 and 100'), 'threshold')
+  assert.equal(errorField('silence', 'a silence needs an end after its start: set ends_at, or duration_s'), 'end')
+  assert.equal(errorField('grant', 'store: a grant needs a group name'), 'group')
+  assert.equal(errorField('agent', 'an agent named "edge-1" already exists'), 'name')
+  assert.equal(errorField('agent', 'an enrolment token may not live longer than 24 hours'), null)
+  assert.equal(errorField('agent', 'internal error'), null)
 })

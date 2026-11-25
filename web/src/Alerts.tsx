@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { ConfirmButton, useAction, useLiveRefresh, useParkedFocus, LivePill, StatusDot, ErrorText } from './shared'
+import { ConfirmButton, useAction, useFormError, useLiveRefresh, useParkedFocus, LivePill, StatusDot, ErrorText } from './shared'
 import { afterName, alertKey, alertName, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -617,8 +617,7 @@ function SilenceForm({
   const [startsAt, setStartsAt] = useState('')
   const [endsAt, setEndsAt] = useState('')
   const [reason, setReason] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const errId = useId()
+  const { error, setError, errorProps, describedBy, onChange, field } = useFormError('silence')
 
   const submit = async () => {
     const body: Parameters<typeof createSilence>[0] = { reason }
@@ -636,6 +635,7 @@ function SilenceForm({
   return (
     <form
       className="card rule-form"
+      onChange={onChange}
       onSubmit={(e) => {
         e.preventDefault()
         submit()
@@ -670,6 +670,7 @@ function SilenceForm({
               required
               value={durationH}
               onChange={(e) => setDurationH(e.target.value)}
+              {...field('end')}
             />
             <span className="unit">hours</span>
           </span>
@@ -693,6 +694,7 @@ function SilenceForm({
               min={startsAt || undefined}
               onChange={(e) => setEndsAt(e.target.value)}
               required
+              {...field('end')}
             />
           </label>
         </>
@@ -705,9 +707,9 @@ function SilenceForm({
           placeholder="e.g. planned upgrade of the DB cluster"
         />
       </label>
-      {error && <ErrorText id={errId}>{error}</ErrorText>}
+      {error && <ErrorText {...errorProps}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined}>
+        <button className="pill accent" type="submit" aria-describedby={describedBy}>
           Schedule
         </button>
         <button className="pill" type="button" onClick={onCancel}>
@@ -801,8 +803,7 @@ function RuleForm({
   onCancel: () => void
 }) {
   const id = useId()
-  const errId = useId()
-  const [error, setError] = useState<string | null>(null)
+  const { error, setError, errorProps, describedBy, onChange, field } = useFormError('rule')
   const [name, setName] = useState('')
   const [targetId, setTargetId] = useState<number>(targets[0]?.id ?? 1)
   const [metric, setMetric] = useState<AlertRule['metric']>('loss')
@@ -819,6 +820,7 @@ function RuleForm({
   return (
     <form
       className="card rule-form"
+      onChange={onChange}
       onSubmit={(e) => {
         e.preventDefault()
         setError(null)
@@ -841,7 +843,7 @@ function RuleForm({
     >
       <label className="field">
         <span>Name <span className="note">(required)</span></span>
-        <input value={name} autoFocus onChange={(e) => setName(e.target.value)} required />
+        <input value={name} autoFocus onChange={(e) => setName(e.target.value)} required {...field('name')} />
       </label>
       <label className="field">
         <span>Applies to</span>
@@ -881,6 +883,7 @@ function RuleForm({
                     value={threshold}
                     onChange={(e) => setThreshold(e.target.value)}
                     required
+                    {...field('threshold')}
                   />
                   <span className="unit">{unit}</span>
                 </>
@@ -905,6 +908,7 @@ function RuleForm({
                 value={threshold}
                 onChange={(e) => setThreshold(e.target.value)}
                 required
+                {...field('threshold')}
               />
               <span className="unit">{unit}</span>
             </>
@@ -944,6 +948,7 @@ function RuleForm({
             required
             value={forIntervals}
             onChange={(e) => setForIntervals(e.target.value)}
+            {...field('for')}
           />
           <span className="unit">consecutive intervals, clearing after</span>
           <input
@@ -953,6 +958,7 @@ function RuleForm({
             required
             value={clearIntervals}
             onChange={(e) => setClearIntervals(e.target.value)}
+            {...field('clear')}
           />
         </span>
       </div>
@@ -967,9 +973,9 @@ function RuleForm({
           <option value="info">info</option>
         </select>
       </label>
-      {error && <ErrorText id={errId}>{error}</ErrorText>}
+      {error && <ErrorText {...errorProps}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined}>
+        <button className="pill accent" type="submit" aria-describedby={describedBy}>
           Create
         </button>
         <button className="pill" type="button" onClick={onCancel}>

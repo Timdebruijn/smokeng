@@ -14,7 +14,7 @@ import {
   type SettingValue,
   type Target,
 } from './api'
-import { ConfirmButton, useAction, ErrorText, announce } from './shared'
+import { ConfirmButton, useAction, useFormError, ErrorText, announce } from './shared'
 import { orderedTargets } from './util'
 
 interface SettingDef {
@@ -722,11 +722,11 @@ function AddChildForm({
   const [name, setName] = useState('')
   const [host, setHost] = useState('')
   const [family, setFamily] = useState('v4')
-  const [error, setError] = useState<string | null>(null)
-  const errId = useId()
+  const { error, setError, errorProps, describedBy, onChange, field } = useFormError('target')
   return (
     <form
       className="add-child"
+      onChange={onChange}
       onSubmit={async (e) => {
         e.preventDefault()
         setError(null)
@@ -737,21 +737,21 @@ function AddChildForm({
         <span>
           Name <span className="note">(required)</span>
         </span>
-        <input placeholder="core-router" autoFocus value={name} onChange={(e) => setName(e.target.value)} required />
+        <input placeholder="core-router" autoFocus value={name} onChange={(e) => setName(e.target.value)} required {...field('name')} />
       </label>
       <label>
         <span>
           Host <span className="note">(leave empty to create a group)</span>
         </span>
-        <input placeholder="192.0.2.1 or example.org" value={host} onChange={(e) => setHost(e.target.value)} />
+        <input placeholder="192.0.2.1 or example.org" value={host} onChange={(e) => setHost(e.target.value)} {...field('host')} />
       </label>
-      <select aria-label="Address family" value={family} onChange={(e) => setFamily(e.target.value)} disabled={!host}>
+      <select aria-label="Address family" value={family} onChange={(e) => setFamily(e.target.value)} disabled={!host} {...field('family')}>
         <option value="v4">v4</option>
         <option value="v6">v6</option>
         <option value="both">v4 + v6</option>
       </select>
-      {error && <ErrorText id={errId}>{error}</ErrorText>}
-      <button type="submit" aria-describedby={error ? errId : undefined} disabled={busy}>
+      {error && <ErrorText {...errorProps}>{error}</ErrorText>}
+      <button type="submit" aria-describedby={describedBy} disabled={busy}>
         Create
       </button>
       <button type="button" onClick={onCancel} disabled={busy}>

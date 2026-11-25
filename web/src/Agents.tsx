@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createAgentToken,
   deleteAgent,
@@ -10,7 +10,7 @@ import {
   type AgentToken,
   type NewAgentToken,
 } from './api'
-import { ConfirmButton, StatusDot, useAction, useCopy, ErrorText } from './shared'
+import { ConfirmButton, StatusDot, useAction, useFormError, useCopy, ErrorText } from './shared'
 
 const TTL_OPTIONS: { seconds: number; label: string }[] = [
   { seconds: 900, label: '15 minutes' },
@@ -305,11 +305,11 @@ function AddAgentForm({
 }) {
   const [name, setName] = useState('')
   const [ttlS, setTtlS] = useState(3600)
-  const [error, setError] = useState<string | null>(null)
-  const errId = useId()
+  const { error, setError, errorProps, describedBy, onChange, field } = useFormError('agent')
   return (
     <form
       className="card rule-form"
+      onChange={onChange}
       onSubmit={async (e) => {
         e.preventDefault()
         setError(null)
@@ -318,7 +318,7 @@ function AddAgentForm({
     >
       <label className="field">
         <span>Name <span className="note">(required)</span></span>
-        <input value={name} autoFocus onChange={(e) => setName(e.target.value)} required />
+        <input value={name} autoFocus onChange={(e) => setName(e.target.value)} required {...field('name')} />
       </label>
       <label className="field">
         <span>Token expires in</span>
@@ -330,9 +330,9 @@ function AddAgentForm({
           ))}
         </select>
       </label>
-      {error && <ErrorText id={errId}>{error}</ErrorText>}
+      {error && <ErrorText {...errorProps}>{error}</ErrorText>}
       <div className="pill-row">
-        <button className="pill accent" type="submit" aria-describedby={error ? errId : undefined} disabled={busy}>
+        <button className="pill accent" type="submit" aria-describedby={describedBy} disabled={busy}>
           Create token
         </button>
         <button className="pill" type="button" disabled={busy} onClick={onCancel}>
