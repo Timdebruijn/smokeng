@@ -54,9 +54,50 @@ test('the first Compare line is solid and no two of the eight share a colour or 
 })
 
 test('the Compare cursor visits a column one series lacks and reads it as no data, not zero', () => {
-  const a = { label: 'A', ts: [0, 60, 120, 180, 240, 300], med: [10000, null, 14000, 9000, 8000, 7000] }
-  const b = { label: 'B', ts: [0, 60, 120, 180, 300], med: [5000, 6000, 7000, 8000, 9000] }
+  const a = { label: 'A', ts: [0, 60, 120, 180, 240, 300], med: [10000, null, 14000, 9000, 8000, 7000], sent: [20, 20, 20, 20, 20, 20] }
+  const b = { label: 'B', ts: [0, 60, 120, 180, 300], med: [5000, 6000, 7000, 8000, 9000], sent: [20, 20, 20, 20, 20] }
   assert.deepEqual(compareColumns([a.ts, b.ts]), [0, 60, 120, 180, 240, 300])
   assert.ok(compareReadout(240, [a, b]).endsWith(' · A: median 8.0ms · B: no data'))
   assert.ok(compareReadout(60, [a, b]).endsWith(' · A: no replies · B: median 6.0ms'))
+})
+
+test('the Compare columns are ascending when the series do not start in order', () => {
+  assert.deepEqual(compareColumns([[120, 180], [0, 60, 120]]), [0, 60, 120, 180])
+})
+
+test('the Compare readout tells a median, no replies, nothing sent and no row apart', () => {
+  const s = { label: 'S', ts: [60, 120, 180], med: [4000, null, null], sent: [20, 20, 0] }
+  assert.ok(compareReadout(60, [s]).endsWith(' · S: median 4.0ms'))
+  assert.ok(compareReadout(120, [s]).endsWith(' · S: no replies'))
+  assert.ok(compareReadout(180, [s]).endsWith(' · S: no data'))
+  // Before the series' first row, and past the end of its last interval.
+  assert.ok(compareReadout(0, [s]).endsWith(' · S: no data'))
+  assert.ok(compareReadout(240, [s]).endsWith(' · S: no data'))
+})
+
+// WCAG 2.x contrast ratio of two #rrggbb colours.
+function contrast(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(bl)
+  }
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+test('each Compare line is at least 3:1 against the card, in both themes', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+  const pair = (prop: string) => {
+    const m = css.match(new RegExp(`${prop}: light-dark\\((#\\w{6}), (#\\w{6})\\);`))
+    assert.ok(m, `${prop} is not a light-dark() pair of #rrggbb`)
+    return [m[1], m[2]]
+  }
+  const [cardLight, cardDark] = pair('--card')
+  assert.ok(Math.abs(contrast('#000000', '#ffffff') - 21) < 1e-9)
+  for (let i = 0; i < 8; i++) {
+    const [light, dark] = pair(lineStyle(i).prop)
+    assert.ok(contrast(light, cardLight) >= 3, `${lineStyle(i).prop} light: ${contrast(light, cardLight).toFixed(2)}`)
+    assert.ok(contrast(dark, cardDark) >= 3, `${lineStyle(i).prop} dark: ${contrast(dark, cardDark).toFixed(2)}`)
+  }
 })

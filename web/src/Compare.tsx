@@ -36,7 +36,7 @@ export interface CompareSeries {
  * One bucket's pooled median, or null where the interval has no samples; gap
  * marks a row that follows a stretch with no rows at all.
  */
-type Medians = { ts: Float64Array; med: (number | null)[]; gap: boolean[] }
+type Medians = { ts: Float64Array; med: (number | null)[]; sent: Float64Array; gap: boolean[] }
 
 function medians(s: Series): Medians {
   const med = Array.from(s.ts, (_, i) => {
@@ -48,7 +48,7 @@ function medians(s: Series): Medians {
     // Samples arrive sorted, which is what the storage format guarantees.
     return s.values[start + ((end - start) >> 1)]
   })
-  return { ts: s.ts, med, gap: gapsBefore(s.ts) }
+  return { ts: s.ts, med, sent: s.sent, gap: gapsBefore(s.ts) }
 }
 
 export default function Compare({
@@ -66,6 +66,8 @@ export default function Compare({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [data, setData] = useState<Map<string, Medians>>(new Map())
+  // The window `data` was fetched for; the props move on before the next fetch lands.
+  const [dataRange, setDataRange] = useState<{ from: number; to: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   // The canvas is width:100%, so its box changes without any of the draw
   // effect's data dependencies changing — a sidebar toggle, a window resize,
@@ -92,6 +94,7 @@ export default function Compare({
     label: s.label,
     ts: data.get(s.key)?.ts ?? [],
     med: data.get(s.key)?.med ?? [],
+    sent: data.get(s.key)?.sent ?? [],
   }))
   const readout = at === null ? null : compareReadout(at, lines)
   // Every series' columns, so one series' gap does not make the cursor skip.
@@ -144,6 +147,7 @@ export default function Compare({
         else failed++
       }
       setData(next)
+      setDataRange({ from, to })
       setError(failed > 0 ? `${failed} of ${pairs.length} series could not be read` : null)
     })
     return () => {
@@ -281,11 +285,13 @@ export default function Compare({
   // Only the series that were read: one that failed has no column, rather than
   // an empty one that would read as "no replies".
   const read = series.filter((s) => data.has(s.key))
-  const exportCSV = () =>
+  const exportCSV = () => {
+    if (!dataRange) return
     downloadCSV(
-      csvFileName(['compare'], from, to),
-      compareRows(read.map((s) => ({ label: s.label, ts: data.get(s.key)!.ts, med: data.get(s.key)!.med }))),
+      csvFileName(['compare'], dataRange.from, dataRange.to),
+      compareRows(read.map((s) => ({ label: s.label, ...data.get(s.key)! }))),
     )
+  }
 
   return (
     <div className="card compare">
@@ -330,7 +336,7 @@ export default function Compare({
           role="img"
           aria-label={compareSummary(
             `${fmtWhen(from)} – ${fmtWhen(to)}`,
-            series.map((s) => ({ label: s.label, medians: data.get(s.key)?.med ?? [] })),
+            series.map((s) => ({ label: s.label, medians: data.get(s.key)?.med ?? [], sent: data.get(s.key)?.sent ?? [] })),
           )}
         />
         <div ref={liveRef} className="visually-hidden" aria-live="polite" />

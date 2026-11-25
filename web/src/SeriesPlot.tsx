@@ -51,6 +51,8 @@ export default function SeriesPlot({
     /** 1 where the interval measured this series at all; see ExtraSeries. */
     measured: Uint8Array
     span: number
+    /** The window these rows were fetched for, which the props may have left since. */
+    range: { from: number; to: number }
     /** A pooled read: where each column ends. */
     ends?: Float64Array
   } | null>(null)
@@ -124,6 +126,7 @@ export default function SeriesPlot({
           median,
           measured: ex.measured.slice(),
           span: inferSpan(s.ts, n),
+          range: { from, to },
           ends: s.pooled?.ends.slice(),
         }
         setState('ok')
@@ -282,7 +285,7 @@ export default function SeriesPlot({
 
   const exportCSV = () => {
     const rows = rowsRef.current
-    if (rows) downloadCSV(csvFileName([targetName, family, name], from, to), extraSeriesRows(rows))
+    if (rows) downloadCSV(csvFileName([targetName, family, name], rows.range.from, rows.range.to), extraSeriesRows(rows))
   }
 
   return (

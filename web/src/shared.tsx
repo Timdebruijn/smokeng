@@ -107,7 +107,11 @@ export function announce(text: string) {
   setTimeout(() => setAnnouncement(text), 50)
 }
 
-/** The one live region `announce` writes to; render it once, always. */
+/**
+ * The live region `announce` writes to. The page renders one, always, and so
+ * does every modal: an open modal makes the rest of the page inert, and a
+ * status region in inert content is not read out.
+ */
 export function Announcer() {
   const text = useSyncExternalStore(
     (f) => {
@@ -303,6 +307,7 @@ export function Modal({
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       {children}
+      <Announcer />
     </dialog>
   )
 }
