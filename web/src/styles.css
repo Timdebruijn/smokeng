@@ -411,6 +411,12 @@ main:focus {
 
 .field.checkbox {
   grid-template-columns: auto 1fr;
+  min-height: 24px;
+  padding: 2px 0;
+}
+
+.note {
+  color: var(--dim);
 }
 
 .field input[type='text'],
@@ -495,7 +501,14 @@ main:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  align-items: center;
+  align-items: flex-end;
+}
+
+.add-child label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
 }
 
 .hint {
