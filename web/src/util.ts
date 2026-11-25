@@ -51,11 +51,20 @@ export const RANGES: { label: string; seconds: number }[] = [
   { label: '30d', seconds: 30 * 86400 },
 ]
 
-/** 21600 -> "6 hours": the spoken form of a RANGES button. */
+/**
+ * 21600 -> "6 hours": the spoken form of a window's length, exact to the
+ * second. A RANGES button comes out as one unit; a window reached by zooming
+ * out says every unit it has: 4440 -> "1 hour 14 minutes".
+ */
 export function rangeWords(seconds: number): string {
-  const [n, unit] =
-    seconds >= 86400 ? [seconds / 86400, 'day'] : seconds >= 3600 ? [seconds / 3600, 'hour'] : [seconds / 60, 'minute']
-  return `${n} ${unit}${n === 1 ? '' : 's'}`
+  let rest = Math.round(seconds)
+  const parts: string[] = []
+  for (const [size, unit] of [[86400, 'day'], [3600, 'hour'], [60, 'minute'], [1, 'second']] as const) {
+    const n = Math.floor(rest / size)
+    rest -= n * size
+    if (n) parts.push(`${n} ${unit}${n === 1 ? '' : 's'}`)
+  }
+  return parts.join(' ') || '0 seconds'
 }
 
 /**

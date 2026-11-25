@@ -15,7 +15,6 @@ import Plot from './Plot'
 import { fetchAgents, fetchMe, fetchTargets, logout, type AgentInfo, type Me, type Target } from './api'
 import {
   RANGES,
-  rangeWords,
   filterByFamily,
   fromLocalInput,
   resolveSeries,
@@ -429,10 +428,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
                 key={r.label}
                 className={!zoom && r.seconds === rangeS ? 'pill active' : 'pill'}
                 aria-pressed={!zoom && r.seconds === rangeS}
-                onClick={() => {
-                  pickRange(r.seconds)
-                  announce(`Window: last ${rangeWords(r.seconds)}`)
-                }}
+                onClick={() => pickRange(r.seconds)}
               >
                 {r.label}
               </button>

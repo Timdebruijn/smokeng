@@ -322,4 +322,9 @@ test('screenTitle names every screen, detail after its target', () => {
 
 test('rangeWords speaks a range button', () => {
   assert.deepEqual(RANGES.map((r) => rangeWords(r.seconds)), ['15 minutes', '1 hour', '6 hours', '1 day', '7 days', '30 days'])
+  // Twice a custom window of 37 minutes, as zooming out makes it: not rounded.
+  assert.equal(rangeWords(4440), '1 hour 14 minutes')
+  assert.equal(rangeWords(7200), '2 hours')
+  assert.equal(rangeWords(10), '10 seconds')
+  assert.equal(rangeWords(90061), '1 day 1 hour 1 minute 1 second')
 })

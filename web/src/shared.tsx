@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react'
-import { csvCell, refreshMs, zoomOut } from './util'
+import { csvCell, rangeWords, refreshMs, zoomOut } from './util'
+import { fmtWhen } from './layout'
 import { errorField, type ErrorForm } from './format'
 
 /**
@@ -441,15 +442,24 @@ export function useTimeWindow(initialRangeS = 3600) {
     return [now - rangeS, now]
   }, [rangeS, refreshKey, zoom])
 
+  // Every way of choosing a window says which window it is now: a range
+  // button, a custom range, a drag on a plot, zooming out and resetting. It
+  // says what was chosen, not that the plots have loaded.
   const pickRange = (seconds: number) => {
     setZoom(null)
     setRangeS(seconds)
+    announce(`Window: last ${rangeWords(seconds)}`)
+  }
+
+  const zoomTo = (z: { from: number; to: number } | null) => {
+    setZoom(z)
+    announce(z ? `Window: ${fmtWhen(z.from)} to ${fmtWhen(z.to)}` : `Window: last ${rangeWords(rangeS)}`)
   }
 
   const onZoomOut = () => {
     const next = zoomOut(from, to, Math.floor(Date.now() / 1000))
     if ('rangeS' in next) pickRange(next.rangeS)
-    else setZoom(next)
+    else zoomTo(next)
   }
 
   const toggleLive = () => {
@@ -458,7 +468,7 @@ export function useTimeWindow(initialRangeS = 3600) {
     setLive(!live)
   }
 
-  return { rangeS, from, to, refreshKey, live: live && !zoom, zoom, setZoom, pickRange, onZoomOut, toggleLive }
+  return { rangeS, from, to, refreshKey, live: live && !zoom, zoom, setZoom: zoomTo, pickRange, onZoomOut, toggleLive }
 }
 
 /** The live/paused toggle every self-refreshing screen shows (WCAG 2.2.2). */
