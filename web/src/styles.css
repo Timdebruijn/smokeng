@@ -1726,9 +1726,7 @@ dialog.modal-host::backdrop {
 }
 
 .compare-swatch {
-  width: 0.7rem;
-  height: 0.2rem;
-  border-radius: 2px;
+  flex: none;
 }
 
 .compare-canvas {
@@ -1969,7 +1967,8 @@ dialog.modal-host::backdrop {
 @media (forced-colors: active) {
   /* Status dots and legend swatches are filled shapes; system colours would
      replace the fill and hide them. Keep the fill and add an outline in a
-     system colour. The compare line samples are all fill, so they only keep it. */
+     system colour. The compare line samples are strokes, so they only keep
+     their colour. */
   .dot,
   .swatch {
     border: 1px solid CanvasText;

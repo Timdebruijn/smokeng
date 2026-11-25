@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { gapsBefore, stepRow } from './layout.ts'
+import { gapsBefore, lineStyle, stepRow } from './layout.ts'
 
 test('the keyboard steps one row, stops at the ends and starts from the right side', () => {
   assert.equal(stepRow('ArrowRight', 2, 5), 3)
@@ -34,4 +34,12 @@ test('a pooled read with fewer intervals than columns joins neighbours', () => {
   // Pooled for its sample count: one 300 s interval per 100 s column, so two
   // empty columns lie between neighbours. Only the missed interval breaks.
   assert.deepEqual(at(gapsBefore([0, 300, 600, 1200, 1500])), [3])
+})
+
+test('the first Compare line is solid and no two of the eight share a colour or a dash', () => {
+  assert.deepEqual(lineStyle(0).dash, [])
+  const seen = (f: (i: number) => string) => new Set(Array.from({ length: 8 }, (_, i) => f(i))).size
+  assert.equal(seen((i) => lineStyle(i).colour), 8)
+  assert.equal(seen((i) => lineStyle(i).dash.join()), 8)
+  assert.deepEqual(lineStyle(8), lineStyle(0))
 })

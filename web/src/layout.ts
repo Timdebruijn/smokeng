@@ -129,3 +129,32 @@ export function gapsBefore(ts: ArrayLike<number>): boolean[] {
   const limit = 1.5 * inferSpan(ts, ts.length)
   return Array.from({ length: ts.length }, (_, j) => j > 0 && ts[j] - ts[j - 1] > limit)
 }
+
+/**
+ * Colour and dash pattern of the i-th Compare line. The dash is a second cue
+ * that survives a lack of hue: the first line is solid and the pattern is the
+ * same on the canvas and in the legend, so the two can be matched without
+ * colour. Lengths are in CSS pixels at the line's 1.75 px width, and the
+ * longest pattern fits the legend swatch (24 px).
+ *
+ * The colours are Okabe-Ito, with the pink swapped for a darker one so that no
+ * two of them have the same lightness in deuteranopia; several still lie close
+ * in lightness there (blue, wine and dark green; orange and sky blue), which is
+ * what the dash is for. They do not follow the colour-blind-safe setting: a
+ * colour here says which target, never how healthy. Past eight lines the pairs
+ * repeat.
+ */
+const LINE_STYLES: { colour: string; dash: number[] }[] = [
+  { colour: '#0072b2', dash: [] },
+  { colour: '#e69f00', dash: [6, 3] },
+  { colour: '#009e73', dash: [2, 3.5] },
+  { colour: '#982c66', dash: [9, 3, 2, 3] },
+  { colour: '#56b4e9', dash: [14, 4] },
+  { colour: '#d55e00', dash: [4, 3] },
+  { colour: '#8c62aa', dash: [8, 3, 2, 3, 2, 3] },
+  { colour: '#117733', dash: [14, 3, 4, 3] },
+]
+
+export function lineStyle(i: number): { colour: string; dash: number[] } {
+  return LINE_STYLES[i % LINE_STYLES.length]
+}

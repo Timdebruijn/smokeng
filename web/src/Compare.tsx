@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchSeries, type Series } from './api'
 import { compareSummary, fmtUs } from './format'
-import { fmtWhen, gapsBefore } from './layout'
+import { fmtWhen, gapsBefore, lineStyle } from './layout'
 import { useWidth } from './shared'
 import type { Family } from './util'
 
@@ -18,26 +18,6 @@ import type { Family } from './util'
  * three lines here, exactly as it is three plots below — averaging them would
  * destroy the one thing a second vantage point is for.
  */
-
-/**
- * Okabe-Ito, chosen as identities rather than as meanings.
- *
- * These are fixed and do not follow the colour-blind-safe setting, because
- * they are already safe under it: this palette is distinguishable under every
- * common form of colour vision deficiency. A line's colour here says "which
- * target", never "how healthy", so it carries none of the red/green semantics
- * that setting exists to replace.
- */
-const LINE_COLOURS = [
-  '#0072b2',
-  '#e69f00',
-  '#009e73',
-  '#cc79a7',
-  '#56b4e9',
-  '#d55e00',
-  '#8c62aa',
-  '#117733',
-]
 
 // The line area's horizontal padding, shared by the read and the draw.
 const PAD_L = 52
@@ -221,7 +201,8 @@ export default function Compare({
     series.forEach((s, i) => {
       const d = data.get(s.key)
       if (!d) return
-      ctx.strokeStyle = LINE_COLOURS[i % LINE_COLOURS.length]
+      ctx.strokeStyle = lineStyle(i).colour
+      ctx.setLineDash(lineStyle(i).dash)
       ctx.lineWidth = 1.75
       ctx.lineJoin = 'round'
       ctx.beginPath()
@@ -253,10 +234,17 @@ export default function Compare({
         <h2>Compare — pooled medians</h2>
         {series.map((s, i) => (
           <span key={s.key} className="compare-legend">
-            <span
-              className="compare-swatch"
-              style={{ background: LINE_COLOURS[i % LINE_COLOURS.length] }}
-            />
+            <svg className="compare-swatch" width="24" height="4" aria-hidden="true">
+              <line
+                x1="0"
+                x2="24"
+                y1="2"
+                y2="2"
+                stroke={lineStyle(i).colour}
+                strokeWidth="1.75"
+                strokeDasharray={lineStyle(i).dash.join(' ') || undefined}
+              />
+            </svg>
             {s.label}
           </span>
         ))}
@@ -272,9 +260,9 @@ export default function Compare({
       />
       {error && <p className="hint small error">{error}</p>}
       <p className="hint small">
-        Vantage points are never averaged — each line is its own measurement. Uncheck targets on
-        the left to narrow the comparison. Only the median is drawn here; the distribution is in
-        the plots below.
+        Vantage points are never averaged — each line is its own measurement. Uncheck targets in the
+        target list to narrow the comparison. Only the median is drawn here; the distribution is in
+        the plots on this page.
       </p>
     </div>
   )
