@@ -252,28 +252,28 @@ export default function Overview({
                   <Fragment key={g.path}>
                     {grouped && (
                       <h3 className="group-head">
+                        {/* The visible line is terse; the name says it in words.
+                            aria-expanded tells a screen reader whether it is open. */}
                         <button
                           type="button"
                           className="group-toggle"
                           aria-expanded={open}
+                          aria-label={[
+                            `${label}: ${STATUS_WORD[status]}`,
+                            `${nTargets} ${nTargets === 1 ? 'target' : 'targets'}`,
+                            status === 'nodata' ? 'no data' : `worst loss ${fmtLoss(loss)}`,
+                            nFlagged > 0 ? `${nFlagged} flagged` : '',
+                          ]
+                            .filter(Boolean)
+                            .join(', ')}
                           onClick={() => toggle(g.path)}
                         >
                           <StatusDot background={STATUS_COLOR[status]} label={STATUS_WORD[status]} />
                           <span className="group-label">{label}</span>
                           <span className="group-meta">
-                            <span className="visually-hidden">, </span>
-                            {nTargets} {nTargets === 1 ? 'target' : 'targets'}
-                            <span className="visually-hidden">, worst loss</span>
-                            <span aria-hidden="true"> · </span>
+                            {nTargets} {nTargets === 1 ? 'target' : 'targets'} ·{' '}
                             {status === 'nodata' ? '—' : fmtLoss(loss)}
-                            {nFlagged > 0 && (
-                              <>
-                                <span aria-hidden="true"> · </span>
-                                <span className="visually-hidden">, </span>
-                                {nFlagged} flagged
-                              </>
-                            )}
-                            <span className="visually-hidden">, {open ? 'collapse' : 'expand'}</span>
+                            {nFlagged > 0 && ` · ${nFlagged} flagged`}
                           </span>
                         </button>
                       </h3>
