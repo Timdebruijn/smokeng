@@ -173,6 +173,19 @@ export default function Admin({ isAdmin = false }: { isAdmin?: boolean }) {
     setSelectedId((cur) => (cur !== null && list.some((t) => t.id === cur) ? cur : (list[0]?.id ?? null)))
   }, [])
   const { error, busy, reload, run, attempt } = useAction(load)
+  // Every field is disabled while a save runs, which drops keyboard focus on
+  // the page. Put it back where it was once the save is done, unless the
+  // element is gone (Reset removes its own button and refocuses its field).
+  const focused = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (busy) {
+      focused.current = document.activeElement as HTMLElement | null
+      return
+    }
+    const el = focused.current
+    focused.current = null
+    if (el?.isConnected && document.activeElement === document.body) el.focus()
+  }, [busy])
 
   const ordered = orderedTargets(targets)
 
@@ -271,7 +284,7 @@ function validateSetting(
   if (next === null) return null
   if (def.kind === 'number') {
     const v = Number(next)
-    if (!Number.isFinite(v)) return 'must be a number'
+    if (!Number.isInteger(v)) return 'must be a whole number'
     if (def.min !== undefined && v < def.min) return `must be at least ${def.min}`
     if (def.max !== undefined && v > def.max) return `must be at most ${def.max}`
   }
@@ -529,6 +542,11 @@ function SettingRow({
   // group above, the same as Reset.
   const commit = () => {
     if (draft === shown) return
+    // "60.0" for an inherited 60 is not a change; writing it would pin 60 here.
+    if (def.kind === 'number' && draft.trim() !== '' && Number(draft) === Number(shown)) {
+      setDraft(shown)
+      return
+    }
     if (draft.trim() === '') {
       if (isLocal) void onSet(null)
       else setDraft(shown)
@@ -593,7 +611,8 @@ function SettingRow({
               max={def.max}
               onChange={(e) => setDraft(e.target.value)}
               onBlur={commit}
-              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              // Saves without leaving the field, so the keyboard stays where it was.
+              onKeyDown={(e) => e.key === 'Enter' && commit()}
             />
             {def.unit && <span className="unit">{def.unit}</span>}
           </>
