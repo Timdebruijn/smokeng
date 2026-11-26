@@ -639,9 +639,8 @@ function FlagNotes({
   return (
     <div className="warn-line flag-notes">
       <p>
-        <strong>Recorded {zoomed ? 'in the zoomed window' : `in the last ${rangeWords(rangeS)}`}</strong>: how
-        these figures were measured, and why probes failed. The badges beside the graph count the intervals;
-        zoom in to see which intervals they are.
+        <strong>Recorded {zoomed ? 'in the zoomed window' : `in the last ${rangeWords(rangeS)}`}</strong>. The
+        badges beside the graph count the intervals; zoom in to see which intervals they are.
       </p>
       <ul>
         {flags.map((f) => (

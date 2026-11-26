@@ -2,6 +2,7 @@ package probe
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -138,6 +139,45 @@ func TestProbeHTTPCountsServerErrorAsLoss(t *testing.T) {
 		t.Fatalf("503: got %+v, want one sent and nothing received", got)
 	}
 	wantProbeErr(t, got.probeErr, store.ProbeError(store.ProbeErrHTTP, 503))
+}
+
+// A server that answers the handshake with an alert, here because it wants a
+// client certificate, rejected the TLS too; so does a port that answers https
+// in plain HTTP.
+func TestProbeHTTPSNamesARemoteTLSRejection(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	srv.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	spec := userspaceSpec(t, "https", portOf(t, srv))
+	spec.TLSSkipVerify = true // so the server's certificate is not what fails
+	wantProbeErr(t, runOne(t, spec).probeErr, store.ProbeError(store.ProbeErrConn, store.ProbeConnTLS))
+
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	t.Cleanup(plain.Close)
+	wantProbeErr(t, runOne(t, userspaceSpec(t, "https", portOf(t, plain))).probeErr,
+		store.ProbeError(store.ProbeErrConn, store.ProbeConnTLS))
+}
+
+// A request abandoned by its target's context learned nothing about the
+// service, so it carries no reason; one that ran out its own timeout did.
+func TestProbeHTTPAbandonedHasNoReason(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(2 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	spec := userspaceSpec(t, "http", portOf(t, srv))
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	var late atomic.Int64
+	col := newCollector(1, &late)
+	runUserspaceProbe(ctx, col, 0, netip.MustParseAddr("127.0.0.1"), spec)
+	if m := col.finalize(spec, 0, conditions{}); m.ProbeErr != nil {
+		t.Errorf("an abandoned request got reason %#x", *m.ProbeErr)
+	}
 }
 
 // A certificate the prober does not trust is a definite answer, and a

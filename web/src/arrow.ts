@@ -447,7 +447,8 @@ function pinned(
 
 /**
  * An optional unsigned 16-bit column: its index, or -1 when the response has
- * none. Present with another type is refused, as a pinned column is.
+ * none. An integer column of another width is refused, as a pinned column is; a
+ * column of that name that is not an integer is treated as absent.
  */
 function optionalU16(cols: ColSpec[], name: string): number {
   const i = cols.findIndex((c) => c.name === name && c.kind === 'int')

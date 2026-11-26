@@ -282,11 +282,8 @@ func (c *collector) onProbeError(idx int, code uint16) {
 	if c.done {
 		return
 	}
-	p := &c.pings[idx]
-	if code == 0 || !p.rx.IsZero() {
-		return
-	}
-	p.probeErr = code
+	// finalize reads it only for a probe without a reply, and 0 is no reason.
+	c.pings[idx].probeErr = code
 }
 
 func (c *collector) onTXKernel(idx int, t time.Time) {

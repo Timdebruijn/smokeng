@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 
 	"github.com/timdebruijn/smokeng/internal/store"
@@ -22,8 +23,8 @@ import (
 // definite answer, and an error that wraps both is about the certificate.
 //
 // It returns 0, no reason, when ctx itself is done: the probe was abandoned by
-// a shutdown, a settings change or the bucket's own deadline, and nothing was
-// learned about the far end. A reason there would also make finalize count a
+// a shutdown or a settings change (ctx is the target's own context, not the
+// probe's timeout), and nothing was learned about the far end. A reason there would also make finalize count a
 // probe it otherwise leaves out of a truncated interval.
 func connError(ctx context.Context, err error) uint16 {
 	if ctx.Err() != nil {
@@ -38,10 +39,18 @@ func connError(ctx context.Context, err error) uint16 {
 		alert     tls.AlertError
 	)
 	var netErr net.Error
+	var opErr *net.OpError
 	detail := store.ProbeConnOther
 	switch {
 	case errors.As(err, &verify), errors.As(err, &unknownCA), errors.As(err, &hostname),
-		errors.As(err, &invalid), errors.As(err, &record), errors.As(err, &alert):
+		errors.As(err, &invalid), errors.As(err, &record), errors.As(err, &alert),
+		// An alert the server sent (it wants a client certificate, it supports
+		// no common version) arrives as an OpError "remote error"; AlertError
+		// only wraps alerts this side sent.
+		errors.As(err, &opErr) && opErr.Op == "remote error",
+		// https to a port that speaks plain HTTP. net/http reports it as a bare
+		// string, so the string is all there is to match.
+		strings.Contains(err.Error(), "server gave HTTP response to HTTPS client"):
 		detail = store.ProbeConnTLS
 	case errors.Is(err, syscall.ECONNREFUSED):
 		detail = store.ProbeConnRefused

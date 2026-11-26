@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"codeberg.org/miekg/dns"
 
@@ -14,8 +15,8 @@ import (
 )
 
 // dnsResponder answers any query by echoing it back with the response bit set.
-// The probe times a round trip; it does not read the answer section, so this
-// is a complete far end for what is being measured.
+// The probe times a round trip and reads the response code, not the answer
+// section, so this is a complete far end for what is being measured.
 func dnsResponder(t *testing.T) int { return dnsResponderRcode(t, 0) }
 
 // dnsResponderRcode answers every query with the given response code.
@@ -39,7 +40,9 @@ func dnsResponderRcode(t *testing.T, rcode byte) int {
 			reply := make([]byte, n)
 			copy(reply, buf[:n])
 			reply[2] |= 0x80 // QR: this is a response
-			reply[3] = reply[3]&0xf0 | rcode
+			// RA set, as a recursive resolver sets it: the high bits of this byte
+			// are flags, and only the low four are the response code.
+			reply[3] = 0x80 | rcode
 			_, _ = pc.WriteTo(reply, from)
 		}
 	}()
@@ -98,6 +101,52 @@ func TestProbeDNSSilentResolverIsLoss(t *testing.T) {
 	if m.Flags&store.FlagSendFailed != 0 {
 		t.Fatal("an unanswered query was recorded as a send failure; the resolver is what " +
 			"failed, not the prober")
+	}
+	if m.ProbeErr == nil || *m.ProbeErr != store.ProbeError(store.ProbeErrConn, store.ProbeConnTimeout) {
+		t.Errorf("ProbeErr = %v, want timed out", m.ProbeErr)
+	}
+}
+
+// A datagram too short to hold the flags is not an answer, even with the right
+// id: reading a response code from it would read whatever the buffer held.
+func TestProbeDNSWaitsPastAReplyTooShortForItsFlags(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pc.Close() })
+	go func() {
+		buf := make([]byte, 1500)
+		n, from, err := pc.ReadFrom(buf)
+		if err != nil || n < 4 {
+			return
+		}
+		_, _ = pc.WriteTo([]byte{buf[0], buf[1], 0x80}, from) // id and QR, nothing more
+		reply := append([]byte(nil), buf[:n]...)
+		reply[2] |= 0x80
+		reply[3] = 0x80 | 2 // SERVFAIL
+		_, _ = pc.WriteTo(reply, from)
+	}()
+	got := runOne(t, dnsSpec(t, pc.LocalAddr().(*net.UDPAddr).Port))
+	wantProbeErr(t, got.probeErr, store.ProbeError(store.ProbeErrDNS, 2))
+}
+
+// A query abandoned by its target's context (a shutdown, a settings change)
+// learned nothing about the resolver, so it carries no reason.
+func TestProbeDNSAbandonedHasNoReason(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	spec := dnsSpec(t, pc.LocalAddr().(*net.UDPAddr).Port)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	var late atomic.Int64
+	col := newCollector(1, &late)
+	probeDNS(ctx, col, 0, netip.MustParseAddr("127.0.0.1"), spec)
+	if m := col.finalize(spec, 0, conditions{}); m.ProbeErr != nil {
+		t.Errorf("an abandoned query got reason %#x", *m.ProbeErr)
 	}
 }
 

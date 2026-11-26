@@ -82,7 +82,8 @@ Settings: `packet_size`, `dscp`, `timeout_ms`.
 ## DNS
 
 **Times** one UDP query to the target, which is the resolver being measured, from the write to
-the reply. Only the reply ID is matched; the answer is not inspected.
+the reply. The reply is matched on its ID, and its response code is read; the answer section
+is not inspected.
 
 - **The same query goes out every interval**, so a recursive resolver answers from cache after
   the first one. You are measuring the cache, not the resolver's upstream work. To test the
