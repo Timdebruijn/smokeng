@@ -1683,6 +1683,10 @@ html {
    two near-identical rules would drift apart the first time one is tuned. */
 .probe-type {
   margin-left: 6px;
+  /* One word: "dns" broke into "dn" and "s" when the host beside it wrapped
+     anywhere. The host gives way instead. */
+  display: inline-block;
+  white-space: nowrap;
 }
 
 /* A caveat about how a measurement was taken, not a failure — the same
@@ -1810,6 +1814,10 @@ dialog.modal-host::backdrop {
   color: var(--dim);
   cursor: pointer;
   font-size: 13px;
+}
+
+.search-icon {
+  display: none;
 }
 
 .search-button kbd {
@@ -2015,34 +2023,103 @@ dialog.modal-host::backdrop {
   .appbar-inner {
     gap: 8px;
     row-gap: 0;
+    padding-top: 4px;
   }
 
-  /* With two rows of tabs the bar is 117px high at 390px wide and 149px at
-     320px. */
+  /* Two rows: the mark and the controls, then the tabs. Measured at 375 and
+     390px wide, signed in or not, the bar is 97px high. */
   html {
-    scroll-padding-top: 156px;
+    scroll-padding-top: 108px;
   }
 
+  /* The tabs are one row that scrolls sideways rather than two or three rows
+     that wrap: a scrolled-off tab is one swipe away, a wrapped row costs every
+     screen its height. The ring of a focused tab is inset (see the
+     :focus-visible rule), so the scroll container does not clip it. */
   .tabs {
     order: 9;
     flex: 1 0 100%;
-    margin: 0 -4px 6px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin: 0 -4px 4px;
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
   }
 
   .sidebar {
-    top: 156px;
-    max-height: calc(100vh - 176px);
+    top: 108px;
+    max-height: calc(100vh - 128px);
   }
 
   .tab {
     flex: none;
+    min-height: 44px;
+    padding: 0 10px;
   }
 
-  /* Room for the brand and the buttons on one row. The user menu also shows
+  /* Room for the mark and the controls on one row. The user menu also shows
      the version, and a phone has no ⌘K. */
   .appbar .version-tag,
   .search-button kbd {
     display: none;
+  }
+
+  /* Words that do not fit are kept as the buttons' names, out of sight: the
+     wordmark (the mark beside it says the same), the Search label (a magnifier
+     instead), and the signed-in name and role (the avatar's initial instead;
+     the menu it opens names both). */
+  .brand-name,
+  .search-label,
+  .usermenu .who,
+  .usermenu .role-tag {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .search-icon {
+    display: block;
+  }
+
+  /* Touch targets of 44px (WCAG 2.5.5), up from 32px. */
+  .appbar .icon-button,
+  .search-button {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .appbar .chip-button {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 8px;
+    justify-content: center;
+  }
+
+  .family-select {
+    min-height: 44px;
+  }
+
+  .brand {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  /* A caption on its own line under its figure, not wrapped beside it into
+     "in the last" / "hour". */
+  .stat-sub {
+    display: block;
+    margin-left: 0;
+    margin-top: 2px;
   }
 
   /* Figure columns with a floor: ones that could shrink collided
@@ -2132,6 +2209,41 @@ dialog.modal-host::backdrop {
 }
 
 /* ── Low windows (zoom, landscape phones) ──────────────────────────────── */
+
+/* Below about 360px the controls no longer fit beside the mark and take a
+   second row: the bar is 141px high at 320px wide. */
+@media (max-width: 360px) {
+  html {
+    scroll-padding-top: 152px;
+  }
+
+  .sidebar {
+    top: 152px;
+    max-height: calc(100vh - 172px);
+  }
+}
+
+/* A narrow phone: the name gets the full width of its row and the figures go
+   on a line of their own below it. Beside them, a title like "Eigen resolver op
+   de OPNsense — recursieve lookup" took six lines at 375px and still squeezed
+   the figures. The legend follows the same two lines. */
+@media (max-width: 480px) {
+  .health-row,
+  .health-legend {
+    grid-template-columns: 8px 48px repeat(3, minmax(48px, 1fr));
+    row-gap: 4px;
+  }
+
+  .health-row .health-name,
+  .health-legend > :nth-child(2) {
+    grid-column: 2 / -1;
+  }
+
+  .health-row .spark,
+  .health-legend > :nth-child(3) {
+    grid-column: 2;
+  }
+}
 
 /* At 400% zoom the sticky bar took 113 of a 256px high window. In a window
    lower than 480px the bar scrolls away with the page. */

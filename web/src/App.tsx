@@ -218,6 +218,15 @@ function AppHeader({
   onMenu: (m: HeaderMenu) => void
 }) {
   const who = me?.name ?? me?.email ?? me?.subject ?? ''
+  // On a phone the tabs are one row that scrolls sideways; keep the current
+  // one in sight there, so the page you are on is never a tab off-screen.
+  const tabsRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const nav = tabsRef.current
+    const tab = nav?.querySelector<HTMLElement>('[aria-current="page"]')
+    if (!nav || !tab || nav.scrollWidth <= nav.clientWidth) return
+    nav.scrollLeft = Math.max(0, tab.offsetLeft - (nav.clientWidth - tab.offsetWidth) / 2)
+  }, [view])
 
   // An open popover closes on Esc (focus back on its trigger), on a press
   // outside its own menu, and when focus moves out of it: left open after a
@@ -253,7 +262,7 @@ function AppHeader({
           </span>
           {me?.version && <span className="version-tag">{me.version}</span>}
         </button>
-        <nav className="tabs">
+        <nav className="tabs" ref={tabsRef}>
           {views.map((v) => (
             <button
               key={v}
@@ -267,7 +276,13 @@ function AppHeader({
         </nav>
         <span className="spacer" />
         <button className="search-button" onClick={onOpenPalette}>
-          <span>Search</span>
+          {/* Only shown on a phone, where the word does not fit; the word
+              stays the button's name there too. */}
+          <svg className="search-icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path d="m20 20-4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          <span className="search-label">Search</span>
           <kbd>⌘K</kbd>
         </button>
         <FamilyFilter choice={family} onChange={onFamily} />
