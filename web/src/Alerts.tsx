@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { ConfirmButton, useAction, useFormError, useLiveRefresh, useParkedFocus, LivePill, StatusDot, ErrorText } from './shared'
+import { announce, ConfirmButton, useAction, useFormError, useLiveRefresh, useParkedFocus, LivePill, StatusDot, ErrorText } from './shared'
 import { afterName, alertKey, alertName, deliveryWarning, seriesLabel } from './util'
 import {
   createAlertRule,
@@ -93,14 +93,21 @@ export default function Alerts({ isAdmin }: { isAdmin: boolean }) {
     run(() => acknowledgeAlert(a, !a.acked), `${a.acked ? 'Unacknowledged' : 'Acknowledged'} ${alertName(a)}`)
 
   const deliveryText = delivery ? deliveryWarning(delivery) : null
+  const wasFailing = useRef<boolean | null>(null)
+  useEffect(() => {
+    if (!delivery) return
+    if (wasFailing.current === false && delivery.failing) announce('Alert webhook deliveries are failing')
+    wasFailing.current = delivery.failing
+  }, [delivery])
   const pathOf = (id: number) => targets.find((t) => t.id === id)?.path ?? `target ${id}`
 
   return (
     <>
       <h1 className="visually-hidden">Alerts</h1>
       {error && <ErrorText>{error}</ErrorText>}
-      {/* A role="status" region would read it again on every refresh; it is
-          text where the page starts, which is where it has to be found. */}
+      {/* Text where the page starts, which is where it has to be found; and
+          announced when deliveries start failing while the page is open,
+          which a refresh would otherwise do in silence. */}
       {deliveryText && <p className="hint warn">{deliveryText}</p>}
       {!delivering && (
         <p className="hint warn">

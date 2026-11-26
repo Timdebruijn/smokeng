@@ -458,3 +458,16 @@ test('deliveryWarning says what failed and when, and nothing while delivery work
     'Alert webhook deliveries are failing. The delivery queue was full at t70 and dropped the oldest batch unsent. None has gone through since the master started. 2 batches dropped since start.',
   )
 })
+
+test('deliveryWarning picks the newer of a failure and a drop, and says a recent drop after recovery', () => {
+  const at = (ts: number) => `t${ts}`
+  const failing = { ok: 1, failed: 1, dropped: 1, failing: true, last_ok: 10 }
+  // A failure at the same second as a drop, or after it, is what is said.
+  assert.match(deliveryWarning({ ...failing, last_failed_at: 50, last_dropped_at: 50, last_error: 'e' }, at)!, /The last delivery, at t50, failed: e\./)
+  assert.match(deliveryWarning({ ...failing, last_failed_at: 40, last_dropped_at: 50 }, at)!, /queue was full at t50/)
+  assert.match(deliveryWarning({ ...failing, last_failed_at: 50 }, at)!, /failed: no reason given\. .* 1 batch dropped since start\.$/)
+  // Recovered: a drop in the last day is still said, an older one is not.
+  const recovered = { ok: 5, failed: 0, dropped: 1, failing: false, last_ok: 200, last_dropped_at: 100 }
+  assert.match(deliveryWarning(recovered, at, 100 + 3600)!, /^Alert webhook deliveries are going through again, but the queue was full at t100/)
+  assert.equal(deliveryWarning(recovered, at, 100 + 86401), null)
+})

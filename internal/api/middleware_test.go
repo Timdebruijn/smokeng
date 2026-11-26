@@ -297,6 +297,16 @@ func TestFiringAlertsSayHowDeliveryIsDoingToAnAdminOnly(t *testing.T) {
 	if e, _ := d["last_error"].(string); !strings.Contains(e, "127.0.0.1:1") || strings.Contains(e, "secret-token") {
 		t.Errorf("last_error %q: want the host named and the path left out", e)
 	}
+	// What has not happened is absent, not zero: a zero would read as 1970.
+	for _, k := range []string{"last_ok", "last_dropped_at"} {
+		if _, ok := d[k]; ok {
+			t.Errorf("%s present with no such event: %v", k, d)
+		}
+	}
+	// Without a webhook there is nothing to report on.
+	if none := get(New(st, Options{Alerts: alert.NewManager(st, nil)}, fstest.MapFS{})); none["delivery"] != nil {
+		t.Errorf("delivery reported without a webhook: %v", none["delivery"])
+	}
 
 	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Expires: 1 << 40}
 	viewer := get(New(st, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleViewer,

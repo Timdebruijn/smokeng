@@ -119,7 +119,9 @@ func (w *Webhook) Notify(ctx context.Context, alerts []Alert) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.URL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		// A URL that does not parse is quoted whole in the error, credential
+		// and all, and this error is shown to an administrator as well as logged.
+		return fmt.Errorf("alert: webhook %s: cannot build the request", RedactURL(w.URL))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -175,8 +177,9 @@ type Queue struct {
 	cancel context.CancelFunc
 	once   sync.Once
 
-	// Outcomes, for /metrics: a receiver that is down otherwise shows only in
-	// the log, and alerting that fails is the one failure alerting cannot report.
+	// Outcomes, for /metrics and for an administrator in the API: a receiver
+	// that is down otherwise shows only in the log, and alerting that fails is
+	// the one failure alerting cannot report.
 	ok, failed, dropped atomic.Uint64
 	lastOK              atomic.Int64 // unix seconds; 0 until a delivery succeeds
 	lastDrop            atomic.Int64 // unix seconds; 0 until a batch is dropped
@@ -210,7 +213,9 @@ type DeliveryStats struct {
 	Failing bool
 }
 
-// Stats reports the delivery counts since start.
+// Stats reports what the queue did since start: counts, the last success,
+// failure and drop, and whether delivery is failing now. A dropped batch stays
+// lost after a later delivery clears Failing; LastDroppedAt is what says so.
 func (q *Queue) Stats() DeliveryStats {
 	d := DeliveryStats{OK: q.ok.Load(), Failed: q.failed.Load(), Dropped: q.dropped.Load(),
 		LastOK: q.lastOK.Load(), LastDroppedAt: q.lastDrop.Load(), Failing: q.failing.Load()}

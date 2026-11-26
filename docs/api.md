@@ -252,7 +252,8 @@ window that had data. Read the two together.
 
 `acked_by`, `acked_at` and `silenced_until` appear when they apply. `delivering` says a webhook
 is configured, not that deliveries succeed. Whether they do is in `delivery`, present for a global
-admin when a webhook is configured: `ok`, `failed` and `dropped` count POSTs since start;
+admin when a webhook is configured: `ok` and `failed` count POSTs since start, and `dropped` the
+batches the full queue discarded without posting;
 `failing` is true when a delivery failed or a batch was dropped and none has gone through since;
 `last_ok`, `last_failed_at` with `last_error`, and `last_dropped_at` are unix times, each absent
 until it happens. `last_error` names the webhook by scheme and host only. To acknowledge, `POST /api/v1/alerts/ack` with

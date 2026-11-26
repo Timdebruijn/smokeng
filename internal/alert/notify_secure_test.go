@@ -264,3 +264,12 @@ func (b *blockOnContext) Notify(ctx context.Context, _ []Alert) error {
 	close(b.done)
 	return ctx.Err()
 }
+
+// A URL that does not parse is quoted whole by net/http, and the error now
+// reaches an administrator's screen as well as the log.
+func TestAnUnparseableWebhookURLIsNotQuotedInTheError(t *testing.T) {
+	err := (&Webhook{URL: "http://a b/SECRET"}).Notify(t.Context(), firing("x"))
+	if err == nil || strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("err = %v; want an error without the URL's path", err)
+	}
+}

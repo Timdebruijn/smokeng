@@ -375,7 +375,9 @@ on failures.
 the top, in words: when the last one failed and with what error (the webhook URL reduced to its
 scheme and host), when the last one went through, and how many batches were dropped since the
 master started. "Failing" means a delivery failed or a batch was dropped and none has gone
-through since; one that succeeds clears it. The same record is in `GET /api/v1/alerts` as
+through since; one that succeeds clears it. A dropped batch is not recovered by that, and may
+have held a resolve that is never announced again, so for a day after a drop the page still
+says when it happened. The same record is in `GET /api/v1/alerts` as
 `delivery`, for a global admin only. It lives in memory and starts empty on every restart.
 
 **Rules are evaluated whether or not `--alert-webhook` is set.** Firing state and the
