@@ -515,6 +515,15 @@ UPDATE targets SET positional_loss = 'exclude' WHERE parent_id IS NULL AND posit
 UPDATE targets SET address_family_v30 = address_family;
 ALTER TABLE targets DROP COLUMN address_family;
 ALTER TABLE targets RENAME COLUMN address_family_v30 TO address_family;`,
+	// v31: irtt HMAC keys set from the web UI, keyed on the endpoint the
+	// target is configured with (host:port). Master only; a keyfile on the
+	// host still wins over a row here.
+	`CREATE TABLE irtt_keys (
+  endpoint   TEXT PRIMARY KEY,
+  key        TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT NOT NULL
+)`,
 }
 
 func (s *SQLite) migrate() error {

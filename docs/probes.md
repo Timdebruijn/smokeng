@@ -153,9 +153,19 @@ An open irtt server is a UDP reflection and amplification vector, and UDP is spo
 you expose should require an HMAC key: `irtt server --hmac=<secret>`. It then drops any packet
 without a valid HMAC. The HMAC authenticates the packets; it does not encrypt them.
 
-The key is a shared secret, so it is **not** a target setting: it would travel through the API
-and the exported TOML. It lives in a keyfile on the host that runs the probe, mapping each irtt
-endpoint to its secret:
+The key is a shared secret, so it is **not** a target setting and never appears in the target
+list or the exported TOML. It belongs to the irtt endpoint (`host:port` as written in the
+target). There are two places to put it.
+
+**In the web UI or API (master only).** A global admin can generate a key or set one for an
+endpoint (`PUT /api/v1/irtt-keys/{endpoint}`, see [API](api.md)). It is stored in the database,
+so **a database backup holds your irtt keys**. It applies to the master's own probes within
+seconds, without a restart. A generated key is 43 characters; copy it to
+`irtt server --hmac=<key>`.
+
+**In a keyfile on the host that runs the probe.** This still works and wins: if an endpoint is
+in the keyfile, the key set in the UI for it is ignored and the API refuses to set one. A
+remote agent only reads its own keyfile; keys set in the UI are not sent to agents.
 
 ```toml
 # /var/lib/smokeng/irtt-hmac-keys.toml: mode 0600, deploy from a vault
@@ -173,6 +183,9 @@ without HMAC. If its server requires one, the session is refused and recorded as
 failure: that tells you the key is missing, not that the server is down. The Ansible role
 renders the file from `smokeng_irtt_hmac_keys`; keep the values in a vault. A remote agent needs
 its own keyfile; see [Remote agents](agents.md).
+
+A key is read the way irtt reads `--hmac`: text starting `0x` is hex (`0xdeadbeef` is four
+bytes), anything else is used as is. An empty key, or bad hex after `0x`, is refused.
 
 ## Path discovery
 
