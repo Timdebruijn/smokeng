@@ -1537,6 +1537,53 @@ html {
   font: inherit;
 }
 
+.group-head {
+  margin: 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.group-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 14px;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.group-toggle::before {
+  content: '▾';
+  color: var(--dim);
+}
+
+.group-toggle[aria-expanded='false']::before {
+  content: '▸';
+}
+
+.group-toggle:hover {
+  background: var(--card2);
+}
+
+.group-label {
+  overflow-wrap: anywhere;
+}
+
+.group-meta {
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--dim);
+}
+
 .health-name {
   min-width: 0;
 }
