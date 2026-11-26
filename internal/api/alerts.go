@@ -262,9 +262,26 @@ func (s *server) handleFiringAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, item)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"alerts": out, "enabled": true, "delivering": s.alerts.Delivering(),
-	})
+	}
+	// How the webhook is doing, for a global admin only: the receiver is the
+	// operator's, installation-wide, and its error names its host.
+	if s.delivery != nil && sc.IsGlobalAdmin() {
+		d := s.delivery.Stats()
+		delivery := map[string]any{"ok": d.OK, "failed": d.Failed, "dropped": d.Dropped, "failing": d.Failing}
+		if d.LastOK != 0 {
+			delivery["last_ok"] = d.LastOK
+		}
+		if d.LastFailedAt != 0 {
+			delivery["last_failed_at"], delivery["last_error"] = d.LastFailedAt, d.LastError
+		}
+		if d.LastDroppedAt != 0 {
+			delivery["last_dropped_at"] = d.LastDroppedAt
+		}
+		body["delivery"] = delivery
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // handleAlertEvents reports what alerting has done, as opposed to what it is

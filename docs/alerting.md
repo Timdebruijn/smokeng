@@ -371,6 +371,13 @@ not retried. A firing alert is posted again on the next `--alert-repeat`, but a 
 not. The log line starts `alert: deliver`. See [operations](operations.md) for a rule that fires
 on failures.
 
+**And shown to an administrator.** While deliveries are failing, the **Alerts** page says so at
+the top, in words: when the last one failed and with what error (the webhook URL reduced to its
+scheme and host), when the last one went through, and how many batches were dropped since the
+master started. "Failing" means a delivery failed or a batch was dropped and none has gone
+through since; one that succeeds clears it. The same record is in `GET /api/v1/alerts` as
+`delivery`, for a global admin only. It lives in memory and starts empty on every restart.
+
 **Rules are evaluated whether or not `--alert-webhook` is set.** Firing state and the
 transition history are live either way; a missing webhook only means a transition is
 never posted anywhere. `GET /api/v1/alerts` reports `enabled` (rules are being

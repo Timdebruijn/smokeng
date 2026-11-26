@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -265,5 +266,42 @@ func TestMetricsReportWebhookDeliveries(t *testing.T) {
 	}
 	if strings.Contains(body, "smokeng_webhook_last_success_seconds") {
 		t.Errorf("a last-success time with no success:\n%s", body)
+	}
+}
+
+// How the webhook is doing is shown to a global admin and to nobody else: the
+// receiver is installation-wide and its error names its host.
+func TestFiringAlertsSayHowDeliveryIsDoingToAnAdminOnly(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "d.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	q := alert.NewQueue(&alert.Webhook{URL: "http://127.0.0.1:1/secret-token"}, 2) // nothing listens on port 1
+	q.Notify(t.Context(), []alert.Alert{{Rule: &alert.Rule{Name: "r"}, Firing: true}})
+	q.Close(15 * time.Second)
+	get := func(h http.Handler) map[string]any {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/alerts", nil))
+		var out map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		return out
+	}
+	admin := get(New(st, Options{Alerts: alert.NewManager(st, nil), Delivery: q}, fstest.MapFS{}))
+	d, ok := admin["delivery"].(map[string]any)
+	if !ok || d["failing"] != true || d["failed"] != float64(1) || d["last_failed_at"] == nil {
+		t.Fatalf("admin delivery = %v", admin["delivery"])
+	}
+	if e, _ := d["last_error"].(string); !strings.Contains(e, "127.0.0.1:1") || strings.Contains(e, "secret-token") {
+		t.Errorf("last_error %q: want the host named and the path left out", e)
+	}
+
+	sess := &auth.Session{Subject: "u", Role: auth.RoleViewer, Expires: 1 << 40}
+	viewer := get(New(st, Options{Auth: &fakeAuth{session: sess}, DefaultRole: auth.RoleViewer,
+		Alerts: alert.NewManager(st, nil), Delivery: q}, fstest.MapFS{}))
+	if _, ok := viewer["delivery"]; ok {
+		t.Errorf("a viewer was told how delivery is doing: %v", viewer["delivery"])
 	}
 }

@@ -7,6 +7,7 @@ import {
   graphGroups,
   graphGroupLabel,
   afterName,
+  deliveryWarning,
   alertKey,
   alertName,
   RANGES,
@@ -442,4 +443,18 @@ test('flagCounts says nothing for a pooled read, whose rows are columns', () => 
 
 test('flagsIn names ICMP errors, which count against a series', () => {
   assert.deepEqual(flagsIn(1 << 4, 'icmp').map((f) => f.label), ['ICMP errors'])
+})
+
+test('deliveryWarning says what failed and when, and nothing while delivery works', () => {
+  const at = (ts: number) => `t${ts}`
+  const base = { ok: 3, failed: 0, dropped: 0, failing: false }
+  assert.equal(deliveryWarning({ ...base, failed: 2, last_failed_at: 50, last_ok: 90, last_error: 'x' }, at), null)
+  assert.equal(
+    deliveryWarning({ ...base, failed: 1, failing: true, last_ok: 40, last_failed_at: 50, last_error: 'webhook http://h:1/… returned 503' }, at),
+    'Alert webhook deliveries are failing. The last delivery, at t50, failed: webhook http://h:1/… returned 503. The last one that went through was at t40.',
+  )
+  assert.equal(
+    deliveryWarning({ ok: 0, failed: 0, dropped: 2, failing: true, last_dropped_at: 70 }, at),
+    'Alert webhook deliveries are failing. The delivery queue was full at t70 and dropped the oldest batch unsent. None has gone through since the master started. 2 batches dropped since start.',
+  )
 })

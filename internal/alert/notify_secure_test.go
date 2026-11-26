@@ -121,6 +121,9 @@ func TestAQueuedNotifierNeverHoldsItsCaller(t *testing.T) {
 	if d := time.Since(start); d > time.Second {
 		t.Fatalf("seven Notify calls against a stuck receiver took %v", d)
 	}
+	if !q.Stats().Failing {
+		t.Error("batches were dropped and nothing has gone through, but delivery is not failing")
+	}
 	close(inner.block)
 	// Of what was waiting, a full queue gives up its oldest to make room, so
 	// what is current is what gets delivered.
@@ -131,6 +134,11 @@ func TestAQueuedNotifierNeverHoldsItsCaller(t *testing.T) {
 	}
 	if st := q.Stats(); st.OK != 4 || st.Dropped != 3 || st.Failed != 0 || st.LastOK == 0 {
 		t.Errorf("stats %+v, want 4 ok, 3 dropped, 0 failed and a last-success time", st)
+	}
+	// The drops happened, and are remembered; the deliveries after them went
+	// through, so delivery is not failing now.
+	if st := q.Stats(); st.LastDroppedAt == 0 || st.Failing {
+		t.Errorf("stats %+v, want a drop time and not failing", st)
 	}
 }
 
@@ -143,6 +151,43 @@ func TestAQueueCountsFailedDeliveries(t *testing.T) {
 	if st := q.Stats(); st.Failed != 1 || st.OK != 0 || st.LastOK != 0 {
 		t.Errorf("stats %+v, want 1 failed, 0 ok and no last-success time", st)
 	}
+	if st := q.Stats(); !st.Failing || st.LastError != "receiver down" || st.LastFailedAt == 0 {
+		t.Errorf("stats %+v, want failing, with the error and when", st)
+	}
+}
+
+// Failing is now, not ever: a delivery that goes through after one that did
+// not clears it, and keeps the failure on record.
+func TestAQueueStopsFailingWhenADeliveryGoesThrough(t *testing.T) {
+	inner := &flaky{fail: true}
+	q := NewQueue(inner, 2)
+	q.Notify(t.Context(), firing("x"))
+	eventually(t, "the failure", func() bool { return q.Stats().Failed == 1 })
+	if !q.Stats().Failing {
+		t.Fatal("not failing after a failed delivery")
+	}
+	inner.set(false)
+	q.Notify(t.Context(), firing("y"))
+	q.Close(time.Second)
+	if st := q.Stats(); st.Failing || st.LastError == "" || st.OK != 1 {
+		t.Errorf("stats %+v, want not failing, the old error kept, one ok", st)
+	}
+}
+
+type flaky struct {
+	mu   sync.Mutex
+	fail bool
+}
+
+func (f *flaky) set(fail bool) { f.mu.Lock(); f.fail = fail; f.mu.Unlock() }
+
+func (f *flaky) Notify(context.Context, []Alert) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail {
+		return errors.New("receiver down")
+	}
+	return nil
 }
 
 type failing struct{}

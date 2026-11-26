@@ -494,3 +494,24 @@ export function flagNote(f: { label: string; count: number }, intervals: number,
     ? `${f.label} in every interval`
     : `${f.label} in ${f.count} of ${intervals} ${intervals === 1 ? 'interval' : 'intervals'}, last at ${lastAt}`
 }
+
+/**
+ * What to tell an admin about webhook delivery, or null when there is nothing
+ * to say: it is going through, or nothing was ever lost. Words, not a colour,
+ * and with when, so "failing" can be told from "failed once last week".
+ */
+export function deliveryWarning(
+  d: { ok: number; failed: number; dropped: number; failing: boolean; last_ok?: number; last_failed_at?: number; last_error?: string; last_dropped_at?: number },
+  at: (unixSeconds: number) => string = (ts) => new Date(ts * 1000).toLocaleString(),
+): string | null {
+  if (!d.failing) return null
+  const parts: string[] = []
+  if (d.last_failed_at && (!d.last_dropped_at || d.last_failed_at >= d.last_dropped_at)) {
+    parts.push(`The last delivery, at ${at(d.last_failed_at)}, failed: ${d.last_error ?? 'no reason given'}.`)
+  } else if (d.last_dropped_at) {
+    parts.push(`The delivery queue was full at ${at(d.last_dropped_at)} and dropped the oldest batch unsent.`)
+  }
+  parts.push(d.last_ok ? `The last one that went through was at ${at(d.last_ok)}.` : 'None has gone through since the master started.')
+  if (d.dropped > 0) parts.push(`${d.dropped} ${d.dropped === 1 ? 'batch' : 'batches'} dropped since start.`)
+  return `Alert webhook deliveries are failing. ${parts.join(' ')}`
+}
