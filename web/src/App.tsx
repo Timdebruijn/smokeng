@@ -402,6 +402,9 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
     }))
 
   const plotGroups = graphGroups(shown, targets)
+  // Whether the tree has groups at all, not whether the shown targets happen to
+  // span several: hiding one group should not take the other's heading away.
+  const plotsGrouped = graphGroups(leaves, targets).grouped
   const plotFor = (s: PlotSeries, underGroup: boolean) =>
     s.agentId === null ? (
       <Unmeasured
@@ -572,10 +575,10 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
             Nothing to compare — the shown targets have no enrolled agent measuring them.
           </div>
         )}
-        {plotGroups.grouped
+        {plotsGrouped
           ? plotGroups.groups.map((g) => {
-              const ids = new Set(g.items.map((t) => t.id))
-              const own = series.filter((s) => ids.has(s.target.id))
+              // In the group's tree order, a target's series kept together.
+              const own = g.items.flatMap((t) => series.filter((s) => s.target.id === t.id))
               return (
                 own.length > 0 && (
                   <section key={g.label} className="plot-group">
