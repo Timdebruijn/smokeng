@@ -102,6 +102,11 @@ However wide the subtree, a grant does not reach:
 - **`dscp` and `retention_s`**, on any node. `dscp` marks the prober's traffic on the
   operator's network, and a positive `retention_s` deletes history. Their effect leaves the
   subtree, so an editor who sets either gets a 403 naming the setting.
+- **irtt HMAC keys.** A key belongs to an irtt server (`host:port`), not to a node, so
+  targets in different subtrees that measure the same server share it, and whoever holds it
+  can use that server. Setting, reading and removing one, through `/api/v1/irtt-keys` or the
+  key panel on the Targets screen, is global admin; an editor of an irtt target does not see
+  the panel. A key from the `--irtt-hmac-keys` file is not returned by the API to anyone.
 - **The root defaults.**
 - **`/metrics`**, which counts and names things across the whole installation.
 - **`config import` and `config export`**, which are declarative over the entire
