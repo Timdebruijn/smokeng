@@ -29,6 +29,8 @@ interface Props {
   onZoom: (from: number, to: number) => void
   /** Absent on the detail screen, which is already the detail. */
   onOpenDetail?: () => void
+  /** Under a group heading (an h2) the plot title is one level down. */
+  underGroup?: boolean
 }
 
 /**
@@ -227,7 +229,9 @@ export default function Plot({
   logScale,
   onZoom,
   onOpenDetail,
+  underGroup,
 }: Props) {
+  const Heading = underGroup ? 'h3' : 'h2'
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const stackRef = useRef<HTMLDivElement>(null)
@@ -592,7 +596,7 @@ export default function Plot({
       <div className="plot-head">
         <StatusDot background={dotColour(flagged)} label={measurementLabel({ flagged })} />
         {onOpenDetail ? (
-          <h2>
+          <Heading>
             <button className="plot-title link-title" onClick={onOpenDetail}>
               {target.title ?? target.path}
             </button>
@@ -604,7 +608,7 @@ export default function Plot({
                 {[family, agentName && `from ${agentName}`].filter(Boolean).join(' ')}
               </span>
             )}
-          </h2>
+          </Heading>
         ) : (
           <span className="plot-title">{target.title ?? target.path}</span>
         )}

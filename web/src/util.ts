@@ -129,6 +129,27 @@ export function orderedTargets(targets: Target[]): { target: Target; depth: numb
   return out
 }
 
+/** Heading for the group a target sits in: its parent path without the
+ *  leading slash, "Top level" directly under the root. */
+export function graphGroupLabel(path: string): string {
+  const parent = path.slice(0, path.lastIndexOf('/')).replace(/^\//, '')
+  return parent === '' ? 'Top level' : parent
+}
+
+/** The items by group, in tree order (groups by first appearance). `grouped`
+ *  is false when everything sits at the top level, so the page can stay flat. */
+export function graphGroups(items: Target[], tree: Target[]): { grouped: boolean; groups: { label: string; items: Target[] }[] } {
+  const rank = new Map(orderedTargets(tree).map((o, i) => [o.target.id, i]))
+  const sorted = [...items].sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+  const byLabel = new Map<string, Target[]>()
+  for (const t of sorted) {
+    const label = graphGroupLabel(t.path)
+    byLabel.set(label, [...(byLabel.get(label) ?? []), t])
+  }
+  const groups = [...byLabel].map(([label, items]) => ({ label, items }))
+  return { grouped: groups.some((g) => g.label !== 'Top level'), groups }
+}
+
 export type Family = 'v4' | 'v6'
 
 /** What the header's family filter can say: one family, or both. */
