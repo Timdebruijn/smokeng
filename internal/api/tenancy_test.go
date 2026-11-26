@@ -1031,3 +1031,65 @@ func TestCaptureRefusesAWindowThatHoldsTooManySamples(t *testing.T) {
 		t.Errorf("a window of %d samples = %d %.160s, want 200", 20*65535, code, body)
 	}
 }
+
+// The tree listing says per node whether the caller may change it, because the
+// UI cannot work that out from /api/v1/me: the global role there is viewer for
+// everyone but an admin, whatever their grants. An editor of GemeenteA who
+// reads /Klanten was shown a read-only tree although the API let them write.
+func TestTreeListingSaysWhichNodesTheCallerMayChange(t *testing.T) {
+	f := tenants(t)
+	f.server(t, "team-a", f.klanten, "viewer")
+	h := f.server(t, "team-a", f.groupA, "editor")
+
+	writable := func(h http.Handler) map[int64]bool {
+		t.Helper()
+		code, body := call(t, h, "GET", "/api/v1/targets", nil)
+		if code != http.StatusOK {
+			t.Fatalf("GET /api/v1/targets = %d %s", code, body)
+		}
+		var out struct {
+			Targets []struct {
+				ID       int64 `json:"id"`
+				Writable *bool `json:"writable"`
+			} `json:"targets"`
+		}
+		if err := json.Unmarshal([]byte(body), &out); err != nil {
+			t.Fatal(err)
+		}
+		m := map[int64]bool{}
+		for _, n := range out.Targets {
+			if n.Writable == nil {
+				t.Fatalf("target %d has no writable field: %s", n.ID, body)
+			}
+			m[n.ID] = *n.Writable
+		}
+		return m
+	}
+
+	got := writable(h)
+	want := map[int64]bool{f.klanten: false, f.groupA: true, f.hostA: true, f.groupB: false, f.hostB: false}
+	for id, w := range want {
+		if v, ok := got[id]; !ok || v != w {
+			t.Errorf("target %d: writable = %v (listed %v), want %v", id, v, ok, w)
+		}
+	}
+	// The root is above the viewer grant, so it is not listed at all.
+	if _, ok := got[1]; ok {
+		t.Errorf("the root is listed to a caller with no grant on it")
+	}
+	// What the listing says is what a write gets.
+	if code, body := call(t, h, "PATCH", "/api/v1/targets/"+num(f.hostA), map[string]any{"title": "x"}); code != http.StatusOK {
+		t.Errorf("PATCH a node listed writable = %d %s", code, body)
+	}
+	if code, _ := call(t, h, "PATCH", "/api/v1/targets/"+num(f.hostB), map[string]any{"title": "x"}); code != http.StatusForbidden {
+		t.Errorf("PATCH a node listed read-only = %d, want 403", code)
+	}
+
+	// Without authentication everything is writable, as it is to an admin.
+	open := New(f.st, Options{Alerts: alert.NewManager(f.st, nil)}, fstest.MapFS{})
+	for id, w := range writable(open) {
+		if !w {
+			t.Errorf("target %d is read-only on an instance without authentication", id)
+		}
+	}
+}

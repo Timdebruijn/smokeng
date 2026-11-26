@@ -171,6 +171,7 @@ ask for a shorter window, or more columns.
       "id": 7, "parent_id": 4, "name": "gateway", "path": "/Home/gateway",
       "host": "192.168.1.1", "address_family": null, "title": null, "notes": null,
       "hidden": false, "enabled": true, "sort_order": 0, "is_group": false,
+      "writable": true,
       "settings": {
         "interval_s": {"local": null, "effective": 60,
                        "source": {"id": 4, "name": "Home", "path": "/Home"}},
@@ -185,6 +186,11 @@ ask for a shorter window, or more columns.
 `agents`, `retention_s` and more) as `local`, `effective` and `source`. `source` is `"local"`,
 the ancestor that provides the value, or `"outside"` when that ancestor is above the caller's
 scope. A group has `is_group: true` and a null `host`.
+
+`writable` says whether the caller may change that node: true where they hold editor through a
+grant on it or an ancestor, and everywhere for a global admin or without authentication. The `role`
+in `/api/v1/me` is the global one and is `viewer` for an editor of a subtree, so it cannot answer
+this. `dscp` and `retention_s` stay global-admin only on a writable node too.
 
 `address_family` is `v4`, `v6` or `both`; `both` is two series of one target, and needs a hostname
 in `host`: with an IP address it is `400`, with a message saying so. The series routes read the v4

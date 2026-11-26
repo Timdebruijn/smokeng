@@ -390,6 +390,8 @@ export interface Target {
   enabled: boolean
   sort_order: number
   is_group: boolean
+  /** Whether the caller may change this node: a grant is per subtree. */
+  writable: boolean
   settings: TargetSettings
 }
 

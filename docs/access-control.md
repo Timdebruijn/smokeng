@@ -32,6 +32,15 @@ role  = "editor"
 
 Or in the UI under **Access**, as an admin.
 
+On the **Targets** screen an editor gets edit controls on the nodes their grant covers: adding,
+changing and deleting targets there. A node they can see but not change, under a `viewer` grant
+or `--default-role viewer`, stays read-only, and its panel says so. The settings a grant never
+confers (`dscp` and `retention_s`, below) stay disabled on their own nodes too, with a note saying
+why, and TOML import and export are not offered. The topmost node of a scoped view is shown as
+the root, so it cannot be renamed or deleted from the UI: telling it apart from the real root
+would tell them there is something above it. The header still shows `viewer`: that is the
+global role, and a grant does not change it.
+
 Grants are keyed on **groups**, never on individuals. One person is a group of
 one in your provider. Group membership is read from the same claim as
 `--oidc-admin-claim`, with the same rules (an array, or a comma-separated string; a
