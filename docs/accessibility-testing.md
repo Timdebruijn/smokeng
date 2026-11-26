@@ -49,7 +49,7 @@ heard through a screen reader, so a miss there is a finding and not a mistake in
    what can be exported.
    *Expect:* every figure has a label; the table has headers; an explanation opens with Enter
    and closes with Esc.
-4. **Change the target tree.** On Targets, select a node, change a setting and revert it.
+4. **Change the target tree.** On Targets, select a node, change a setting and reset it.
    Add a child with an empty name, then with a name that exists, then properly. Delete it.
    Open the TOML import and leave it again; do that once more at 400% zoom.
    *Expect:* each row of the tree says whether it is a group or a target and at which level,
