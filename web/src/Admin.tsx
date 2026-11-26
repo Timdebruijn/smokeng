@@ -13,6 +13,7 @@ import {
   isUnset,
   type SettingValue,
   type Target,
+  type TargetPatch,
 } from './api'
 import { ConfirmButton, useAction, useFormError, ErrorText, announce } from './shared'
 import { mayChange, orderedTargets } from './util'
@@ -160,6 +161,9 @@ function settingsFor(target: Target): SettingDef[] {
 // Added to the usual hint on a node the caller may otherwise change: a disabled
 // field among enabled ones needs its reason in text, not in a title.
 const ADMIN_ONLY_HINT = 'Only a global administrator may change this: its effect reaches beyond this part of the tree.'
+
+// The types the Port setting applies to, from the setting itself.
+const PORT_TYPES = SETTINGS.find((s) => s.key === 'probe_port')!.types!
 
 export default function Admin({ isAdmin = false }: { isAdmin?: boolean }) {
   const [targets, setTargets] = useState<Target[]>([])
@@ -318,17 +322,18 @@ interface DetailProps {
   isAdmin: boolean
   onPatch: (body: Parameters<typeof updateTarget>[1], done: string) => Promise<boolean>
   onDelete: (recursive: boolean) => Promise<boolean>
-  onAddChild: (body: { name: string; host?: string; address_family?: string }) => Promise<string | null>
+  onAddChild: (body: TargetPatch) => Promise<string | null>
 }
 
 function TargetDetail({ target, agents, busy, isAdmin, onPatch, onDelete, onAddChild }: DetailProps) {
   const isRoot = target.parent_id === null
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState<'target' | 'group' | null>(null)
   // The form replaces the button that opened it; give focus back when it closes.
-  const addButton = useRef<HTMLButtonElement>(null)
-  const wasAdding = useRef(false)
+  const addTarget = useRef<HTMLButtonElement>(null)
+  const addGroup = useRef<HTMLButtonElement>(null)
+  const wasAdding = useRef<'target' | 'group' | null>(null)
   useEffect(() => {
-    if (wasAdding.current && !adding) addButton.current?.focus()
+    if (wasAdding.current && !adding) (wasAdding.current === 'group' ? addGroup : addTarget).current?.focus()
     wasAdding.current = adding
   }, [adding])
 
@@ -458,18 +463,25 @@ function TargetDetail({ target, agents, busy, isAdmin, onPatch, onDelete, onAddC
       <div className="actions">
         {adding ? (
           <AddChildForm
+            kind={adding}
+            inheritedType={String(target.settings.probe_type.effective || 'icmp')}
             busy={busy}
-            onCancel={() => setAdding(false)}
+            onCancel={() => setAdding(null)}
             onSubmit={async (body) => {
               const err = await onAddChild(body)
-              if (!err) setAdding(false)
+              if (!err) setAdding(null)
               return err
             }}
           />
         ) : (
-          <button ref={addButton} onClick={() => setAdding(true)} disabled={busy}>
-            Add child…
-          </button>
+          <>
+            <button ref={addTarget} onClick={() => setAdding('target')} disabled={busy}>
+              Add target…
+            </button>
+            <button ref={addGroup} onClick={() => setAdding('group')} disabled={busy}>
+              Add group…
+            </button>
+          </>
         )}
         {!isRoot && (
           <>
@@ -745,19 +757,32 @@ function TextField({
   )
 }
 
+// One form for both kinds of node, because the only difference is whether a
+// host is asked for. A target also gets its probe type here: picking it after
+// creation meant finding it in the settings table first.
 function AddChildForm({
+  kind,
+  inheritedType,
   busy,
   onSubmit,
   onCancel,
 }: {
+  kind: 'target' | 'group'
+  /** The type the new node gets if none is chosen: its parent's. */
+  inheritedType: string
   busy: boolean
-  onSubmit: (body: { name: string; host?: string; address_family?: string }) => Promise<string | null>
+  onSubmit: (body: TargetPatch) => Promise<string | null>
   onCancel: () => void
 }) {
   const [name, setName] = useState('')
   const [host, setHost] = useState('')
   const [family, setFamily] = useState('v4')
+  const [type, setType] = useState('')
+  const [port, setPort] = useState('')
   const { error, setError, errorProps, describedBy, onChange, field } = useFormError('target')
+  const effective = type || inheritedType
+  const hasPort = PORT_TYPES.includes(effective)
+  const typeChoices = SETTINGS.find((s) => s.key === 'probe_type')!.choices!
   return (
     <form
       className="add-child"
@@ -765,33 +790,91 @@ function AddChildForm({
       onSubmit={async (e) => {
         e.preventDefault()
         setError(null)
-        setError(await onSubmit(host ? { name, host, address_family: family } : { name }))
+        if (kind === 'group') {
+          setError(await onSubmit({ name }))
+          return
+        }
+        const settings: TargetPatch['settings'] = {}
+        if (type) settings.probe_type = type
+        if (hasPort && port) settings.probe_port = Number(port)
+        setError(await onSubmit({ name, host, address_family: family, settings }))
       }}
     >
       <label>
         <span>
           Name <span className="note">(required)</span>
         </span>
-        <input placeholder="core-router" autoFocus value={name} onChange={(e) => setName(e.target.value)} required {...field('name')} />
+        <input
+          placeholder={kind === 'group' ? 'brabonet' : 'core-router'}
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          {...field('name')}
+        />
       </label>
-      <label>
-        <span>
-          Host <span className="note">(leave empty to create a group)</span>
-        </span>
-        <input placeholder="192.0.2.1 or example.org" value={host} onChange={(e) => setHost(e.target.value)} {...field('host')} />
-      </label>
-      <select aria-label="Address family" value={family} onChange={(e) => setFamily(e.target.value)} disabled={!host} {...field('family')}>
-        <option value="v4">v4</option>
-        <option value="v6">v6</option>
-        <option value="both">v4 + v6</option>
-      </select>
+      {kind === 'target' && (
+        <>
+          <label>
+            <span>
+              Host <span className="note">(required)</span>
+            </span>
+            <input
+              placeholder="192.0.2.1 or example.org"
+              value={host}
+              onChange={(e) => setHost(e.target.value)}
+              required
+              {...field('host')}
+            />
+          </label>
+          <label>
+            <span>Address family</span>
+            <select value={family} onChange={(e) => setFamily(e.target.value)} {...field('family')}>
+              <option value="v4">v4</option>
+              <option value="v6">v6</option>
+              <option value="both">v4 + v6</option>
+            </select>
+          </label>
+          <label>
+            <span>Probe type</span>
+            <select value={type} onChange={(e) => setType(e.target.value)} {...field('type')}>
+              <option value="">{`same as above (${inheritedType})`}</option>
+              {typeChoices.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {hasPort && (
+            <label>
+              <span>
+                Port{' '}
+                <span className="note">{effective === 'tcp' ? '(required)' : '(empty = the usual one)'}</span>
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                size={6}
+                value={port}
+                onChange={(e) => setPort(e.target.value)}
+                required={effective === 'tcp'}
+                {...field('port')}
+              />
+            </label>
+          )}
+        </>
+      )}
       {error && <ErrorText {...errorProps}>{error}</ErrorText>}
-      <button type="submit" aria-describedby={describedBy} disabled={busy}>
-        Create
-      </button>
-      <button type="button" onClick={onCancel} disabled={busy}>
-        Cancel
-      </button>
+      <div className="add-child-buttons">
+        <button type="submit" aria-describedby={describedBy} disabled={busy}>
+          Create
+        </button>
+        <button type="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+      </div>
     </form>
   )
 }

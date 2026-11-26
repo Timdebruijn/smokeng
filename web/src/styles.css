@@ -564,6 +564,13 @@ main:focus {
   font-size: 0.85rem;
 }
 
+/* Create and Cancel on a line of their own, whatever the fields above wrap to. */
+.add-child-buttons {
+  display: flex;
+  gap: 0.4rem;
+  flex-basis: 100%;
+}
+
 .hint {
   font-size: 0.8rem;
   color: var(--dim);
