@@ -1,6 +1,6 @@
 # Accessibility statement for smokeng
 
-This statement covers the web interface that the smokeng binary serves. It follows the structure of the [W3C accessibility statement](https://www.w3.org/WAI/planning/statements/) and describes smokeng v0.30.0.
+This statement covers the web interface that the smokeng binary serves. It follows the structure of the [W3C accessibility statement](https://www.w3.org/WAI/planning/statements/) and describes smokeng v0.31.0.
 
 ## Conformance status
 
@@ -65,4 +65,6 @@ If something in smokeng does not work for you, open an issue at <https://github.
 
 ## Date
 
-This statement was written on 25 November 2026 for v0.30.0 and is reviewed with every release that changes the interface.
+This statement was written on 25 November 2026 for v0.30.0, reviewed on 26 November 2026 for v0.31.0, and is reviewed with every release that changes the interface.
+
+v0.31.0 changes the Targets page (settings edited in place, a probe type in the add form, an irtt key block) and groups the Overview and Graphs pages by target group. These parts were checked with the keyboard, in the accessibility tree and at 390 px, but were not part of either audit above, and no screen reader was tried on them.
