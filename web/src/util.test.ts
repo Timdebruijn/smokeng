@@ -16,6 +16,10 @@ import {
   csvCell,
   firingAnnouncement,
   filterByFamily,
+  flagCounts,
+  flagNote,
+  flagsIn,
+  QUALITY_FLAGS,
   groupOfPath,
   groupRows,
   rowStatus,
@@ -391,4 +395,51 @@ test('graphGroups groups leaves by parent path in tree order', () => {
   assert.equal(r.grouped, true)
   assert.deepEqual(r.groups.map((g) => [g.label, g.items.map((i) => i.id)]), [['Top level', [3]], ['web', [2, 1]]])
   assert.equal(graphGroups([c], [c]).grouped, false)
+})
+
+test('flagsIn names the flags that count, and leaves out the userspace pair where it is expected', () => {
+  const cut = 1 << 7
+  const userspace = 0b11
+  assert.deepEqual(flagsIn(cut | userspace, 'icmp').map((f) => f.label), ['userspace TX', 'userspace RX', 'cut short'])
+  assert.deepEqual(flagsIn(cut | userspace, 'irtt').map((f) => f.label), ['cut short'])
+  assert.deepEqual(flagsIn(userspace, 'https'), [])
+  assert.deepEqual(flagsIn(0, 'icmp'), [])
+})
+
+test('flagCounts counts intervals per flag and keeps the start of the last one', () => {
+  const cut = 1 << 7
+  const notSent = 1 << 6
+  const s = { ts: [100, 400, 700, 1000], flags: [0, cut | 0b11, notSent, cut] }
+  assert.deepEqual(flagCounts(s, 'irtt'), [
+    { label: 'cut short', title: flagsIn(cut, 'irtt')[0].title, count: 2, last: 1000 },
+    { label: 'not sent', title: flagsIn(notSent, 'irtt')[0].title, count: 1, last: 700 },
+  ])
+  // On icmp the userspace pair counts, once.
+  assert.deepEqual(flagCounts(s, 'icmp').map((f) => [f.label, f.count]), [
+    ['userspace TX', 1],
+    ['userspace RX', 1],
+    ['cut short', 2],
+    ['not sent', 1],
+  ])
+  assert.deepEqual(flagCounts({ ts: [1, 2], flags: [0, 0] }, 'icmp'), [])
+})
+
+test('flagNote says how many intervals of how many, and when', () => {
+  assert.equal(flagNote({ label: 'cut short', count: 1 }, 12, '22:25'), 'cut short in 1 of 12 intervals, last at 22:25')
+  assert.equal(flagNote({ label: 'not sent', count: 12 }, 12, '22:25'), 'not sent in every interval')
+})
+
+test('the shared flag list names every bit of the flags byte', () => {
+  // store.Flag* fills all eight bits. A bit missing here is a flag the overview
+  // counts against a series without ever saying what it was.
+  assert.equal(QUALITY_FLAGS.reduce((a, f) => a | f.bit, 0), 0xff)
+  assert.equal(new Set(QUALITY_FLAGS.map((f) => f.bit)).size, QUALITY_FLAGS.length)
+})
+
+test('flagCounts says nothing for a pooled read, whose rows are columns', () => {
+  assert.deepEqual(flagCounts({ ts: [1], flags: [1 << 7], pooled: {} }, 'icmp'), [])
+})
+
+test('flagsIn names ICMP errors, which count against a series', () => {
+  assert.deepEqual(flagsIn(1 << 4, 'icmp').map((f) => f.label), ['ICMP errors'])
 })

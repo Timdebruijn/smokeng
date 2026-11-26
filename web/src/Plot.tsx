@@ -7,7 +7,7 @@ import {
   type PathChange,
   type Target,
 } from './api'
-import { countedFlags, measurementLabel, type Family } from './util'
+import { countedFlags, FLAG_ICMP_ERROR, measurementLabel, QUALITY_FLAGS as FLAGS, type Family } from './util'
 import { setCursor, subscribeCursor } from './crosshair'
 import { chartSummary, positionalTitle, replyLines } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt, stepRow } from './layout'
@@ -57,41 +57,6 @@ interface RowIndex {
 }
 
 /**
- * Measurement-quality flags (store.Flag* in Go). A measurement is only worth
- * as much as the conditions it was taken under, so anything that weakens it
- * is surfaced next to the plot instead of being left to be inferred.
- */
-const FLAGS: { bit: number; label: string; title: string }[] = [
-  { bit: 1 << 0, label: 'userspace TX', title: 'Send timestamps taken in userspace; scheduler jitter widens the smoke.' },
-  { bit: 1 << 1, label: 'userspace RX', title: 'Receive timestamps taken in userspace; scheduler jitter widens the smoke.' },
-  { bit: 1 << 2, label: 'raw socket', title: 'Unprivileged datagram ICMP was unavailable; running on raw sockets.' },
-  {
-    bit: 1 << 3,
-    label: 'dropped replies',
-    title: 'The receive queue overflowed: some loss shown here is ours, not the network’s.',
-  },
-  {
-    bit: 1 << 5,
-    label: 'clock step',
-    title: 'The wall clock jumped during these intervals; affected RTTs are unreliable.',
-  },
-  {
-    bit: 1 << 7,
-    label: 'cut short',
-    title:
-      'This interval was finalized before its window closed — a restart or a settings change. Probes still in flight were abandoned rather than counted as lost, so its loss figure is not comparable with a whole interval.',
-  },
-  {
-    bit: 1 << 6,
-    label: 'not sent',
-    // Deliberately generic. The reason entries beside this one carry the
-    // detail, and they now cover cases this title used to exclude: a far end
-    // refusing the traffic, which arrives as a local error, and this prober's
-    // own deadline expiring, where nothing was asked of the target at all.
-    title: 'These probes never went out. The reason beside this says which — and whether the cause was here or at the far end.',
-  },
-]
-/**
  * One badge beside a plot. Most say how a measurement was weakened. One with
  * aboutTarget says something the measurement found out about the target
  * instead, and so does not count against how cleanly it was measured. Nor does
@@ -110,7 +75,6 @@ function flagBadge(f: (typeof FLAGS)[number], count: number, probeType: unknown)
   }
 }
 
-const FLAG_ICMP_ERROR = 1 << 4
 const FLAG_SEND_FAILED = 1 << 6
 
 /** How often each code appears on rows carrying `bit`, most frequent first. */
@@ -133,14 +97,9 @@ function tally(flags: Uint8Array, codes: (number | null)[], bit: number): [numbe
 function pooledFlags(flags: Uint8Array, positional: Float64Array, probeType: unknown): Badge[] {
   let any = 0
   for (let i = 0; i < flags.length; i++) any |= flags[i]
-  const out: Badge[] = FLAGS.filter((f) => any & f.bit).map((f) => flagBadge(f, 0, probeType))
-  if (any & FLAG_ICMP_ERROR) {
-    out.push({
-      label: 'ICMP errors',
-      title: 'Probes were refused with an ICMP error rather than going unanswered. Zoom in to see which.',
-      count: 0,
-    })
-  }
+  const out: Badge[] = FLAGS.filter((f) => any & f.bit).map((f) =>
+    f.bit === FLAG_ICMP_ERROR ? { label: f.label, title: `${f.title} Zoom in to see which.`, count: 0 } : flagBadge(f, 0, probeType),
+  )
   // Not one of the flag bits: the master derives it from the order probes were
   // sent in, so it has its own column and is added here by hand.
   if (positional.some((n) => n > 0)) {
@@ -163,7 +122,8 @@ function flagCounts(
   lossWindows: (number | null)[],
   probeType: unknown,
 ): Badge[] {
-  const out: Badge[] = FLAGS.map((f) => {
+  // ICMP errors are left to the named entries below, one per error.
+  const out: Badge[] = FLAGS.filter((f) => f.bit !== FLAG_ICMP_ERROR).map((f) => {
     let count = 0
     for (let i = 0; i < flags.length; i++) if (flags[i] & f.bit) count++
     return flagBadge(f, count, probeType)
@@ -578,7 +538,7 @@ export default function Plot({
       csvFileName([target.title ?? target.path, family, agentName], rows.range.from, rows.range.to),
       roundTripRows(
         rows,
-        [...FLAGS, { bit: FLAG_ICMP_ERROR, label: 'ICMP errors' }],
+        FLAGS,
         Number(target.settings.interval_s.effective) || 0,
       ),
     )

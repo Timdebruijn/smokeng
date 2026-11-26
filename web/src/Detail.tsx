@@ -18,7 +18,13 @@ import { fmtLoss, fmtUs } from './format'
 import { Stat, StatusDot, ErrorText, LivePill, ResetZoom, downloadCSV, useTimeWindow } from './shared'
 import {
   RANGES,
+  countedFlags,
+  flagsIn,
   measurementLabel,
+  rangeWords,
+  rowStatus,
+  STATUS_COLOR,
+  worstStatus,
   seriesLabel,
   shownFamilies,
   summarise,
@@ -140,6 +146,9 @@ export default function Detail({
     // familiesKey stands for families, which is a new array on every render.
   }, [target.id, agentId, familiesKey, from, to])
   const shownStats = agentId === null ? [] : families.map((f) => stats[familyKey(f)]).filter((s) => s != null)
+  // The same status, and the same colour, as this target's row on the overview:
+  // a row that is yellow there for its flags must not turn green here.
+  const status = worstStatus(shownStats.map((s) => rowStatus(s, countedFlags(s.flags, probeType))))
 
   useEffect(() => {
     fetchAlertRules()
@@ -159,16 +168,11 @@ export default function Detail({
 
       <div className="detail-head">
         <StatusDot
-          background={
-            shownStats.some((s) => s.sent > 0)
-              ? shownStats.some((s) => s.loss > 0)
-                ? 'var(--warn)'
-                : 'var(--good)'
-              : 'var(--dim)'
-          }
+          background={STATUS_COLOR[status]}
           label={measurementLabel({
-            sent: shownStats.some((s) => s.sent > 0) ? 1 : 0,
-            loss: shownStats.some((s) => s.loss > 0) ? 1 : 0,
+            sent: status === 'nodata' ? 0 : 1,
+            loss: status === 'loss' ? 1 : 0,
+            flagged: status === 'flagged' ? 1 : 0,
           })}
         />
         <h1>{target.title ?? target.path}</h1>
@@ -202,6 +206,7 @@ export default function Detail({
           return (
             <Fragment key={familyKey(f)}>
               {f && <p className="family-label">{f}</p>}
+              <FlagNotes flags={st ? flagsIn(st.flags, probeType) : []} rangeS={rangeS} zoomed={zoom !== null} />
               <div className="stat-grid">
                 <Stat label="Median" value={st?.median != null ? fmtUs(st.median) : '—'} />
                 <Stat label="p95" value={st?.p95 != null ? fmtUs(st.p95) : '—'} />
@@ -603,5 +608,31 @@ function AvailabilityPanel({ target, families }: { target: Target; families: (Fa
         })
       )}
     </section>
+  )
+}
+
+/**
+ * Which quality flags the intervals in the window carried, and what each means.
+ * The figures are read from one column pooled over the whole window, which says
+ * which flags occurred but not how often: the badges beside the graph count
+ * them once the window is short enough to show intervals one by one.
+ */
+function FlagNotes({ flags, rangeS, zoomed }: { flags: { label: string; title: string }[]; rangeS: number; zoomed: boolean }) {
+  if (flags.length === 0) return null
+  return (
+    <div className="warn-line flag-notes">
+      <p>
+        <strong>Quality flags</strong> {zoomed ? 'in the zoomed window' : `in the last ${rangeWords(rangeS)}`}:
+        what was recorded about how these figures were measured, and about probes that did not go out or were
+        refused. The badges beside the graph count the intervals; zoom in to see which intervals they are.
+      </p>
+      <ul>
+        {flags.map((f) => (
+          <li key={f.label}>
+            <strong>{f.label}</strong>: {f.title}
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }

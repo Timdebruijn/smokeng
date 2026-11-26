@@ -406,9 +406,91 @@ export function rowStatus(r: { sent: number; loss: number }, flagged: number): R
   return r.sent === 0 ? 'nodata' : r.loss > 0 ? 'loss' : flagged !== 0 ? 'flagged' : 'ok'
 }
 
+export const STATUS_COLOR: Record<RowStatus, string> = { nodata: 'var(--dim)', loss: 'var(--bad)', flagged: 'var(--warn)', ok: 'var(--good)' }
+
 const STATUS_RANK: RowStatus[] = ['nodata', 'ok', 'flagged', 'loss']
 
 /** The worst of several statuses: no data < ok < flagged < loss. */
 export function worstStatus(statuses: RowStatus[]): RowStatus {
   return statuses.reduce<RowStatus>((a, s) => (STATUS_RANK.indexOf(s) > STATUS_RANK.indexOf(a) ? s : a), 'nodata')
+}
+
+/**
+ * Measurement-quality flags (store.Flag* in Go). A measurement is only worth
+ * as much as the conditions it was taken under, so anything that weakens it
+ * is surfaced next to the plot instead of being left to be inferred.
+ */
+/** store.FlagICMPError: the plot names each ICMP error rather than this bit alone. */
+export const FLAG_ICMP_ERROR = 1 << 4
+
+export const QUALITY_FLAGS: { bit: number; label: string; title: string }[] = [
+  { bit: 1 << 0, label: 'userspace TX', title: 'Send timestamps taken in userspace; scheduler jitter widens the smoke.' },
+  { bit: 1 << 1, label: 'userspace RX', title: 'Receive timestamps taken in userspace; scheduler jitter widens the smoke.' },
+  { bit: 1 << 2, label: 'raw socket', title: 'Unprivileged datagram ICMP was unavailable; running on raw sockets.' },
+  {
+    bit: 1 << 3,
+    label: 'dropped replies',
+    title: 'The receive queue overflowed: some loss shown here is ours, not the network’s.',
+  },
+  {
+    bit: 1 << 5,
+    label: 'clock step',
+    title: 'The wall clock jumped during these intervals; affected RTTs are unreliable.',
+  },
+  {
+    bit: 1 << 7,
+    label: 'cut short',
+    title:
+      'This interval was finalized before its window closed — a restart or a settings change. Probes still in flight were abandoned rather than counted as lost, so its loss figure is not comparable with a whole interval.',
+  },
+  {
+    bit: 1 << 6,
+    label: 'not sent',
+    // Deliberately generic. The reason badges beside the graph carry the
+    // detail, and they now cover cases this title used to exclude: a far end
+    // refusing the traffic, which arrives as a local error, and this prober's
+    // own deadline expiring, where nothing was asked of the target at all.
+    // Worded so it also reads right in a list away from those badges.
+    title: 'These probes never went out, and count as lost. The reason badges beside the graph say why — and whether the cause was here or at the far end.',
+  },
+  {
+    bit: FLAG_ICMP_ERROR,
+    label: 'ICMP errors',
+    title: 'Probes were refused with an ICMP error rather than going unanswered.',
+  },
+]
+
+/** The quality flags in an OR of flags that count against this probe type (countedFlags). */
+export function flagsIn(flags: number, probeType: unknown): typeof QUALITY_FLAGS {
+  return QUALITY_FLAGS.filter((f) => countedFlags(flags & f.bit, probeType) !== 0)
+}
+
+/**
+ * Per counted flag in an interval-by-interval series: how many intervals carried
+ * it, and when the last of them started. Not for a pooled read, whose rows are
+ * columns of many intervals.
+ */
+export function flagCounts(
+  s: { ts: ArrayLike<number>; flags: ArrayLike<number>; pooled?: unknown },
+  probeType: unknown,
+): { label: string; title: string; count: number; last: number }[] {
+  // A pooled row is a column of many intervals: counting rows would count columns.
+  if (s.pooled) return []
+  return flagsIn(QUALITY_FLAGS.reduce((a, f) => a | f.bit, 0), probeType).flatMap((f) => {
+    let count = 0
+    let last = 0
+    for (let i = 0; i < s.flags.length; i++) {
+      if (!(s.flags[i] & f.bit)) continue
+      count++
+      last = Math.max(last, s.ts[i])
+    }
+    return count > 0 ? [{ label: f.label, title: f.title, count, last }] : []
+  })
+}
+
+/** One flag on an overview row: "cut short in 1 of 12 intervals, last at 22:25". */
+export function flagNote(f: { label: string; count: number }, intervals: number, lastAt: string): string {
+  return f.count === intervals
+    ? `${f.label} in every interval`
+    : `${f.label} in ${f.count} of ${intervals} ${intervals === 1 ? 'interval' : 'intervals'}, last at ${lastAt}`
 }
