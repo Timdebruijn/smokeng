@@ -143,8 +143,13 @@ export default function Overview({
             if (x.agentId === null) return { ...x, ...none }
             try {
               const s = await fetchSeries(x.target.id, x.agentId, now - WINDOW_S, now, undefined, x.family)
+              // Read without columns, so interval by interval: one row is one interval.
               const notes = flagCounts(s, x.target.settings.probe_type.effective).map((f) =>
-                flagNote(f, s.ts.length, new Date(f.last * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+                flagNote(
+                  f,
+                  s.ts.length,
+                  new Date(f.last * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }),
+                ),
               )
               return { ...x, ...summarise(s), notes, spark: sparkOf(s) }
             } catch {

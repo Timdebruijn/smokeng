@@ -262,7 +262,8 @@ A flagged row on the overview says by what under its host: each badge that count
 many of the hour's intervals, and when the last of them started, for example `cut short in 1
 of 12 intervals, last at 22:25`. A target's own page lists the badges in its window above the
 figures, each with what it means, and the mark before its name follows the overview's rule:
-a row that is yellow there is yellow there too.
+a row that is yellow there is yellow there too. Both say `ICMP errors` as one entry; the badges
+beside the plot name each error.
 
 | Badge | Meaning | What to do |
 | --- | --- | --- |

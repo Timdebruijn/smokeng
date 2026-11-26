@@ -622,9 +622,9 @@ function FlagNotes({ flags, rangeS, zoomed }: { flags: { label: string; title: s
   return (
     <div className="warn-line flag-notes">
       <p>
-        <strong>Measured under weakened conditions</strong>{' '}
-        {zoomed ? 'in the zoomed window' : `in the last ${rangeWords(rangeS)}`}. The badges beside the graph
-        count the intervals and give the reasons; zoom in to see which intervals they are.
+        <strong>Quality flags</strong> {zoomed ? 'in the zoomed window' : `in the last ${rangeWords(rangeS)}`}:
+        what was recorded about how these figures were measured, and about probes that did not go out or were
+        refused. The badges beside the graph count the intervals; zoom in to see which intervals they are.
       </p>
       <ul>
         {flags.map((f) => (

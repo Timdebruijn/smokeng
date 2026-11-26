@@ -420,6 +420,9 @@ export function worstStatus(statuses: RowStatus[]): RowStatus {
  * as much as the conditions it was taken under, so anything that weakens it
  * is surfaced next to the plot instead of being left to be inferred.
  */
+/** store.FlagICMPError: the plot names each ICMP error rather than this bit alone. */
+export const FLAG_ICMP_ERROR = 1 << 4
+
 export const QUALITY_FLAGS: { bit: number; label: string; title: string }[] = [
   { bit: 1 << 0, label: 'userspace TX', title: 'Send timestamps taken in userspace; scheduler jitter widens the smoke.' },
   { bit: 1 << 1, label: 'userspace RX', title: 'Receive timestamps taken in userspace; scheduler jitter widens the smoke.' },
@@ -443,11 +446,17 @@ export const QUALITY_FLAGS: { bit: number; label: string; title: string }[] = [
   {
     bit: 1 << 6,
     label: 'not sent',
-    // Deliberately generic. The reason entries beside this one carry the
+    // Deliberately generic. The reason badges beside the graph carry the
     // detail, and they now cover cases this title used to exclude: a far end
     // refusing the traffic, which arrives as a local error, and this prober's
     // own deadline expiring, where nothing was asked of the target at all.
-    title: 'These probes never went out. The reason beside this says which — and whether the cause was here or at the far end.',
+    // Worded so it also reads right in a list away from those badges.
+    title: 'These probes never went out, and count as lost. The reason badges beside the graph say why — and whether the cause was here or at the far end.',
+  },
+  {
+    bit: FLAG_ICMP_ERROR,
+    label: 'ICMP errors',
+    title: 'Probes were refused with an ICMP error rather than going unanswered.',
   },
 ]
 
@@ -462,9 +471,11 @@ export function flagsIn(flags: number, probeType: unknown): typeof QUALITY_FLAGS
  * columns of many intervals.
  */
 export function flagCounts(
-  s: { ts: ArrayLike<number>; flags: ArrayLike<number> },
+  s: { ts: ArrayLike<number>; flags: ArrayLike<number>; pooled?: unknown },
   probeType: unknown,
 ): { label: string; title: string; count: number; last: number }[] {
+  // A pooled row is a column of many intervals: counting rows would count columns.
+  if (s.pooled) return []
   return flagsIn(QUALITY_FLAGS.reduce((a, f) => a | f.bit, 0), probeType).flatMap((f) => {
     let count = 0
     let last = 0

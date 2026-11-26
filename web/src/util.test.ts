@@ -19,6 +19,7 @@ import {
   flagCounts,
   flagNote,
   flagsIn,
+  QUALITY_FLAGS,
   groupOfPath,
   groupRows,
   rowStatus,
@@ -426,4 +427,19 @@ test('flagCounts counts intervals per flag and keeps the start of the last one',
 test('flagNote says how many intervals of how many, and when', () => {
   assert.equal(flagNote({ label: 'cut short', count: 1 }, 12, '22:25'), 'cut short in 1 of 12 intervals, last at 22:25')
   assert.equal(flagNote({ label: 'not sent', count: 12 }, 12, '22:25'), 'not sent in every interval')
+})
+
+test('the shared flag list names every bit of the flags byte', () => {
+  // store.Flag* fills all eight bits. A bit missing here is a flag the overview
+  // counts against a series without ever saying what it was.
+  assert.equal(QUALITY_FLAGS.reduce((a, f) => a | f.bit, 0), 0xff)
+  assert.equal(new Set(QUALITY_FLAGS.map((f) => f.bit)).size, QUALITY_FLAGS.length)
+})
+
+test('flagCounts says nothing for a pooled read, whose rows are columns', () => {
+  assert.deepEqual(flagCounts({ ts: [1], flags: [1 << 7], pooled: {} }, 'icmp'), [])
+})
+
+test('flagsIn names ICMP errors, which count against a series', () => {
+  assert.deepEqual(flagsIn(1 << 4, 'icmp').map((f) => f.label), ['ICMP errors'])
 })

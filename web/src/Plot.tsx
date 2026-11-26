@@ -7,7 +7,7 @@ import {
   type PathChange,
   type Target,
 } from './api'
-import { countedFlags, measurementLabel, QUALITY_FLAGS as FLAGS, type Family } from './util'
+import { countedFlags, FLAG_ICMP_ERROR, measurementLabel, QUALITY_FLAGS as FLAGS, type Family } from './util'
 import { setCursor, subscribeCursor } from './crosshair'
 import { chartSummary, positionalTitle, replyLines } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt, stepRow } from './layout'
@@ -75,7 +75,6 @@ function flagBadge(f: (typeof FLAGS)[number], count: number, probeType: unknown)
   }
 }
 
-const FLAG_ICMP_ERROR = 1 << 4
 const FLAG_SEND_FAILED = 1 << 6
 
 /** How often each code appears on rows carrying `bit`, most frequent first. */
@@ -98,14 +97,9 @@ function tally(flags: Uint8Array, codes: (number | null)[], bit: number): [numbe
 function pooledFlags(flags: Uint8Array, positional: Float64Array, probeType: unknown): Badge[] {
   let any = 0
   for (let i = 0; i < flags.length; i++) any |= flags[i]
-  const out: Badge[] = FLAGS.filter((f) => any & f.bit).map((f) => flagBadge(f, 0, probeType))
-  if (any & FLAG_ICMP_ERROR) {
-    out.push({
-      label: 'ICMP errors',
-      title: 'Probes were refused with an ICMP error rather than going unanswered. Zoom in to see which.',
-      count: 0,
-    })
-  }
+  const out: Badge[] = FLAGS.filter((f) => any & f.bit).map((f) =>
+    f.bit === FLAG_ICMP_ERROR ? { label: f.label, title: `${f.title} Zoom in to see which.`, count: 0 } : flagBadge(f, 0, probeType),
+  )
   // Not one of the flag bits: the master derives it from the order probes were
   // sent in, so it has its own column and is added here by hand.
   if (positional.some((n) => n > 0)) {
@@ -128,7 +122,8 @@ function flagCounts(
   lossWindows: (number | null)[],
   probeType: unknown,
 ): Badge[] {
-  const out: Badge[] = FLAGS.map((f) => {
+  // ICMP errors are left to the named entries below, one per error.
+  const out: Badge[] = FLAGS.filter((f) => f.bit !== FLAG_ICMP_ERROR).map((f) => {
     let count = 0
     for (let i = 0; i < flags.length; i++) if (flags[i] & f.bit) count++
     return flagBadge(f, count, probeType)
@@ -543,7 +538,7 @@ export default function Plot({
       csvFileName([target.title ?? target.path, family, agentName], rows.range.from, rows.range.to),
       roundTripRows(
         rows,
-        [...FLAGS, { bit: FLAG_ICMP_ERROR, label: 'ICMP errors' }],
+        FLAGS,
         Number(target.settings.interval_s.effective) || 0,
       ),
     )
