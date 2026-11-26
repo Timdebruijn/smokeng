@@ -16,7 +16,10 @@ import {
   afterName,
   alertKey,
   countedFlags,
+  flagCounts,
+  flagNote,
   groupRows,
+  STATUS_COLOR,
   orderedTargets,
   rowStatus,
   worstStatus,
@@ -45,7 +48,6 @@ function loadCollapsed(): string[] {
   }
 }
 
-const STATUS_COLOR = { nodata: 'var(--dim)', loss: 'var(--bad)', flagged: 'var(--warn)', ok: 'var(--good)' }
 const STATUS_WORD = { nodata: 'no data', loss: 'loss', flagged: 'flagged', ok: 'ok' }
 
 interface Row {
@@ -63,6 +65,8 @@ interface Row {
   sent: number
   received: number
   flags: number
+  // What the flags were, in words, for the row to say beside its square.
+  notes: string[]
   spark: number[]
 }
 
@@ -135,11 +139,14 @@ export default function Overview({
 
         const built = await Promise.all(
           series.map(async (x) => {
-            const none = { median: null, p95: null, loss: 0, sent: 0, received: 0, flags: 0, spark: [] }
+            const none = { median: null, p95: null, loss: 0, sent: 0, received: 0, flags: 0, notes: [], spark: [] }
             if (x.agentId === null) return { ...x, ...none }
             try {
               const s = await fetchSeries(x.target.id, x.agentId, now - WINDOW_S, now, undefined, x.family)
-              return { ...x, ...summarise(s), spark: sparkOf(s) }
+              const notes = flagCounts(s, x.target.settings.probe_type.effective).map((f) =>
+                flagNote(f, s.ts.length, new Date(f.last * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+              )
+              return { ...x, ...summarise(s), notes, spark: sparkOf(s) }
             } catch {
               return { ...x, ...none }
             }
@@ -323,6 +330,9 @@ export default function Overview({
                                 </span>
                               )}
                             </span>
+                            {/* The square says flagged; this says by what, in text a
+                                keyboard, a touch screen and a screen reader all get. */}
+                            {r.notes.length > 0 && <span className="health-flags">{r.notes.join('; ')}</span>}
                           </span>
                           <Spark values={r.spark} />
                           <span className="mono">

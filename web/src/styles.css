@@ -2219,3 +2219,21 @@ dialog.modal-host::backdrop {
   margin: 0.25rem 0;
   font-size: 0.85rem;
 }
+
+/* What an overview row's flags were, under its host. --warn-text, not --warn:
+   it is text, and has to reach 4.5:1 on the card in both themes. */
+.health-flags {
+  display: block;
+  font-size: 12px;
+  color: var(--warn-text);
+  overflow-wrap: anywhere;
+}
+
+.flag-notes p {
+  margin: 0;
+}
+
+.flag-notes ul {
+  margin: 0.3rem 0 0.6rem;
+  padding-left: 1.2rem;
+}

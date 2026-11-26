@@ -258,6 +258,12 @@ on a `tcp`, `http(s)` or `irtt` target, where they are on every interval that go
 On the overview a row's dot is red on loss and grey without data first, and otherwise follows
 the same rule; its "Flagged" figure counts series by it too.
 
+A flagged row on the overview says by what under its host: each badge that counts, in how
+many of the hour's intervals, and when the last of them started, for example `cut short in 1
+of 12 intervals, last at 22:25`. A target's own page lists the badges in its window above the
+figures, each with what it means, and the mark before its name follows the overview's rule:
+a row that is yellow there is yellow there too.
+
 | Badge | Meaning | What to do |
 | --- | --- | --- |
 | `userspace TX` / `userspace RX` | Timestamps were taken in userspace, not by the kernel. Scheduler jitter is included in the measurement, so the smoke is wider than the network really is. On Linux, `tcp`, `http(s)` and `irtt` targets always carry both badges, because those probes are timed in userspace. On `icmp` and `dns` targets on Linux it means kernel timestamping was unavailable. Expected for everything on macOS. | Expect it on tcp, http(s) and irtt. On icmp or dns, check the host for scheduler load before blaming the path. |
