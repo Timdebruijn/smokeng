@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/timdebruijn/smokeng/internal/ingest"
+	"github.com/timdebruijn/smokeng/internal/probe"
 	"github.com/timdebruijn/smokeng/internal/tree"
 )
 
@@ -20,8 +21,9 @@ const (
 // agentCadences returns, per agent name, how often that agent should be heard
 // from: the shortest interval among the enabled host targets it measures, plus
 // the push cadence. An agent reports when it has measurements, so this is the
-// longest it should go quiet. An agent that measures nothing has no entry: its
-// silence says nothing.
+// longest it should go quiet. A target the prober skips as unmeasurable (a tcp
+// target without a port) does not count, since it never produces anything to
+// report. An agent that measures nothing has no entry: its silence says nothing.
 //
 // Only the targets the caller can see count, so the figure tells a scoped
 // caller nothing about targets outside their scope.
@@ -35,6 +37,9 @@ func agentCadences(sc *Scope, targets []tree.Target) (map[string]int64, error) {
 		res, err := sc.tr.Resolve(n.ID)
 		if err != nil {
 			return nil, err
+		}
+		if !probe.Measurable(res) {
+			continue
 		}
 		every := int64(res.IntervalS.Effective) + int64(ingest.PushEvery/time.Second)
 		for _, name := range strings.Fields(res.Agents.Effective) {

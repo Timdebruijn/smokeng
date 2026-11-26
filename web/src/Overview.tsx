@@ -159,8 +159,10 @@ export default function Overview({
               )
               return { ...x, ...summarise(s), notes: quiet ? [quiet, ...notes] : notes, spark: sparkOf(s) }
             } catch {
-              // Not "no data": nothing was learned about the series at all.
-              return { ...x, ...none, notes: ['could not be read; it is retried on the next refresh'] }
+              // Not "no data": nothing was learned about the series at all. A
+              // silent agent stays first, being the likelier cause.
+              const unread = 'could not be read'
+              return { ...x, ...none, notes: quiet ? [quiet, unread] : [unread] }
             }
           }),
         )
