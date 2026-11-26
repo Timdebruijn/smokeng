@@ -23,7 +23,17 @@ export default function IrttKeyPanel({ endpoint, agents }: { endpoint: string; a
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const id = useId()
-  const toggle = useRef<HTMLButtonElement>(null)
+  // Saving, removing or cancelling takes away the control that had focus;
+  // put it on the first button of the block once it is back.
+  const section = useRef<HTMLElement>(null)
+  const refocus = useRef(false)
+  useEffect(() => {
+    if (!refocus.current || busy) return
+    refocus.current = false
+    if (!section.current?.contains(document.activeElement)) {
+      section.current?.querySelector<HTMLElement>('.actions button')?.focus()
+    }
+  }, [state, entering, busy])
 
   useEffect(() => {
     let live = true
@@ -41,6 +51,7 @@ export default function IrttKeyPanel({ endpoint, agents }: { endpoint: string; a
   const act = async (fn: () => Promise<IrttKey | null>, done: string) => {
     setBusy(true)
     setError(null)
+    refocus.current = true
     try {
       const next = await fn()
       setState(next ?? { endpoint, source: 'none' })
@@ -71,7 +82,7 @@ export default function IrttKeyPanel({ endpoint, agents }: { endpoint: string; a
     }, `irtt key saved for ${endpoint}`)
 
   return (
-    <section className="irtt-key" aria-labelledby={`${id}-h`}>
+    <section ref={section} className="irtt-key" aria-labelledby={`${id}-h`}>
       <h3 id={`${id}-h`}>irtt key</h3>
       <p className="hint">
         For an irtt server started with <code>--hmac</code>. Endpoint <code>{endpoint}</code>; every
@@ -131,7 +142,14 @@ export default function IrttKeyPanel({ endpoint, agents }: { endpoint: string; a
                 <button type="submit" disabled={busy}>
                   Save key
                 </button>
-                <button type="button" disabled={busy} onClick={() => setEntering(false)}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    refocus.current = true
+                    setEntering(false)
+                  }}
+                >
                   Cancel
                 </button>
               </div>
@@ -139,7 +157,7 @@ export default function IrttKeyPanel({ endpoint, agents }: { endpoint: string; a
           ) : (
             <div className="actions">
               {state.source === 'db' && (
-                <button ref={toggle} disabled={busy} aria-expanded={shown} onClick={() => setShown(!shown)}>
+                <button disabled={busy} aria-expanded={shown} onClick={() => setShown(!shown)}>
                   {shown ? 'Hide key' : 'Show key'}
                 </button>
               )}

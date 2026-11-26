@@ -2149,4 +2149,5 @@ dialog.modal-host::backdrop {
   overflow-wrap: anywhere;
   user-select: all;
   margin: 0.25rem 0;
+  font-size: 0.85rem;
 }
