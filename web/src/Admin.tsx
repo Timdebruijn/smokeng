@@ -838,7 +838,7 @@ function AddChildForm({
           <label>
             <span>Probe type</span>
             <select value={type} onChange={(e) => setType(e.target.value)} {...field('type')}>
-              <option value="">{`same as the group above (${inheritedType})`}</option>
+              <option value="">{`same as above (${inheritedType})`}</option>
               {typeChoices.map((c) => (
                 <option key={c.value} value={c.value}>
                   {c.label}
