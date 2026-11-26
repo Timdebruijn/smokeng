@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import {
   fetchAgents,
   fetchAlertEvents,
@@ -16,6 +16,10 @@ import {
   afterName,
   alertKey,
   countedFlags,
+  groupRows,
+  orderedTargets,
+  rowStatus,
+  worstStatus,
   showsFamily,
   measurementLabel,
   minMax,
@@ -29,6 +33,20 @@ import {
 } from './util'
 
 const WINDOW_S = 3600
+
+const COLLAPSED_KEY = 'smokeng.overview.collapsed'
+
+function loadCollapsed(): string[] {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]')
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+const STATUS_COLOR = { nodata: 'var(--dim)', loss: 'var(--bad)', flagged: 'var(--warn)', ok: 'var(--good)' }
+const STATUS_WORD = { nodata: 'no data', loss: 'loss', flagged: 'flagged', ok: 'ok' }
 
 interface Row {
   target: Target
@@ -74,6 +92,7 @@ export default function Overview({
   const [delivering, setDelivering] = useState(true)
   const [recent, setRecent] = useState<AlertEvent[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [collapsed, setCollapsed] = useState<string[]>(loadCollapsed)
 
   // Bumped on a timer to re-run the effect below. Relying on the effect's own
   // cleanup (which React runs before the next tick's effect body) to flip
@@ -81,6 +100,16 @@ export default function Overview({
   // landing after a faster, newer one already painted the screen — the same
   // pattern Graphs (App.tsx) uses for the same reason.
   const [refreshTick, setRefreshTick] = useState(0)
+
+  const toggle = (path: string) => {
+    const next = collapsed.includes(path) ? collapsed.filter((p) => p !== path) : [...collapsed, path]
+    setCollapsed(next)
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next))
+    } catch {
+      // Private window or blocked storage: the choice just lasts until reload.
+    }
+  }
 
   const bump = useCallback(() => setRefreshTick((t) => t + 1), [])
   const { live, toggleLive } = useLiveRefresh(bump, REFRESH_MS)
@@ -92,7 +121,10 @@ export default function Overview({
       try {
         const [targets, agents] = await Promise.all([fetchTargets(), fetchAgents()])
         const byName = new Map(agents.map((a: AgentInfo) => [a.name, a.id]))
-        const leaves = targets.filter((t) => t.host !== null && t.enabled && !t.hidden)
+        const pos = new Map(orderedTargets(targets).map((o, i) => [o.target.id, i]))
+        const leaves = targets
+          .filter((t) => t.host !== null && t.enabled && !t.hidden)
+          .sort((a, b) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0))
         const now = Math.floor(Date.now() / 1000)
 
         // One row per (target, agent, family), not per target. A target measured
@@ -145,6 +177,9 @@ export default function Overview({
   const counted = (r: { flags: number; target: Target }) =>
     countedFlags(r.flags, r.target.settings.probe_type.effective)
   const flagged = rows?.filter((r) => counted(r) !== 0).length ?? 0
+  const groups = groupRows(rows ?? [])
+  // No headers when nothing is grouped: the list reads as it always did.
+  const grouped = groups.some((g) => g.path !== '')
   const measured = rows?.filter((r) => r.spark.length > 0).length ?? 0
 
   return (
@@ -206,73 +241,106 @@ export default function Overview({
             </p>
           ) : (
             <>
-              {rows.map((r) => {
-                // `spark.length` is not "do we have anything to show": a target
-                // with total loss has sent probes and gotten zero replies back,
-                // so its spark and latencies are empty even though the loss
-                // figure is exactly known and is the single most important
-                // thing this row can say. `sent` tells "never measured" apart
-                // from "measured, and everything was lost".
-                const noData = r.sent === 0
+              {groups.map((g) => {
+                const open = !collapsed.includes(g.path)
+                const label = g.path === '' ? 'Top level' : g.path
+                const status = worstStatus(g.rows.map((r) => rowStatus(r, counted(r))))
+                const loss = g.rows.reduce((a, r) => Math.max(a, r.loss), 0)
+                const nFlagged = g.rows.filter((r) => counted(r) !== 0).length
+                const nTargets = new Set(g.rows.map((r) => r.target.id)).size
                 return (
-                  <button
-                    key={seriesKey(r.target.id, r.agentId, r.family)}
-                    className="health-row"
-                    onClick={() => onOpenDetail(r.target.id)}
-                  >
-                    <StatusDot
-                      background={
-                        noData
-                          ? 'var(--dim)'
-                          : r.loss > 0
-                            ? 'var(--bad)'
-                            : counted(r) !== 0
-                              ? 'var(--warn)'
-                              : 'var(--good)'
-                      }
-                      label={measurementLabel({ sent: r.sent, loss: r.loss, flagged: counted(r) })}
-                    />
-                    <span className="health-name">
-                      <span className="health-title">
-                        {r.target.title ?? r.target.name}
-                        {r.agentId === null ? (
-                          <span className="from-agent">{r.agentName} not enrolled</span>
-                        ) : (
-                          r.agentName && <span className="from-agent">from {r.agentName}</span>
-                        )}
-                      </span>
-                      <span className="health-host">
-                        {/* The family comes first on the host line, so the two
-                            rows of a target measured over both families differ
-                            at the start of the line, not after a long host. */}
-                        {r.family ? `${r.family} · ` : ''}
-                        {r.target.host}
-                        {/* Only when it is not the default. On a dense list a
-                            badge reading "icmp" on every row carries no
-                            information; one reading "https" tells you why this
-                            row's numbers are an order of magnitude larger than
-                            its neighbour's. The detail page always says. */}
-                        {r.target.settings.probe_type.effective !== 'icmp' && (
-                          <span className="badge probe-type">
-                            {r.target.settings.probe_type.effective}
+                  <Fragment key={g.path}>
+                    {grouped && (
+                      <h3 className="group-head">
+                        <button
+                          type="button"
+                          className="group-toggle"
+                          aria-expanded={open}
+                          onClick={() => toggle(g.path)}
+                        >
+                          <StatusDot background={STATUS_COLOR[status]} label={STATUS_WORD[status]} />
+                          <span className="group-label">{label}</span>
+                          <span className="group-meta">
+                            <span className="visually-hidden">, </span>
+                            {nTargets} {nTargets === 1 ? 'target' : 'targets'}
+                            <span className="visually-hidden">, worst loss</span>
+                            <span aria-hidden="true"> · </span>
+                            {status === 'nodata' ? '—' : fmtLoss(loss)}
+                            {nFlagged > 0 && (
+                              <>
+                                <span aria-hidden="true"> · </span>
+                                <span className="visually-hidden">, </span>
+                                {nFlagged} flagged
+                              </>
+                            )}
+                            <span className="visually-hidden">, {open ? 'collapse' : 'expand'}</span>
                           </span>
-                        )}
-                      </span>
-                    </span>
-                    <Spark values={r.spark} />
-                    <span className="mono">
-                      <span className="visually-hidden">median </span>
-                      {r.median === null ? '—' : fmtUs(r.median)}
-                    </span>
-                    <span className="mono dimmed">
-                      <span className="visually-hidden">p95 </span>
-                      {r.p95 === null ? '—' : fmtUs(r.p95)}
-                    </span>
-                    <span className={!noData && r.loss > 0 ? 'mono bad' : 'mono dimmed'}>
-                      <span className="visually-hidden">loss </span>
-                      {noData ? '—' : fmtLoss(r.loss)}
-                    </span>
-                  </button>
+                        </button>
+                      </h3>
+                    )}
+                    {open &&
+                      g.rows.map((r) => {
+                      // `spark.length` is not "do we have anything to show": a target
+                      // with total loss has sent probes and gotten zero replies back,
+                      // so its spark and latencies are empty even though the loss
+                      // figure is exactly known and is the single most important
+                      // thing this row can say. `sent` tells "never measured" apart
+                      // from "measured, and everything was lost".
+                      const noData = r.sent === 0
+                      return (
+                        <button
+                          key={seriesKey(r.target.id, r.agentId, r.family)}
+                          className="health-row"
+                          onClick={() => onOpenDetail(r.target.id)}
+                        >
+                          <StatusDot
+                            background={STATUS_COLOR[rowStatus(r, counted(r))]}
+                            label={measurementLabel({ sent: r.sent, loss: r.loss, flagged: counted(r) })}
+                          />
+                          <span className="health-name">
+                            <span className="health-title">
+                              {r.target.title ?? r.target.name}
+                              {r.agentId === null ? (
+                                <span className="from-agent">{r.agentName} not enrolled</span>
+                              ) : (
+                                r.agentName && <span className="from-agent">from {r.agentName}</span>
+                              )}
+                            </span>
+                            <span className="health-host">
+                              {/* The family comes first on the host line, so the two
+                                  rows of a target measured over both families differ
+                                  at the start of the line, not after a long host. */}
+                              {r.family ? `${r.family} · ` : ''}
+                              {r.target.host}
+                              {/* Only when it is not the default. On a dense list a
+                                  badge reading "icmp" on every row carries no
+                                  information; one reading "https" tells you why this
+                                  row's numbers are an order of magnitude larger than
+                                  its neighbour's. The detail page always says. */}
+                              {r.target.settings.probe_type.effective !== 'icmp' && (
+                                <span className="badge probe-type">
+                                  {r.target.settings.probe_type.effective}
+                                </span>
+                              )}
+                            </span>
+                          </span>
+                          <Spark values={r.spark} />
+                          <span className="mono">
+                            <span className="visually-hidden">median </span>
+                            {r.median === null ? '—' : fmtUs(r.median)}
+                          </span>
+                          <span className="mono dimmed">
+                            <span className="visually-hidden">p95 </span>
+                            {r.p95 === null ? '—' : fmtUs(r.p95)}
+                          </span>
+                          <span className={!noData && r.loss > 0 ? 'mono bad' : 'mono dimmed'}>
+                            <span className="visually-hidden">loss </span>
+                            {noData ? '—' : fmtLoss(r.loss)}
+                          </span>
+                        </button>
+                      )
+                      })}
+                  </Fragment>
                 )
               })}
               {/* Every column on this row covers the same hour, so only the

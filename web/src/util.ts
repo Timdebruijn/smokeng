@@ -360,3 +360,34 @@ export function measurementLabel(s: { sent?: number; loss?: number; flagged?: nu
 export function mayChange(target: Pick<Target, 'writable'>, isAdmin: boolean, adminOnly = false): boolean {
   return target.writable && (isAdmin || !adminOnly)
 }
+
+/** The group a target is listed under: its path minus the last segment, '' for the top level. */
+export function groupOfPath(path: string): string {
+  return path.split('/').filter(Boolean).slice(0, -1).join('/')
+}
+
+/** Splits rows into groups by their target's parent, keeping the order given (first appearance). */
+export function groupRows<T extends { target: { path: string } }>(rows: T[]): { path: string; rows: T[] }[] {
+  const groups = new Map<string, T[]>()
+  for (const r of rows) {
+    const p = groupOfPath(r.target.path)
+    const list = groups.get(p)
+    if (list) list.push(r)
+    else groups.set(p, [r])
+  }
+  return [...groups].map(([path, rows]) => ({ path, rows }))
+}
+
+export type RowStatus = 'nodata' | 'ok' | 'flagged' | 'loss'
+
+/** How a row is coloured: nothing sent, loss, quality flags, or fine. */
+export function rowStatus(r: { sent: number; loss: number }, flagged: number): RowStatus {
+  return r.sent === 0 ? 'nodata' : r.loss > 0 ? 'loss' : flagged !== 0 ? 'flagged' : 'ok'
+}
+
+const STATUS_RANK: RowStatus[] = ['nodata', 'ok', 'flagged', 'loss']
+
+/** The worst of several statuses: no data < ok < flagged < loss. */
+export function worstStatus(statuses: RowStatus[]): RowStatus {
+  return statuses.reduce<RowStatus>((a, s) => (STATUS_RANK.indexOf(s) > STATUS_RANK.indexOf(a) ? s : a), 'nodata')
+}

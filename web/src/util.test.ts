@@ -14,6 +14,10 @@ import {
   csvCell,
   firingAnnouncement,
   filterByFamily,
+  groupOfPath,
+  groupRows,
+  rowStatus,
+  worstStatus,
   mayChange,
   parseFamilyChoice,
   resolveSeries,
@@ -352,4 +356,23 @@ test('the settings the Targets screen keeps with an admin are the ones the serve
   const client = [...ui.matchAll(/\{[^{}]*key: '([a-z_]+)'[^{}]*adminOnly: true/g)].map((m) => m[1])
   assert.ok(server && server.length > 0, 'adminOnlySettings not found in targets.go')
   assert.deepEqual(client.sort(), server.sort())
+})
+
+test('rows are grouped by parent path, in the order given', () => {
+  assert.equal(groupOfPath('/brabonet/sites/web'), 'brabonet/sites')
+  assert.equal(groupOfPath('/gateway'), '')
+  const rows = ['/a/x', '/gw', '/a/y', '/a/x'].map((path) => ({ target: { path } }))
+  assert.deepEqual(
+    groupRows(rows).map((g) => [g.path, g.rows.length]),
+    [['a', 3], ['', 1]],
+  )
+})
+
+test('the worst status wins: no data < ok < flagged < loss', () => {
+  assert.equal(rowStatus({ sent: 0, loss: 0 }, 0), 'nodata')
+  assert.equal(rowStatus({ sent: 5, loss: 0 }, 2), 'flagged')
+  assert.equal(rowStatus({ sent: 5, loss: 0.1 }, 2), 'loss')
+  assert.equal(worstStatus([]), 'nodata')
+  assert.equal(worstStatus(['ok', 'nodata', 'flagged']), 'flagged')
+  assert.equal(worstStatus(['flagged', 'loss', 'ok']), 'loss')
 })
