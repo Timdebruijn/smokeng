@@ -437,6 +437,27 @@ export function updateTarget(id: number, body: TargetPatch): Promise<unknown> {
   return mutate(`/api/v1/targets/${id}`, 'PATCH', body)
 }
 
+/** Where an irtt endpoint's HMAC key comes from; `key` only when it is stored here. */
+export interface IrttKey {
+  endpoint: string
+  source: 'db' | 'keyfile' | 'none'
+  key?: string
+}
+
+const irttKeyURL = (endpoint: string) => `/api/v1/irtt-keys/${encodeURIComponent(endpoint)}`
+
+export function fetchIrttKey(endpoint: string): Promise<IrttKey> {
+  return get<IrttKey>(irttKeyURL(endpoint), 'irtt key')
+}
+
+export function putIrttKey(endpoint: string, body: { key: string } | { generate: true }): Promise<IrttKey> {
+  return mutate(irttKeyURL(endpoint), 'PUT', body) as Promise<IrttKey>
+}
+
+export function deleteIrttKey(endpoint: string): Promise<unknown> {
+  return mutate(irttKeyURL(endpoint), 'DELETE')
+}
+
 export function deleteTarget(id: number, recursive: boolean): Promise<unknown> {
   return mutate(`/api/v1/targets/${id}${recursive ? '?recursive=true' : ''}`, 'DELETE')
 }
