@@ -1,3 +1,4 @@
+import IrttKeyPanel from './IrttKey'
 import TomlDialog from './TomlDialog'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import {
@@ -164,6 +165,11 @@ const ADMIN_ONLY_HINT = 'Only a global administrator may change this: its effect
 
 // The types the Port setting applies to, from the setting itself.
 const PORT_TYPES = SETTINGS.find((s) => s.key === 'probe_port')!.types!
+
+/** host:port as the probe looks the key up: IPv6 literals in brackets. */
+function irttEndpoint(host: string, port: number): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]:${port}` : `${host}:${port}`
+}
 
 export default function Admin({ isAdmin = false }: { isAdmin?: boolean }) {
   const [targets, setTargets] = useState<Target[]>([])
@@ -458,6 +464,15 @@ function TargetDetail({ target, agents, busy, isAdmin, onPatch, onDelete, onAddC
           ))}
         </tbody>
       </table>
+
+      {/* The key belongs to the server the target measures, and its routes are
+          for a global admin only: an editor through a grant does not see it. */}
+      {isAdmin && !target.is_group && target.host && String(target.settings.probe_type.effective) === 'irtt' && (
+        <IrttKeyPanel
+          endpoint={irttEndpoint(target.host, Number(target.settings.probe_port.effective) || 2112)}
+          agents={String(target.settings.agents.effective)}
+        />
+      )}
 
       <h3>Structure</h3>
       <div className="actions">

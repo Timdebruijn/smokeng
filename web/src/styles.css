@@ -2142,3 +2142,12 @@ dialog.modal-host::backdrop {
     outline-offset: -2px;
   }
 }
+
+/* A key is one long unbroken token; let it wrap rather than widen the page. */
+.irtt-key-value {
+  display: block;
+  overflow-wrap: anywhere;
+  user-select: all;
+  margin: 0.25rem 0;
+  font-size: 0.85rem;
+}
