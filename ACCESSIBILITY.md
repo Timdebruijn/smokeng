@@ -1,6 +1,6 @@
 # Accessibility statement for smokeng
 
-This statement covers the web interface that the smokeng binary serves. It follows the structure of the [W3C accessibility statement](https://www.w3.org/WAI/planning/statements/) and describes smokeng v0.31.0.
+This statement covers the web interface that the smokeng binary serves. It follows the structure of the [W3C accessibility statement](https://www.w3.org/WAI/planning/statements/) and describes smokeng v0.32.0.
 
 ## Conformance status
 
@@ -65,6 +65,8 @@ If something in smokeng does not work for you, open an issue at <https://github.
 
 ## Date
 
-This statement was written on 25 November 2026 for v0.30.0, reviewed on 26 November 2026 for v0.31.0, and is reviewed with every release that changes the interface.
+This statement was written on 25 November 2026 for v0.30.0, reviewed on 26 November 2026 for v0.31.0 and on 27 November 2026 for v0.32.0, and is reviewed with every release that changes the interface.
 
 v0.31.0 changes the Targets page (settings edited in place, a probe type in the add form, an irtt key block) and groups the Overview and Graphs pages by target group. These parts were checked with the keyboard, in the accessibility tree and at 390 px, but were not part of either audit above, and no screen reader was tried on them.
+
+v0.32.0 says by what a series is flagged: a line of text under the target's name in its Overview row and a list of flag notes on a target's page, both in the existing warning text colour, with the time in 24-hour form. They add no controls. They were reviewed in the source and their unit tests pass, but were not part of either audit above and were not checked in a browser, with the keyboard or with a screen reader.
