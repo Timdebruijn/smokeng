@@ -7,9 +7,11 @@ import {
   graphGroups,
   graphGroupLabel,
   afterName,
+  agentQuietNote,
   alertKey,
   alertName,
   RANGES,
+  relativeTime,
   rangeWords,
   countedFlags,
   countUnacked,
@@ -442,4 +444,24 @@ test('flagCounts says nothing for a pooled read, whose rows are columns', () => 
 
 test('flagsIn names ICMP errors, which count against a series', () => {
   assert.deepEqual(flagsIn(1 << 4, 'icmp').map((f) => f.label), ['ICMP errors'])
+})
+
+test('relativeTime is coarse, and never for nothing', () => {
+  assert.equal(relativeTime(undefined, 1000), 'never')
+  assert.equal(relativeTime(998, 1000), 'just now')
+  assert.equal(relativeTime(960, 1000), '40s ago')
+  assert.equal(relativeTime(1000 - 3 * 3600, 1000), '3 hours ago')
+})
+
+test('agentQuietNote says why a silent agent leaves no data, and nothing otherwise', () => {
+  const now = 100_000
+  assert.equal(agentQuietNote({ name: 'ams', state: 'never', report_every_s: 75 }, now), 'ams has never reported')
+  assert.equal(
+    agentQuietNote({ name: 'ams', state: 'silent', report_every_s: 315, last_seen: now - 3 * 3600 }, now),
+    'ams is silent: last reported 3 hours ago, expected every 5 minutes 15 seconds',
+  )
+  assert.match(agentQuietNote({ name: 'ams', state: 'late', report_every_s: 75, last_seen: now - 200 }, now)!, /^ams is late: /)
+  assert.equal(agentQuietNote({ name: 'ams', state: 'reporting', report_every_s: 75, last_seen: now }, now), null)
+  // No state: local, disabled, or measuring nothing.
+  assert.equal(agentQuietNote({ name: 'local' }, now), null)
 })

@@ -188,6 +188,33 @@ smokeng agent remove  --db smokeng.db 3
 All of this is also in the UI under **Agents**, which is the easier place to do it: it
 shows when each agent last reported, and which targets it measures.
 
+### Late and silent agents
+
+An agent reports when it has measurements: it pushes every 15 seconds what it has buffered,
+and it has something new once per interval of its fastest target. So it should be heard from
+at least once every **cadence**, its shortest target interval plus 15 seconds, counting only
+enabled targets with a host. Against that, the Agents page says, in words:
+
+| State | When |
+| --- | --- |
+| reporting | last report within two cadences |
+| late | within ten cadences, but not two |
+| silent | not within ten cadences |
+| has never reported | the agent has targets and has never submitted anything |
+
+The status column says it with the cadence, for example `ams-01 is late: last reported 12
+minutes ago, expected every 5 minutes 15 seconds`. The same sentence leads the overview row and
+the target page of every series that agent measures, so a row with no data says why. A late
+agent is often only buffering behind a broken link: its measurements arrive when the link
+returns, and the graphs fill in.
+
+The local prober, a disabled agent and an agent that measures no target have no state: the
+first is the master itself, the second is refused at the door, and the third has nothing to
+send. A scoped user's cadence counts only the targets they can see.
+
+For alerting on it, use the metric under [Monitoring smokeng itself](operations.md#monitoring-smokeng-itself); the state is
+for reading, and is not evaluated by alert rules.
+
 A disabled agent is refused at the door: its requests fail verification, and it keeps
 buffering locally rather than losing measurements.
 

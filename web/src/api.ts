@@ -664,6 +664,14 @@ export interface AgentInfo {
   is_local: boolean
   last_seen?: number
   pubkey?: string
+  /**
+   * How often it should be heard from: its shortest target interval plus the
+   * push cadence. Absent for the local prober, a disabled agent, and one that
+   * measures nothing.
+   */
+  report_every_s?: number
+  /** Whether it has been, with report_every_s: late past two cadences, silent past ten. */
+  state?: 'reporting' | 'late' | 'silent' | 'never'
 }
 
 export async function fetchAgents(): Promise<AgentInfo[]> {

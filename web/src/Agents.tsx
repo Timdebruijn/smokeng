@@ -11,6 +11,7 @@ import {
   type NewAgentToken,
 } from './api'
 import { ConfirmButton, StatusDot, useAction, useFormError, useCopy, useParkedFocus, ErrorText } from './shared'
+import { agentQuietNote, relativeTime } from './util'
 
 const TTL_OPTIONS: { seconds: number; label: string }[] = [
   { seconds: 900, label: '15 minutes' },
@@ -221,7 +222,17 @@ function AgentRow({
           running is the difference between "measured" and "measured by a
           version that predates the timestamp fix". */}
       <td className="mono dim">{agent.version ?? 'unknown'}</td>
-      <td>{agent.enabled ? '' : <span className="badge">disabled</span>}</td>
+      <td>
+        {!agent.enabled ? (
+          <span className="badge">disabled</span>
+        ) : agent.state && agent.state !== 'reporting' ? (
+          // In words, with what it is measured against: a colour or a badge
+          // alone would not say how late is late.
+          <span className="agent-quiet">{agentQuietNote(agent)}</span>
+        ) : agent.state === 'reporting' ? (
+          <span className="dim">reporting</span>
+        ) : null}
+      </td>
       <td>
         {!agent.is_local && !readOnly && (
           <>
@@ -414,16 +425,3 @@ function TokenReveal({
   )
 }
 
-/** Coarse relative time — this is a "still alive" indicator, not a clock. */
-function relativeTime(unixSeconds: number | undefined): string {
-  if (unixSeconds === undefined) return 'never'
-  const deltaS = Math.floor(Date.now() / 1000) - unixSeconds
-  if (deltaS < 5) return 'just now'
-  if (deltaS < 60) return `${deltaS}s ago`
-  const m = Math.round(deltaS / 60)
-  if (m < 60) return `${m} minute${m === 1 ? '' : 's'} ago`
-  const h = Math.round(m / 60)
-  if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`
-  const d = Math.round(h / 24)
-  return `${d} day${d === 1 ? '' : 's'} ago`
-}

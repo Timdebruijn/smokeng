@@ -352,6 +352,12 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	cadence, err := agentCadences(sc, targets)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	now := time.Now().Unix()
 	out := make([]map[string]any, 0, len(agents))
 	for _, a := range agents {
 		if !relevant.has(a.Name) {
@@ -363,6 +369,13 @@ func (s *server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		}
 		if a.LastSeen != 0 {
 			item["last_seen"] = a.LastSeen
+		}
+		// Whether it is reporting as often as its targets say it should. Not for
+		// the local prober, which is this process; not for a disabled agent,
+		// whose batches are refused; not for one that measures nothing.
+		if every, ok := cadence[a.Name]; ok && a.ID != store.LocalAgentID && a.Enabled {
+			item["report_every_s"] = every
+			item["state"] = agentState(a.LastSeen, every, now)
 		}
 		// What the agent said it was running when it last reported. A fleet
 		// upgrades one host at a time, and this is how an operator sees which

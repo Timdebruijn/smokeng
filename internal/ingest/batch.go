@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -149,6 +150,12 @@ func DecodeBatch(body []byte, agentID int64) ([]store.Measurement, error) {
 // rows, each materialised outside the Arrow budget and written in one
 // transaction.
 const MaxBatchRows = 10_000
+
+// PushEvery is how often an agent sends what it has buffered. The master uses
+// it too, to tell an agent that is late from one that has simply had nothing
+// to send yet: an agent reports when it has measurements, so its cadence is its
+// shortest target interval plus this.
+const PushEvery = 15 * time.Second
 
 // decodeFrames is DecodeBatch past the framing screen, with the allocation
 // budget as a parameter so a test can run the real reader against a small one.
