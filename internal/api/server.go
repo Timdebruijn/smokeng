@@ -69,6 +69,10 @@ type Store interface {
 	ListGrants(ctx context.Context) ([]store.Grant, error)
 	UpsertGrant(ctx context.Context, g *store.Grant) error
 	DeleteGrant(ctx context.Context, id int64) error
+	ListIRTTKeys(ctx context.Context) ([]store.IRTTKey, error)
+	GetIRTTKey(ctx context.Context, endpoint string) (store.IRTTKey, bool, error)
+	PutIRTTKey(ctx context.Context, endpoint, key, by string, now time.Time) error
+	DeleteIRTTKey(ctx context.Context, endpoint string) error
 }
 
 type server struct {
@@ -223,6 +227,11 @@ func New(st Store, opts Options, webFS fs.FS) http.Handler {
 	rt.handle(classGlobalAdmin, "GET /api/v1/agent-tokens", s.handleListEnrolTokens)
 	rt.handle(classGlobalAdmin, "POST /api/v1/agent-tokens", s.handleMintEnrolToken)
 	rt.handle(classGlobalAdmin, "DELETE /api/v1/agent-tokens/{id}", s.handleRevokeEnrolToken)
+	// irtt HMAC keys are secrets on the master's probes, set by an admin; the
+	// endpoint is URL-escaped host:port.
+	rt.handle(classGlobalAdmin, "GET /api/v1/irtt-keys/{endpoint}", s.handleGetIRTTKey)
+	rt.handle(classGlobalAdmin, "PUT /api/v1/irtt-keys/{endpoint}", s.handlePutIRTTKey)
+	rt.handle(classGlobalAdmin, "DELETE /api/v1/irtt-keys/{endpoint}", s.handleDeleteIRTTKey)
 	// Enrolment carries its own credential, so like the signed agent
 	// endpoints it sits outside the session middleware.
 	rt.handle(classAgentSigned, "POST /api/v1/agent/enrol", s.handleEnrol)

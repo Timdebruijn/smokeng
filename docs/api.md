@@ -77,6 +77,9 @@ The class says who may call a route:
 | `GET /api/v1/agent-tokens` | admin | List enrolment tokens. |
 | `POST /api/v1/agent-tokens` | admin | Mint an enrolment token. |
 | `DELETE /api/v1/agent-tokens/{id}` | admin | Revoke one. |
+| `GET /api/v1/irtt-keys/{endpoint}` | admin | Where an irtt endpoint's HMAC key comes from: `{"endpoint","source":"db"\|"keyfile"\|"none","key"}`. `key` is present only for `db`; a keyfile value is never returned. |
+| `PUT /api/v1/irtt-keys/{endpoint}` | admin | Body `{"key":"…"}` or `{"generate":true}` (32 random bytes, 43 characters of base64url). Answers like GET, with the key. `409` if the keyfile on the host holds that endpoint. |
+| `DELETE /api/v1/irtt-keys/{endpoint}` | admin | Remove the stored key. `204`. |
 | `GET /api/v1/config` | admin | Export the tree as TOML. |
 | `PUT /api/v1/config` | admin | Import TOML (`?allow_unknown_agents=1`). Never prunes; use the CLI for that. |
 | `GET /api/v1/grants` | admin | List grants. |
@@ -87,7 +90,11 @@ The class says who may call a route:
 | `GET /api/v1/agent/targets` | signed | Agent fetches its assignments. |
 | `POST /api/v1/agent/paths` | signed | Agent submits path changes (JSON); see [Agents](agents.md#how-the-protocol-works). |
 
-The last three rows are the agent protocol, described in [agents.md](agents.md). With OIDC on,
+`{endpoint}` is the target's configured `host:port`, URL-escaped (IPv6 as `%5B%3A%3A1%5D%3A2112`).
+The key is up to 1024 bytes; a key starting `0x` is hex, as in `irtt server --hmac`. Keys stay
+out of targets and the TOML export. See [Probes](probes.md#authenticating-to-an-irtt-server).
+
+The last three rows above are the agent protocol, described in [agents.md](agents.md). With OIDC on,
 `/auth/login`, `/auth/callback` and `/auth/logout` exist as well.
 
 Errors are `{"error": "..."}` with the HTTP status. With OIDC on, an unauthenticated call gets

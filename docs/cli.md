@@ -107,7 +107,7 @@ evaluated and shown but not delivered.
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--tls-ca-file` | empty | Comma-separated PEM files that `https` probes trust in addition to the system roots. Keeps verification on, unlike a target's `tls_skip_verify`. |
-| `--irtt-hmac-keys` | empty | **Secret file.** TOML map of irtt `"host:port"` to its shared HMAC secret. The secrets stay in this file and never enter the tree, the API or an export. |
+| `--irtt-hmac-keys` | empty | **Secret file.** TOML map of irtt `"host:port"` to its shared HMAC secret; a value starting `0x` is hex. Wins over a key for the same endpoint set in the web UI (those are stored in the database). Never enters the tree or an export. |
 
 Probe behaviour, CA handling and the HMAC file format: [Probes](probes.md).
 
@@ -210,7 +210,7 @@ the key file, so `--token` is spent once and later restarts do not need it.
 | `--db` | `smokeng-agent.db` | Local buffer database. |
 | `--insecure-allow-http` | `false` | **Dangerous.** Allow a plain-HTTP master URL that is not on loopback. The enrolment token travels in the clear. Loopback needs no flag. |
 | `--tls-ca-file` | empty | Comma-separated PEM files that `https` probes trust, in addition to the system roots and the CAs the master hands down. |
-| `--irtt-hmac-keys` | empty | **Secret file.** Same format as on the master. The master does not hand these down; deploy the file to the agent host. |
+| `--irtt-hmac-keys` | empty | **Secret file.** Same format as on the master. The master does not hand these down, and keys set in its web UI do not reach agents; deploy the file to the agent host. |
 | `--no-remote-cas` | `false` | Refuse the CA certificates the master supplies. They only reach `https` probes, never the agent's own connection to the master. |
 
 ## alerts

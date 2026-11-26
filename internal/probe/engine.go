@@ -147,6 +147,13 @@ func (e *Engine) reload(ctx context.Context) {
 		log.Printf("probe: reload targets: %v", err)
 		return
 	}
+	// irtt keys set in the web UI are refreshed on the same tick, so an edit
+	// made on another instance of the database also lands without a restart.
+	if l, ok := e.st.(IRTTKeyLister); ok {
+		if err := RefreshIRTTKeys(ctx, l); err != nil {
+			log.Printf("probe: reload irtt keys: %v", err)
+		}
+	}
 	// Rules and their inheritance follow the same tree, so they are refreshed
 	// on the same tick: an edit to either takes effect without a restart.
 	if e.alerter != nil {

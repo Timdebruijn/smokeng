@@ -580,9 +580,10 @@ func splitList(s string) []string {
 //
 // The endpoint is the target's configured host and port — the host as written
 // in the target, not its resolved address — so it stays stable across DNS
-// changes. An empty path installs nothing. The secrets live only in this file
-// on this host (deploy it from a vault); they never enter the target tree, the
-// API or an export.
+// changes. An empty path installs nothing. A value starting 0x is hex, as in
+// `irtt server --hmac`. On the master these win over keys set in the web UI;
+// an agent only ever has this file. They never enter the target tree or an
+// export.
 // readSecretFile reads a file holding a secret and says so when the file is
 // readable by anyone but its owner. It does not refuse: a mode that is wrong
 // for one deployment is deliberate in another (a shared group for an operator
@@ -619,10 +620,11 @@ func loadIRTTHMACKeys(path string) error {
 	}
 	m := make(map[string][]byte, len(raw))
 	for endpoint, key := range raw {
-		if key == "" {
-			return fmt.Errorf("empty HMAC key for endpoint %q", endpoint)
+		b, err := probe.ParseIRTTKey(key)
+		if err != nil {
+			return fmt.Errorf("endpoint %q: %w", endpoint, err)
 		}
-		m[endpoint] = []byte(key)
+		m[endpoint] = b
 	}
 	probe.SetIRTTHMACKeys(m)
 	return nil
