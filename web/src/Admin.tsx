@@ -28,13 +28,6 @@ interface SettingDef {
   /** Which probe types this setting does anything for; absent means all. */
   types?: string[]
   hint?: string
-  /**
-   * What "Override" writes when nothing is inherited yet. Optional settings
-   * have no inherited value to copy, and their unset form — port 0, record
-   * type "" — is one the server rejects, so overriding without a seed would
-   * answer a click with a validation error.
-   */
-  seed?: number | string
   /** Refused to anyone but a global admin, on any node: its effect leaves the subtree. */
   adminOnly?: boolean
 }
@@ -101,7 +94,6 @@ const SETTINGS: SettingDef[] = [
     label: 'DNS record type',
     kind: 'choice',
     types: ['dns'],
-    seed: 'A',
     choices: ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'PTR', 'SOA', 'SRV', 'TXT'].map((v) => ({
       value: v,
       label: v,
@@ -162,27 +154,12 @@ const SETTINGS: SettingDef[] = [
  */
 function settingsFor(target: Target): SettingDef[] {
   const type = String(target.settings.probe_type.effective || 'icmp')
-  return SETTINGS.filter((s) => !s.types || s.types.includes(type)).map((s) =>
-    s.key === 'probe_port' ? { ...s, seed: PORT_SEED[type] } : s,
-  )
+  return SETTINGS.filter((s) => !s.types || s.types.includes(type))
 }
 
 // Added to the usual hint on a node the caller may otherwise change: a disabled
 // field among enabled ones needs its reason in text, not in a title.
 const ADMIN_ONLY_HINT = 'Only a global administrator may change this: its effect reaches beyond this part of the tree.'
-
-// What "Override" puts in the port field when nothing is inherited. These are
-// the type's own defaults, so overriding changes nothing until the operator
-// edits it — except for tcp, which has no default and gets the port people
-// most often watch. That is a starting value in a field they are looking at,
-// not a choice made behind their back.
-const PORT_SEED: Record<string, number> = {
-  dns: 53,
-  tcp: 443,
-  http: 80,
-  https: 443,
-  irtt: 2112,
-}
 
 export default function Admin({ isAdmin = false }: { isAdmin?: boolean }) {
   const [targets, setTargets] = useState<Target[]>([])
@@ -415,8 +392,9 @@ function TargetDetail({ target, agents, busy, isAdmin, onPatch, onDelete, onAddC
 
       <h3>Settings</h3>
       <p className="hint">
-        Unset values are inherited from an ancestor. Overriding writes the value on this node;
-        reverting clears it so it follows its parent again.
+        Settings come from the group above unless you change them here. A change applies to
+        this node and to anything under it that does not set its own; Reset makes a setting
+        follow the group above again.
       </p>
       {/* The prober skips this target entirely and says so in the log. Saying
           it here too is the difference between a flat graph someone eventually
@@ -455,6 +433,7 @@ function TargetDetail({ target, agents, busy, isAdmin, onPatch, onDelete, onAddC
               value={target.settings[s.key] as SettingValue<number | string | boolean>}
               agents={agents}
               busy={busy || !mayChange(target, isAdmin, s.adminOnly)}
+              root={isRoot}
               validate={(v) => validateSetting(target, s, v)}
               onSet={(v) => onPatch({ settings: { [s.key]: v } }, `${s.label} ${v === null ? 'reverted to inherited' : 'saved'}`)}
             />
@@ -496,6 +475,7 @@ function SettingRow({
   value,
   agents,
   busy,
+  root,
   validate,
   onSet,
 }: {
@@ -503,10 +483,22 @@ function SettingRow({
   value: SettingValue<number | string | boolean>
   agents: AgentInfo[]
   busy: boolean
+  /** The root has nothing above it to follow, so it has no Reset. */
+  root: boolean
   validate: (v: number | string | boolean | null) => string | null
   onSet: (v: number | string | boolean | null) => Promise<boolean>
 }) {
   const isLocal = value.local !== null
+  // Reset removes its own button, which would drop keyboard focus on the page;
+  // the field it just reset is where the operator is working.
+  // The field is still disabled while the save runs, so focus waits for that.
+  const row = useRef<HTMLTableRowElement>(null)
+  const [refocus, setRefocus] = useState(false)
+  useEffect(() => {
+    if (!refocus || busy) return
+    row.current?.querySelector<HTMLElement>('input, select')?.focus()
+    setRefocus(false)
+  }, [refocus, busy])
   // A setting no node in the tree sets is shown as empty rather than as its
   // zero value — printing "Port: 0" would name a port that does not exist and
   // hide that the type's default applies. isUnset is the one authority on that
@@ -531,21 +523,29 @@ function SettingRow({
     void onSet(next)
   }
 
+  // Typing in a field sets it on this node; there is no separate step to unlock
+  // it. Leaving it unchanged writes nothing, so tabbing through an inherited
+  // value does not pin it here. Emptying a field set here hands it back to the
+  // group above, the same as Reset.
   const commit = () => {
-    const next = def.kind === 'number' ? Number(draft) : draft
-    if (next === value.local) return
-    set(next)
+    if (draft === shown) return
+    if (draft.trim() === '') {
+      if (isLocal) void onSet(null)
+      else setDraft(shown)
+      return
+    }
+    set(def.kind === 'number' ? Number(draft) : draft)
   }
 
   return (
-    <tr>
+    <tr ref={row}>
       <th scope="row" id={`${id}-l`}>{def.label}</th>
       <td>
         {def.kind === 'series' ? (
           <SeriesPicker
             {...label}
             selected={String(value.effective)}
-            disabled={busy || !isLocal}
+            disabled={busy}
             onChange={set}
           />
         ) : def.kind === 'agents' ? (
@@ -553,7 +553,7 @@ function SettingRow({
             {...label}
             selected={String(value.effective)}
             agents={agents}
-            disabled={busy || !isLocal}
+            disabled={busy}
             onChange={set}
           />
         ) : def.kind === 'bool' ? (
@@ -561,16 +561,20 @@ function SettingRow({
             {...field}
             type="checkbox"
             checked={value.effective === true}
-            disabled={busy || !isLocal}
+            disabled={busy}
             onChange={(e) => set(e.target.checked)}
           />
         ) : def.kind === 'choice' ? (
           <select
             {...field}
             value={String(value.effective)}
-            disabled={busy || !isLocal}
+            disabled={busy}
             onChange={(e) => set(e.target.value)}
           >
+            {/* An unset choice (a record type nobody chose) has no option to
+                show; without this the first option would look selected and
+                picking it would change nothing. */}
+            {shown === '' && <option value="">(default)</option>}
             {def.choices?.map((c) => (
               <option key={c.value} value={c.value}>
                 {c.label}
@@ -582,7 +586,7 @@ function SettingRow({
             <input
               {...field}
               value={draft}
-              disabled={busy || !isLocal}
+              disabled={busy}
               size={10}
               type={def.kind === 'number' ? 'number' : 'text'}
               min={def.min}
@@ -622,17 +626,11 @@ function SettingRow({
         )}
       </td>
       <td>
-        {isLocal ? (
-          <button disabled={busy} aria-label={`Revert ${def.label}`} onClick={() => void onSet(null)}>
-            Revert
-          </button>
-        ) : (
-          <button
-            disabled={busy}
-            aria-label={`Override ${def.label}`}
-            onClick={() => void onSet(value.effective === '' || shown === '' ? (def.seed ?? value.effective) : value.effective)}
+        {isLocal && !root && (
+          <button disabled={busy} aria-label={`Reset ${def.label} to the group above`}
+            onClick={async () => setRefocus(await onSet(null))}
           >
-            Override
+            Reset
           </button>
         )}
       </td>
