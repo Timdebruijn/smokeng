@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Admin from './Admin'
 import Agents from './Agents'
 import Alerts from './Alerts'
@@ -21,6 +21,7 @@ import {
   screenTitle,
   seriesKey,
   seriesLabel,
+  graphGroups,
   toLocalInput,
   type FamilyChoice,
   type PlotSeries,
@@ -400,17 +401,57 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
       family: s.family,
     }))
 
+  const plotGroups = graphGroups(shown, targets)
+  const plotFor = (s: PlotSeries, underGroup: boolean) =>
+    s.agentId === null ? (
+      <Unmeasured
+        key={`${s.target.id}-unresolved`}
+        target={s.target}
+        names={s.agentName ?? ''}
+        listFailed={agentsError}
+        underGroup={underGroup}
+        onOpenDetail={() => onOpenDetail(s.target.id)}
+      />
+    ) : (
+      <Plot
+        key={seriesKey(s.target.id, s.agentId, s.family)}
+        target={s.target}
+        agentId={s.agentId}
+        agentName={s.agentName}
+        family={s.family}
+        from={from}
+        to={to}
+        refreshKey={refreshKey}
+        logScale={logScale}
+        onZoom={onZoom}
+        underGroup={underGroup}
+        onOpenDetail={() => onOpenDetail(s.target.id)}
+      />
+    )
+
+
   return (
     <section className="graphs">
       <h1 className="visually-hidden">Graphs</h1>
       {sidebarOpen && (
         <TargetSidebar
+          tree={targets}
           leaves={leaves}
           hidden={hidden}
           search={graphSearch}
           onSearch={setGraphSearch}
           onToggle={toggleShown}
           onAll={(on) => setHidden(on ? new Set() : new Set(leaves.map((t) => t.id)))}
+          onGroup={(ids, on) =>
+            setHidden((prev) => {
+              const next = new Set(prev)
+              for (const id of ids) {
+                if (on) next.delete(id)
+                else next.add(id)
+              }
+              return next
+            })
+          }
         />
       )}
       <div className="graphs-main">
@@ -531,31 +572,20 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
             Nothing to compare — the shown targets have no enrolled agent measuring them.
           </div>
         )}
-        {series.map((s) =>
-          s.agentId === null ? (
-            <Unmeasured
-              key={`${s.target.id}-unresolved`}
-              target={s.target}
-              names={s.agentName ?? ''}
-              listFailed={agentsError}
-              onOpenDetail={() => onOpenDetail(s.target.id)}
-            />
-          ) : (
-            <Plot
-              key={seriesKey(s.target.id, s.agentId, s.family)}
-              target={s.target}
-              agentId={s.agentId}
-              agentName={s.agentName}
-              family={s.family}
-              from={from}
-              to={to}
-              refreshKey={refreshKey}
-              logScale={logScale}
-              onZoom={onZoom}
-              onOpenDetail={() => onOpenDetail(s.target.id)}
-            />
-          ),
-        )}
+        {plotGroups.grouped
+          ? plotGroups.groups.map((g) => {
+              const ids = new Set(g.items.map((t) => t.id))
+              const own = series.filter((s) => ids.has(s.target.id))
+              return (
+                own.length > 0 && (
+                  <section key={g.label} className="plot-group">
+                    <h2 className="plot-group-title">{g.label}</h2>
+                    {own.map((s) => plotFor(s, true))}
+                  </section>
+                )
+              )
+            })
+          : series.map((s) => plotFor(s, false))}
       </div>
     </section>
   )
@@ -575,22 +605,25 @@ function Unmeasured({
   target,
   names,
   listFailed,
+  underGroup,
   onOpenDetail,
 }: {
   target: Target
   names: string
   listFailed: string | null
+  underGroup: boolean
   onOpenDetail: () => void
 }) {
+  const Heading = underGroup ? 'h3' : 'h2'
   return (
     <section className="card plot">
       <div className="plot-head">
         <span className="dot" style={{ background: 'var(--dim)' }} aria-hidden="true" />
-        <h2>
+        <Heading>
           <button className="plot-title link-title" onClick={onOpenDetail}>
             {target.title ?? target.path}
           </button>
-        </h2>
+        </Heading>
         <span className="host">
           {target.host} · {target.address_family}
         </span>
@@ -618,32 +651,39 @@ function Unmeasured({
 // The target list. Group headings come from the path, so the tree the operator
 // built is the tree they filter with.
 function TargetSidebar({
+  tree,
   leaves,
   hidden,
   search,
   onSearch,
   onToggle,
   onAll,
+  onGroup,
 }: {
+  tree: Target[]
   leaves: Target[]
   hidden: Set<number>
   search: string
   onSearch: (v: string) => void
   onToggle: (id: number) => void
   onAll: (on: boolean) => void
+  onGroup: (ids: number[], on: boolean) => void
 }) {
   const q = search.trim().toLowerCase()
   const matching = leaves.filter(
     (t) => q === '' || t.path.toLowerCase().includes(q) || (t.host ?? '').includes(q),
   )
-  const rows: { group: string; items: Target[] }[] = []
-  for (const t of matching) {
-    const group = t.path.slice(0, t.path.lastIndexOf('/')) || '/'
-    const last = rows[rows.length - 1]
-    if (last && last.group === group) last.items.push(t)
-    else rows.push({ group, items: [t] })
-  }
+  // Grouped by the tree the operator built; flat as before when nothing is nested.
+  const { grouped, groups } = graphGroups(matching, tree)
   const allShown = leaves.every((t) => !hidden.has(t.id))
+  const leaf = (t: Target) => (
+    <li key={t.id}>
+      <label className="side-leaf">
+        <input type="checkbox" checked={!hidden.has(t.id)} onChange={() => onToggle(t.id)} />
+        <span className="side-name">{t.title ?? t.name}</span>
+      </label>
+    </li>
+  )
 
   return (
     <aside id="target-list" className="card sidebar" aria-label="Targets shown">
@@ -654,30 +694,65 @@ function TargetSidebar({
         aria-label="Filter targets"
         placeholder="Filter targets"
       />
-      {rows.map((r) => (
-        <Fragment key={r.group}>
-          <p className="side-group">{r.group}</p>
-          <ul className="plain-list" role="list">
-            {r.items.map((t) => (
-              <li key={t.id}>
-                <label className="side-leaf">
-                  <input
-                    type="checkbox"
-                    checked={!hidden.has(t.id)}
-                    onChange={() => onToggle(t.id)}
-                  />
-                  <span className="side-name">{t.title ?? t.name}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-        </Fragment>
-      ))}
+      {grouped ? (
+        <ul className="plain-list" role="list">
+          {groups.map((g) => (
+            <li key={g.label}>
+              <GroupToggle label={g.label} items={g.items} hidden={hidden} onGroup={onGroup} />
+              <ul className="plain-list" role="list">
+                {g.items.map(leaf)}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        matching.length > 0 && (
+          <>
+            <p className="side-group">/</p>
+            <ul className="plain-list" role="list">
+              {matching.map(leaf)}
+            </ul>
+          </>
+        )
+      )}
       {matching.length === 0 && <p className="hint small">Nothing matches that filter.</p>}
       <button className="pill wide" onClick={() => onAll(!allShown)}>
         {allShown ? 'Hide all' : 'Show all'}
       </button>
     </aside>
+  )
+}
+
+// One checkbox for a whole group: checked when every target in it is shown,
+// indeterminate (set through the ref; there is no attribute for it) when some are.
+function GroupToggle({
+  label,
+  items,
+  hidden,
+  onGroup,
+}: {
+  label: string
+  items: Target[]
+  hidden: Set<number>
+  onGroup: (ids: number[], on: boolean) => void
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  const shownCount = items.filter((t) => !hidden.has(t.id)).length
+  const all = shownCount === items.length
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = shownCount > 0 && !all
+  }, [shownCount, all])
+  return (
+    <label className="side-group side-group-toggle">
+      <input
+        ref={ref}
+        type="checkbox"
+        checked={all}
+        aria-label={`Show all of ${label}`}
+        onChange={() => onGroup(items.map((t) => t.id), !all)}
+      />
+      <span className="side-name">{label}</span>
+    </label>
   )
 }
 

@@ -4,6 +4,8 @@ import { test } from 'node:test'
 import { availabilityURL, fetchSeries, pathsURL, seriesURL, type Target } from './api.ts'
 import { axisLabel } from './layout.ts'
 import {
+  graphGroups,
+  graphGroupLabel,
   afterName,
   alertKey,
   alertName,
@@ -375,4 +377,18 @@ test('the worst status wins: no data < ok < flagged < loss', () => {
   assert.equal(worstStatus([]), 'nodata')
   assert.equal(worstStatus(['ok', 'nodata', 'flagged']), 'flagged')
   assert.equal(worstStatus(['flagged', 'loss', 'ok']), 'loss')
+})
+
+test('graphGroups groups leaves by parent path in tree order', () => {
+  const t = (id: number, path: string, sort_order: number): Target =>
+    ({ id, path, sort_order, name: path.split('/').pop(), parent_id: null }) as unknown as Target
+  const a = t(1, '/web/b', 2)
+  const b = t(2, '/web/a', 1)
+  const c = t(3, '/gw', 0)
+  assert.equal(graphGroupLabel('/web/a'), 'web')
+  assert.equal(graphGroupLabel('/gw'), 'Top level')
+  const r = graphGroups([a, b, c], [a, b, c])
+  assert.equal(r.grouped, true)
+  assert.deepEqual(r.groups.map((g) => [g.label, g.items.map((i) => i.id)]), [['Top level', [3]], ['web', [2, 1]]])
+  assert.equal(graphGroups([c], [c]).grouped, false)
 })
