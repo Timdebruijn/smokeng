@@ -524,6 +524,10 @@ ALTER TABLE targets RENAME COLUMN address_family_v30 TO address_family;`,
   updated_at INTEGER NOT NULL,
   updated_by TEXT NOT NULL
 )`,
+	// v32: why an application-level probe got no successful answer (a refused
+	// connection, an HTTP status, a DNS rcode), the most frequent per interval.
+	// Nullable, like send_error: older rows simply do not know.
+	`ALTER TABLE measurements ADD COLUMN probe_error INTEGER`,
 }
 
 func (s *SQLite) migrate() error {
@@ -602,8 +606,8 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 	if !replace {
 		verb, suffix = "INSERT INTO", " ON CONFLICT DO NOTHING"
 	}
-	stmt, err := tx.PrepareContext(ctx, verb+` measurements (target_id, agent_id, family, ts, sent, received, flags, samples, icmp_error, send_error, loss_mask)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`+suffix)
+	stmt, err := tx.PrepareContext(ctx, verb+` measurements (target_id, agent_id, family, ts, sent, received, flags, samples, icmp_error, send_error, loss_mask, probe_error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`+suffix)
 	if err != nil {
 		return nil, err
 	}
@@ -657,7 +661,7 @@ func (s *SQLite) writeMeasurements(ctx context.Context, ms []Measurement, replac
 			return nil, err
 		}
 		res, err := stmt.ExecContext(ctx, m.TargetID, m.AgentID, m.Family, m.TS, m.Sent, m.Received,
-			m.Flags, blob, m.ICMPErr, m.SendErr, m.LossMask)
+			m.Flags, blob, m.ICMPErr, m.SendErr, m.LossMask, m.ProbeErr)
 		if err != nil {
 			return nil, err
 		}
@@ -770,7 +774,7 @@ func detectPositional(ctx context.Context, history *sql.Stmt, m *Measurement) (*
 
 func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID int64, family tree.Family, from, to int64) ([]Measurement, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ts, sent, received, flags, samples, icmp_error, send_error, loss_mask FROM measurements
+		SELECT ts, sent, received, flags, samples, icmp_error, send_error, loss_mask, probe_error FROM measurements
 		WHERE target_id = ? AND agent_id = ? AND family = ? AND ts >= ? AND ts < ?
 		ORDER BY ts`, targetID, agentID, family, from, to)
 	if err != nil {
@@ -782,7 +786,7 @@ func (s *SQLite) QueryRange(ctx context.Context, targetID, agentID int64, family
 	for rows.Next() {
 		m := Measurement{TargetID: targetID, AgentID: agentID, Family: family}
 		var blob []byte
-		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &m.ICMPErr, &m.SendErr, &m.LossMask); err != nil {
+		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &m.ICMPErr, &m.SendErr, &m.LossMask, &m.ProbeErr); err != nil {
 			return nil, err
 		}
 		// Counted from the column, before the blob is decoded, so the row that

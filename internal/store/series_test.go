@@ -367,3 +367,28 @@ func TestSendReasonSurvivesTheOutbox(t *testing.T) {
 		t.Fatalf("the reason did not survive the outbox: %+v", pend)
 	}
 }
+
+// The probe error goes in and comes back, from the store and from the agent's
+// outbox, or it exists in the prober and nowhere else.
+func TestProbeErrorRoundTripsThroughTheStore(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	want := ProbeError(ProbeErrDNS, 2)
+	writeOne(t, s, Measurement{TargetID: 1, AgentID: 7, TS: 1000, Sent: 2, Received: 1,
+		Samples: []uint32{10}, ProbeErr: &want})
+	writeOne(t, s, Measurement{TargetID: 1, AgentID: 7, TS: 2000, Sent: 1, Received: 1, Samples: []uint32{20}})
+	got, err := s.QueryRange(ctx, 1, 7, 0, 0, 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ProbeErr == nil || *got[0].ProbeErr != want || got[1].ProbeErr != nil {
+		t.Fatalf("from the store: %+v", got)
+	}
+	pend, err := s.PendingMeasurements(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pend) != 2 || pend[0].ProbeErr == nil || *pend[0].ProbeErr != want {
+		t.Fatalf("from the outbox: %+v", pend)
+	}
+}

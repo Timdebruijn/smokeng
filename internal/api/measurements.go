@@ -52,6 +52,10 @@ var measurementsSchema = arrow.NewSchema([]arrow.Field{
 	{Name: store.SeriesIPDVSend, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
 	{Name: store.SeriesIPDVReceive, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
 	{Name: store.SeriesServerProcessing, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
+	// Why the far end gave this interval's failed probes no successful answer
+	// (store.ProbeError: a refused connection, an HTTP status, a DNS rcode),
+	// null when none failed that way. Last, so no field moved for it.
+	{Name: "probe_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
 }, nil)
 
 // pooledSchema is the wire schema of a pooled read: one row per pixel column
@@ -77,6 +81,9 @@ var pooledSchema = arrow.NewSchema([]arrow.Field{
 	{Name: store.SeriesIPDVSend, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
 	{Name: store.SeriesIPDVReceive, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
 	{Name: store.SeriesServerProcessing, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
+	// The probe error most of the column's intervals that had one carried,
+	// null when none had one (store.Column.ProbeErr).
+	{Name: "probe_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
 }, nil)
 
 // handleMeasurements streams one series over [from, to) as Arrow IPC.
@@ -173,6 +180,7 @@ func writePooledArrow(w io.Writer, cols []store.Column, batchRows int) {
 		seriesB[i] = rb.Field(9 + i).(*array.ListBuilder)
 		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
 	}
+	probeErrB := rb.Field(9 + len(store.KnownSeries)).(*array.Uint16Builder)
 
 	flush := func() bool {
 		rec := rb.NewRecord()
@@ -198,6 +206,11 @@ func writePooledArrow(w io.Writer, cols []store.Column, batchRows int) {
 			}
 			seriesB[j].Append(true)
 			seriesV[j].AppendValues(vals, nil)
+		}
+		if c.ProbeErr != nil {
+			probeErrB.Append(*c.ProbeErr)
+		} else {
+			probeErrB.AppendNull()
 		}
 		if (i+1)%batchRows == 0 && !flush() {
 			return
@@ -236,6 +249,7 @@ func writeMeasurementsArrow(w io.Writer, ms []store.Measurement, batchRows int) 
 		seriesB[i] = rb.Field(9 + i).(*array.ListBuilder)
 		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
 	}
+	probeErrB := rb.Field(9 + len(store.KnownSeries)).(*array.Uint16Builder)
 
 	flush := func() bool {
 		rec := rb.NewRecord()
@@ -277,6 +291,11 @@ func writeMeasurementsArrow(w io.Writer, ms []store.Measurement, batchRows int) 
 			}
 			seriesB[j].Append(true)
 			seriesV[j].AppendValues(vals, nil)
+		}
+		if m.ProbeErr != nil {
+			probeErrB.Append(*m.ProbeErr)
+		} else {
+			probeErrB.AppendNull()
 		}
 		if (i+1)%batchRows == 0 && !flush() {
 			return // client went away mid-stream

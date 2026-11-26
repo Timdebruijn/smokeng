@@ -963,7 +963,8 @@ to a target assigned to this agent and not be timestamped later than the skew al
 A row that fails those last two, or that claims more replies than probes, is dropped and
 the rest accepted — a 400 makes the agent discard its whole batch, so one bad row must not
 cost the rest. The batch carries `loss_mask` (§3.4) as an optional nullable `Binary` column
-beside `send_error`. So does `family` (`Uint8`, 4 or 6, null when the agent's store holds the
+beside `send_error`, and `probe_error` (`Uint16`, store.ProbeError) as the last field, which a
+master ignores when it is of another type rather than refusing the batch. So does `family` (`Uint8`, 4 or 6, null when the agent's store holds the
 row as unknown): the master files a row under the family it states, and under the target's default
 family (v4 for a target measured over both) when it states none or a value that is not a family; the
 row is kept either way, as it is when a mask does not fit. A row of a family the target is not

@@ -20,6 +20,7 @@ interface Expected {
   samples: number[][]
   icmp_error: (number | null)[]
   send_error: (number | null)[]
+  probe_error: (number | null)[]
   loss_positions: (number[] | null)[]
   loss_window: (number | null)[]
   series: Record<string, (number[] | null)[]>
@@ -45,6 +46,7 @@ for (const name of NAMES) {
     assert.deepEqual(rows(s), want.samples)
     assert.deepEqual(s.icmpErrors, want.icmp_error)
     assert.deepEqual(s.sendErrors, want.send_error)
+    assert.deepEqual(s.probeErrors, want.probe_error)
     assert.deepEqual(s.lossPositions, want.loss_positions)
     assert.deepEqual(s.lossWindows, want.loss_window)
     for (const series of SERIES_NAMES) {
@@ -207,9 +209,9 @@ function rename(b: Uint8Array, from: string, to: string) {
 test('the layout walk finds what the writer wrote', () => {
   const small = layout(load('small.arrow'))
   assert.deepEqual(small.map((m) => m.type), [1, 3])
-  assert.equal(small[1].nodes.length, 17)
-  assert.equal(small[1].bufs.length, 34)
-  assert.equal(new DataView(load('small.arrow').buffer).getUint32(small[0].fieldsCountPos!, true), 12)
+  assert.equal(small[1].nodes.length, 18)
+  assert.equal(small[1].bufs.length, 36)
+  assert.equal(new DataView(load('small.arrow').buffer).getUint32(small[0].fieldsCountPos!, true), 13)
   assert.deepEqual(layout(load('multi.arrow')).map((m) => m.type), [1, 3, 3, 3])
 })
 
@@ -223,6 +225,7 @@ function assertCoherent(s: Series, what: string, responseBytes: number) {
   assert.equal(s.flags.length, n, what)
   assert.equal(s.icmpErrors.length, n, what)
   assert.equal(s.sendErrors.length, n, what)
+  assert.equal(s.probeErrors.length, n, what)
   assert.equal(s.lossPositions.length, n, what)
   assert.equal(s.lossWindows.length, n, what)
   assert.equal(s.offsets.length, n + 1, what)
@@ -413,10 +416,11 @@ test('the types the server never writes are refused, where they would change a v
 })
 
 test('a width changed by one byte of the schema is refused, not read as another width', () => {
-  // The bit width of sent, received, icmp_error and loss_positions is 16; setting it to 8 made the
-  // reader take a column of 16-bit values for 8-bit ones and read every second byte.
+  // The bit width of sent, received, icmp_error, loss_positions and probe_error is 16; setting it
+  // to 8 made the reader take a column of 16-bit values for 8-bit ones and read every second byte.
+  // probe_error is optional, and still refused at the wrong width rather than skipped.
   const small = load('small.arrow')
-  for (const at of [512, 624, 804, 824, 880]) {
+  for (const at of [128, 564, 676, 856, 876, 932]) {
     assert.equal(small[at], 16, `byte ${at} is a bit width of 16`)
     refused(patched(small, [[at, 8]]), /column is not an unsigned 16-bit/, `a width of 8 at ${at}`)
     // 32 bits of 16-bit data is refused too, though which rule gets there first depends
@@ -637,6 +641,8 @@ test('a pooled read decodes to its columns, in the shape of a series', () => {
   assert.deepEqual(Array.from(s.pooled!.flagged), want.flagged)
   assert.deepEqual(Array.from(s.pooled!.positional), want.positional)
   assert.deepEqual(rows(s), want.quantiles)
+  // Each column's commonest probe error, as written.
+  assert.deepEqual(s.probeErrors, want.probe_error)
   // Nothing per interval is invented for a column.
   assert.ok(s.icmpErrors.every((v) => v === null) && s.sendErrors.every((v) => v === null))
   assert.ok(s.lossPositions.every((v) => v === null) && s.lossWindows.every((v) => v === null))
@@ -655,4 +661,11 @@ test('a pooled read decodes to its columns, in the shape of a series', () => {
 
 test('a 64-bit sum past what a number holds exactly is refused, not rounded', () => {
   refused(load('pooled-huge-sum.arrow'), /64-bit value that cannot be read exactly/, 'sent of 2^53 + 1')
+})
+
+test('a stream from a master without probe_error reads as nothing failed that way', () => {
+  // variant fixtures are written from the schema the server has now, so drop the
+  // column by hand: rename it to one the reader does not know.
+  const s = decodeSeries(rename(load('small.arrow'), 'probe_error', 'probe_errox'))
+  assert.ok(s.ts.length > 0 && s.probeErrors.every((v) => v === null))
 })

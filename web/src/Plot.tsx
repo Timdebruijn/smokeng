@@ -3,11 +3,20 @@ import {
   fetchPathChanges,
   fetchSeries,
   icmpErrorName,
+  probeErrorName,
   sendReasonName,
   type PathChange,
   type Target,
 } from './api'
-import { countedFlags, FLAG_ICMP_ERROR, measurementLabel, QUALITY_FLAGS as FLAGS, type Family } from './util'
+import {
+  countedFlags,
+  FLAG_ICMP_ERROR,
+  measurementLabel,
+  PROBE_ERROR_TITLE,
+  probeErrorCounts,
+  QUALITY_FLAGS as FLAGS,
+  type Family,
+} from './util'
 import { setCursor, subscribeCursor } from './crosshair'
 import { chartSummary, positionalTitle, replyLines } from './format'
 import { AXIS_W, PLOT_HEIGHT, densityHeight, fmtClock, fmtWhen, inferSpan, rowAt, stepRow } from './layout'
@@ -47,6 +56,7 @@ interface RowIndex {
   received: Float64Array
   icmpErrors: (number | null)[]
   sendErrors: (number | null)[]
+  probeErrors: (number | null)[]
   flags: Uint8Array
   lossPositions: (number[] | null)[]
   span: number
@@ -94,7 +104,12 @@ function tally(flags: Uint8Array, codes: (number | null)[], bit: number): [numbe
  * was: so the labels are shown without counts, and the per-interval detail is
  * what zooming in is for.
  */
-function pooledFlags(flags: Uint8Array, positional: Float64Array, probeType: unknown): Badge[] {
+function pooledFlags(
+  flags: Uint8Array,
+  positional: Float64Array,
+  probeErrors: (number | null)[],
+  probeType: unknown,
+): Badge[] {
   let any = 0
   for (let i = 0; i < flags.length; i++) any |= flags[i]
   const out: Badge[] = FLAGS.filter((f) => any & f.bit).map((f) =>
@@ -111,6 +126,11 @@ function pooledFlags(flags: Uint8Array, positional: Float64Array, probeType: unk
       aboutTarget: true,
     })
   }
+  // Each column keeps its commonest probe error, so these are named without
+  // counts, as the flags are.
+  for (const code of new Set(probeErrors.filter((c) => c !== null))) {
+    out.push({ label: probeErrorName(code), title: `${PROBE_ERROR_TITLE} Zoom in to see which intervals.`, count: 0, aboutTarget: true })
+  }
   return out
 }
 
@@ -120,6 +140,8 @@ function flagCounts(
   sendErrors: (number | null)[],
   lossPositions: (number[] | null)[],
   lossWindows: (number | null)[],
+  probeErrors: (number | null)[],
+  ts: Float64Array,
   probeType: unknown,
 ): Badge[] {
   // ICMP errors are left to the named entries below, one per error.
@@ -149,6 +171,13 @@ function flagCounts(
       title: 'Why probes could not be put on the wire, as opposed to going unanswered.',
       count,
     })
+  }
+
+  // Why an application-level probe got no successful answer. About the target,
+  // not about how well it was measured, so it does not turn the dot yellow: the
+  // loss it explains is already on the plot.
+  for (const { code, count } of probeErrorCounts({ ts, probeErrors })) {
+    out.push({ label: probeErrorName(code), title: PROBE_ERROR_TITLE, count, aboutTarget: true })
   }
 
   // Loss at fixed send positions, which is not a bit of the flags either. The
@@ -316,6 +345,9 @@ export default function Plot({
     if (err !== null && err !== undefined) lines.push(icmpErrorName(err))
     const se = rows.sendErrors[idx]
     if (se !== null && se !== undefined) lines.push(sendReasonName(se))
+    // Of a pooled column, the commonest of its intervals' probe errors.
+    const pe = rows.probeErrors[idx]
+    if (pe !== null && pe !== undefined) lines.push(rows.pooled ? `mostly ${probeErrorName(pe)}` : probeErrorName(pe))
     // The route in force at this instant, so a step in the smoke can be read
     // against the path that carried it.
     const inForce = pathsRef.current.findLast((c) => c.ts <= t)
@@ -372,6 +404,7 @@ export default function Plot({
           received: series.received.slice(),
           icmpErrors: series.icmpErrors,
           sendErrors: series.sendErrors,
+          probeErrors: series.probeErrors,
           flags: series.flags.slice(),
           lossPositions: series.lossPositions,
           span: inferSpan(series.ts, n),
@@ -407,13 +440,15 @@ export default function Plot({
         )
         setQuality(
           series.pooled
-            ? pooledFlags(series.flags, series.pooled.positional, probeType)
+            ? pooledFlags(series.flags, series.pooled.positional, series.probeErrors, probeType)
             : flagCounts(
                 series.flags,
                 series.icmpErrors,
                 series.sendErrors,
                 series.lossPositions,
                 series.lossWindows,
+                series.probeErrors,
+                series.ts,
                 probeType,
               ),
         )

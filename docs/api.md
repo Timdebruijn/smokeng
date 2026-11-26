@@ -133,6 +133,7 @@ An Arrow IPC stream (`application/vnd.apache.arrow.stream`), not JSON.
 | `samples` | list of uint32 | Round-trip times in microseconds, sorted ascending. |
 | `icmp_error` | uint16, nullable | ICMP type and code (`type<<8 \| code`) behind the failures. |
 | `send_error` | uint8, nullable | Why the local side could not send. |
+| `probe_error` | uint16, nullable | Why the interval's failed `tcp`, `http(s)` or `dns` probes got no successful answer, the commonest: kind in the top four bits, detail in the low twelve. Kind 1 is the connection (1 refused, 2 reset, 3 timed out, 4 TLS or certificate rejected, 5 other, 6 closed without a response, 7 no route), kind 2 an HTTP status, kind 3 a DNS response code. Absent from a master before schema 32; a reader should treat absent as null. |
 | `loss_positions` | list of uint16, nullable | Set when the master found the series to lose its probes at fixed places in the send order. The send positions, counted from 1, that lost clearly more than their share; an empty list when the loss leans to one end without a single position standing out. Null when the interval is not flagged. |
 | `loss_window` | uint8, nullable | With `loss_positions`: how many intervals the finding rests on, at most 60. |
 | `ipdv_send`, `ipdv_receive`, `server_processing` | list of int32, nullable | irtt series. Null means not measured, not zero. |
@@ -162,9 +163,10 @@ none is absent, not an empty row. Tell the two shapes apart by the fields: only 
 | `positional` | uint32 | How many intervals were flagged as losing probes at fixed send positions (`loss_positions` in a raw read). Not a quality bit, so not counted in `flagged`. |
 | `quantiles` | list of uint32 | The pooled round-trip times in microseconds, sorted ascending: all of them when there are at most 256, otherwise 256 order statistics at evenly spaced ranks, each standing for an equal share of the replies. Every value is a measured sample. |
 | `ipdv_send`, `ipdv_receive`, `server_processing` | list of int32, nullable | The irtt series, pooled the same way. Null where no interval in the column measured the series; empty where intervals measured it with nothing to give. |
+| `probe_error` | uint16, nullable | The `probe_error` most of the column's intervals that had one carried, a tie going to the lower code. Null when none had one. |
 
 Nothing is averaged and nothing is stored: the column is pooled from the stored intervals when
-it is read. Per-interval details (`icmp_error`, `send_error`, `loss_positions`) are not in a pooled read. A read is
+it is read. Per-interval details (`icmp_error`, `send_error`, `loss_positions`) are not in a pooled read; `probe_error` is there only as each column's commonest. A read is
 refused with `400` when it would walk more than 10 million rows — intervals plus their irtt series
 rows; thirty days of a one-second series — or one column would pool more than 20 million samples;
 ask for a shorter window, or more columns.

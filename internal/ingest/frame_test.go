@@ -298,6 +298,7 @@ func TestDecodeBatchRefusesAShortValidityBitmap(t *testing.T) {
 		for _, name := range store.KnownSeries {
 			field[*array.ListBuilder](t, rb, name).AppendNull()
 		}
+		field[*array.Uint16Builder](t, rb, "probe_error").AppendNull()
 	}
 	rec := rb.NewRecord()
 	defer rec.Release()

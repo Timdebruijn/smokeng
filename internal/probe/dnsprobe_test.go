@@ -16,7 +16,10 @@ import (
 // dnsResponder answers any query by echoing it back with the response bit set.
 // The probe times a round trip; it does not read the answer section, so this
 // is a complete far end for what is being measured.
-func dnsResponder(t *testing.T) int {
+func dnsResponder(t *testing.T) int { return dnsResponderRcode(t, 0) }
+
+// dnsResponderRcode answers every query with the given response code.
+func dnsResponderRcode(t *testing.T, rcode byte) int {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -30,12 +33,13 @@ func dnsResponder(t *testing.T) int {
 			if err != nil {
 				return
 			}
-			if n < 3 {
+			if n < 4 {
 				continue
 			}
 			reply := make([]byte, n)
 			copy(reply, buf[:n])
 			reply[2] |= 0x80 // QR: this is a response
+			reply[3] = reply[3]&0xf0 | rcode
 			_, _ = pc.WriteTo(reply, from)
 		}
 	}()
@@ -55,6 +59,20 @@ func TestProbeDNSMeasuresAResolver(t *testing.T) {
 	got := runOne(t, spec)
 	if got.sent != 1 || got.received != 1 || got.samples != 1 {
 		t.Fatalf("got %+v, want one sent, one received, one sample", got)
+	}
+	wantProbeErr(t, got.probeErr, 0)
+}
+
+// A resolver that answers SERVFAIL failed the question. Timing it as a healthy
+// reply would draw a green band over a broken resolver, so it is loss, and the
+// rcode says why.
+func TestProbeDNSCountsAnErrorRcodeAsLoss(t *testing.T) {
+	for rcode, name := range map[byte]string{2: "SERVFAIL", 3: "NXDOMAIN", 5: "REFUSED"} {
+		got := runOne(t, dnsSpec(t, dnsResponderRcode(t, rcode)))
+		if got.sent != 1 || got.received != 0 {
+			t.Errorf("%s: got %+v, want one sent and nothing received", name, got)
+		}
+		wantProbeErr(t, got.probeErr, store.ProbeError(store.ProbeErrDNS, uint16(rcode)))
 	}
 }
 

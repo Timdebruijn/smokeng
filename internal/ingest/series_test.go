@@ -93,6 +93,9 @@ func TestDecodeBatchAcceptsPreSeriesAgent(t *testing.T) {
 	if out[0].Series != nil {
 		t.Errorf("series invented for an agent that sent none: %v", out[0].Series)
 	}
+	if out[0].ProbeErr != nil {
+		t.Errorf("a probe error invented for an agent that sent none: %d", *out[0].ProbeErr)
+	}
 }
 
 // A batch missing a column that is genuinely required is still refused, and
@@ -249,5 +252,70 @@ func TestDecodeBatchIgnoresUnknownColumn(t *testing.T) {
 	}
 	if len(out) != 1 || len(out[0].Samples) != 1 {
 		t.Fatalf("the measurement did not survive: %+v", out)
+	}
+}
+
+// The probe error has to cross the wire like the send reason, or it exists
+// only for targets the master probes itself.
+func TestBatchCarriesProbeError(t *testing.T) {
+	want := store.ProbeError(store.ProbeErrHTTP, 503)
+	blob := mustEncode(t, []store.Measurement{
+		{TargetID: 1, TS: 100, Sent: 2, Received: 1, Samples: []uint32{10}, ProbeErr: &want},
+		{TargetID: 2, TS: 100, Sent: 1, Received: 1, Samples: []uint32{20}},
+	})
+	out, err := DecodeBatch(blob, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].ProbeErr == nil || *out[0].ProbeErr != want {
+		t.Errorf("ProbeErr = %v, want %#x", out[0].ProbeErr, want)
+	}
+	if out[1].ProbeErr != nil {
+		t.Errorf("a clean measurement arrived with probe error %#x", *out[1].ProbeErr)
+	}
+}
+
+// A probe_error column of the wrong type is ignored, not a refused batch: the
+// agent discards a batch it was refused, and that would cost the measurements
+// for the sake of a label.
+func TestDecodeBatchIgnoresAProbeErrorOfTheWrongType(t *testing.T) {
+	sch := arrow.NewSchema([]arrow.Field{
+		{Name: "target_id", Type: arrow.PrimitiveTypes.Int64},
+		{Name: "ts", Type: &arrow.TimestampType{Unit: arrow.Second, TimeZone: "UTC"}},
+		{Name: "sent", Type: arrow.PrimitiveTypes.Uint16},
+		{Name: "received", Type: arrow.PrimitiveTypes.Uint16},
+		{Name: "flags", Type: arrow.PrimitiveTypes.Uint8},
+		{Name: "samples", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint32)},
+		{Name: "icmp_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
+		{Name: "probe_error", Type: arrow.BinaryTypes.String, Nullable: true},
+	}, nil)
+	var buf bytes.Buffer
+	w := ipc.NewWriter(&buf, ipc.WithSchema(sch))
+	rb := array.NewRecordBuilder(memory.DefaultAllocator, sch)
+	defer rb.Release()
+	rb.Field(0).(*array.Int64Builder).Append(4)
+	rb.Field(1).(*array.TimestampBuilder).Append(arrow.Timestamp(900))
+	rb.Field(2).(*array.Uint16Builder).Append(2)
+	rb.Field(3).(*array.Uint16Builder).Append(1)
+	rb.Field(4).(*array.Uint8Builder).Append(0)
+	list := rb.Field(5).(*array.ListBuilder)
+	list.Append(true)
+	list.ValueBuilder().(*array.Uint32Builder).Append(11)
+	rb.Field(6).(*array.Uint16Builder).AppendNull()
+	rb.Field(7).(*array.StringBuilder).Append("HTTP 503")
+	rec := rb.NewRecord()
+	defer rec.Release()
+	if err := w.Write(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := DecodeBatch(buf.Bytes(), 3)
+	if err != nil {
+		t.Fatalf("a batch with an unreadable probe_error was refused: %v", err)
+	}
+	if len(out) != 1 || out[0].Received != 1 || out[0].ProbeErr != nil {
+		t.Fatalf("got %+v, want the row kept without a probe error", out)
 	}
 }
