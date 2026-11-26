@@ -15,7 +15,7 @@ import {
   type Target,
 } from './api'
 import { ConfirmButton, useAction, useFormError, ErrorText, announce } from './shared'
-import { orderedTargets } from './util'
+import { mayChange, orderedTargets } from './util'
 
 interface SettingDef {
   key: SettingKey
@@ -35,6 +35,8 @@ interface SettingDef {
    * answer a click with a validation error.
    */
   seed?: number | string
+  /** Refused to anyone but a global admin, on any node: its effect leaves the subtree. */
+  adminOnly?: boolean
 }
 
 // The bounds and choices here are the ones the server enforces. Stating them
@@ -119,7 +121,7 @@ const SETTINGS: SettingDef[] = [
     types: ['https'],
     hint: 'Leave off. An internal certificate is better handled by trusting its CA with --tls-ca-file, which keeps verification on; turning this off measures a service without establishing it is the right one.',
   },
-  { key: 'dscp', label: 'DSCP', kind: 'number', min: 0, max: 63 },
+  { key: 'dscp', label: 'DSCP', kind: 'number', min: 0, max: 63, adminOnly: true },
   { key: 'agents', label: 'Agents', kind: 'agents' },
   { key: 'trace_interval_s', label: 'Path discovery', unit: 's (0 = off)', kind: 'number', min: 0 },
   {
@@ -128,6 +130,7 @@ const SETTINGS: SettingDef[] = [
     unit: 's (0 = forever)',
     kind: 'number',
     min: 0,
+    adminOnly: true,
     hint: 'How long to keep this target’s raw measurements. 0 keeps them forever, at full resolution. A positive value deletes whole intervals older than it — never averaging them away, so history before the horizon reads as absent.',
   },
   {
@@ -164,6 +167,10 @@ function settingsFor(target: Target): SettingDef[] {
   )
 }
 
+// Added to the usual hint on a node the caller may otherwise change: a disabled
+// field among enabled ones needs its reason in text, not in a title.
+const ADMIN_ONLY_HINT = 'Only a global administrator may change this: its effect reaches beyond this part of the tree.'
+
 // What "Override" puts in the port field when nothing is inherited. These are
 // the type's own defaults, so overriding changes nothing until the operator
 // edits it — except for tcp, which has no default and gets the port people
@@ -177,7 +184,7 @@ const PORT_SEED: Record<string, number> = {
   irtt: 2112,
 }
 
-export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
+export default function Admin({ isAdmin = false }: { isAdmin?: boolean }) {
   const [targets, setTargets] = useState<Target[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -188,10 +195,7 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
     setAgents(enrolled)
     setSelectedId((cur) => (cur !== null && list.some((t) => t.id === cur) ? cur : (list[0]?.id ?? null)))
   }, [])
-  const { error, busy: saving, reload, run, attempt } = useAction(load)
-  // A viewer may look at the tree but not change it. The server enforces this
-  // regardless; disabling the controls only saves them a refused request.
-  const busy = saving || readOnly
+  const { error, busy, reload, run, attempt } = useAction(load)
 
   const ordered = orderedTargets(targets)
 
@@ -201,7 +205,8 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
     <>
       <div className="page-head">
         <h1>Targets</h1>
-        {!readOnly && (
+        {/* TOML import and export cover the whole tree, which a grant never does. */}
+        {isAdmin && (
           <div className="pill-row">
             <button className="pill" onClick={() => setToml('export')}>
               Export TOML
@@ -254,7 +259,11 @@ export default function Admin({ readOnly = false }: { readOnly?: boolean }) {
             key={selected.id}
             target={selected}
             agents={agents}
-            busy={busy}
+            // Per node, not per user: an editor of one subtree is a viewer above
+            // and beside it. The server enforces this regardless; disabling the
+            // controls only saves a refused request.
+            busy={busy || !mayChange(selected, isAdmin)}
+            isAdmin={isAdmin}
             onPatch={(body, done) => run(() => updateTarget(selected.id, body), done)}
             onDelete={(recursive) =>
               run(() => deleteTarget(selected.id, recursive), `Target ${selected.path} deleted`).then((ok) => {
@@ -316,12 +325,13 @@ interface DetailProps {
   target: Target
   agents: AgentInfo[]
   busy: boolean
+  isAdmin: boolean
   onPatch: (body: Parameters<typeof updateTarget>[1], done: string) => Promise<boolean>
   onDelete: (recursive: boolean) => Promise<boolean>
   onAddChild: (body: { name: string; host?: string; address_family?: string }) => Promise<string | null>
 }
 
-function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: DetailProps) {
+function TargetDetail({ target, agents, busy, isAdmin, onPatch, onDelete, onAddChild }: DetailProps) {
   const isRoot = target.parent_id === null
   const [adding, setAdding] = useState(false)
   // The form replaces the button that opened it; give focus back when it closes.
@@ -338,6 +348,7 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
         <code>{target.path}</code>
         <span className="dim">{target.is_group ? 'group' : `${target.host} · ${target.address_family}`}</span>
       </h2>
+      {!target.writable && <p className="hint">You may read this part of the tree but not change it.</p>}
 
       <div className="fields">
         {!isRoot && (
@@ -436,10 +447,14 @@ function TargetDetail({ target, agents, busy, onPatch, onDelete, onAddChild }: D
           {settingsFor(target).map((s) => (
             <SettingRow
               key={s.key}
-              def={s}
+              def={
+                target.writable && !mayChange(target, isAdmin, s.adminOnly)
+                  ? { ...s, hint: [s.hint, ADMIN_ONLY_HINT].filter(Boolean).join(' ') }
+                  : s
+              }
               value={target.settings[s.key] as SettingValue<number | string | boolean>}
               agents={agents}
-              busy={busy}
+              busy={busy || !mayChange(target, isAdmin, s.adminOnly)}
               validate={(v) => validateSetting(target, s, v)}
               onSet={(v) => onPatch({ settings: { [s.key]: v } }, `${s.label} ${v === null ? 'reverted to inherited' : 'saved'}`)}
             />
@@ -649,7 +664,10 @@ function AgentPicker({
   onChange: (v: string) => void
 }) {
   const chosen = selected.trim().split(/\s+/).filter(Boolean)
-  const known = ['local', ...agents.filter((a) => !a.is_local).map((a) => a.name)]
+  // What /api/v1/agents returned, local first. For an editor that is the agents
+  // in their scope, the only ones the server lets them name; the local agent is
+  // a row like any other and is listed only when it is one of those.
+  const known = [...agents.filter((a) => a.is_local), ...agents.filter((a) => !a.is_local)].map((a) => a.name)
   // A name assigned before the agent was removed would otherwise vanish from
   // the list silently, and unchecking is not what happened to it.
   const orphaned = chosen.filter((n) => !known.includes(n))

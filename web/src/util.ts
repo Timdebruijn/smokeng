@@ -351,3 +351,12 @@ export function measurementLabel(s: { sent?: number; loss?: number; flagged?: nu
   if ((s.flagged ?? 0) > 0) return 'flagged'
   return 'clean'
 }
+
+// mayChange says whether a field on a node takes edits from this caller, the
+// way the server decides it: write access comes per node from a grant, and a
+// setting whose effect leaves the subtree stays with a global admin on every
+// node. The global role in /api/v1/me cannot stand in for the first half: it is
+// viewer for an editor of one subtree.
+export function mayChange(target: Pick<Target, 'writable'>, isAdmin: boolean, adminOnly = false): boolean {
+  return target.writable && (isAdmin || !adminOnly)
+}

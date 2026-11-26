@@ -68,6 +68,12 @@ func targetJSON(sc *Scope, n *tree.Target) (map[string]any, error) {
 		"enabled":        n.Enabled,
 		"sort_order":     n.SortOrder,
 		"is_group":       n.Host == nil,
+		// Whether this caller may change this node, so the UI offers edit controls
+		// where the server will accept them. A grant is per subtree, so the global
+		// role in /api/v1/me cannot say this: an editor of one subtree is a viewer
+		// everywhere else. It is the caller's own permission on a node they can
+		// already see, and says nothing about any other.
+		"writable": sc.CanWrite(n.ID),
 		"settings": map[string]any{
 			"interval_s":         settingJSON(sc, n.ID, res.IntervalS),
 			"pings_per_interval": settingJSON(sc, n.ID, res.PingsPerInterval),

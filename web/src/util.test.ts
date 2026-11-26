@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { availabilityURL, fetchSeries, pathsURL, seriesURL, type Target } from './api.ts'
 import { axisLabel } from './layout.ts'
@@ -13,6 +14,7 @@ import {
   csvCell,
   firingAnnouncement,
   filterByFamily,
+  mayChange,
   parseFamilyChoice,
   resolveSeries,
   screenTitle,
@@ -327,4 +329,27 @@ test('rangeWords speaks a range button', () => {
   assert.equal(rangeWords(7200), '2 hours')
   assert.equal(rangeWords(10), '10 seconds')
   assert.equal(rangeWords(90061), '1 day 1 hour 1 minute 1 second')
+})
+
+test('mayChange follows the node, and keeps admin-only settings with an admin', () => {
+  const editable = { writable: true }
+  const readOnly = { writable: false }
+  // An editor through a grant: global role viewer, but this node is theirs.
+  assert.equal(mayChange(editable, false), true)
+  assert.equal(mayChange(editable, false, true), false)
+  // A node outside their grant, or a plain viewer.
+  assert.equal(mayChange(readOnly, false), false)
+  // An admin's listing is writable everywhere; admin-only settings are theirs.
+  assert.equal(mayChange(editable, true, true), true)
+  // The server's word wins over the role either way.
+  assert.equal(mayChange(readOnly, true), false)
+})
+
+test('the settings the Targets screen keeps with an admin are the ones the server refuses', () => {
+  const go = readFileSync(new URL('../../internal/api/targets.go', import.meta.url), 'utf8')
+  const ui = readFileSync(new URL('./Admin.tsx', import.meta.url), 'utf8')
+  const server = go.match(/adminOnlySettings = \[\]string\{([^}]*)\}/)?.[1].match(/"[a-z_]+"/g)?.map((s) => s.slice(1, -1))
+  const client = [...ui.matchAll(/\{[^{}]*key: '([a-z_]+)'[^{}]*adminOnly: true/g)].map((m) => m[1])
+  assert.ok(server && server.length > 0, 'adminOnlySettings not found in targets.go')
+  assert.deepEqual(client.sort(), server.sort())
 })

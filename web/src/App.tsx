@@ -147,7 +147,7 @@ export default function App() {
       ) : view === 'graphs' ? (
         <Graphs family={family} onOpenDetail={openDetail} />
       ) : view === 'targets' ? (
-        <Admin readOnly={!isAdmin} />
+        <Admin isAdmin={isAdmin} />
       ) : view === 'alerts' ? (
         <Alerts isAdmin={isAdmin} />
       ) : view === 'agents' ? (
