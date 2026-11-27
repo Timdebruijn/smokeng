@@ -264,12 +264,28 @@ export async function fetchAlertRules(): Promise<AlertRule[]> {
   return (await get<{ rules: AlertRule[] }>('/api/v1/alert-rules', 'alert rules')).rules ?? []
 }
 
+/** The webhook's delivery record since the master started (alert.DeliveryStats). */
+export interface DeliveryStatus {
+  ok: number
+  failed: number
+  dropped: number
+  /** A delivery failed or a batch was dropped, and none has gone through since. */
+  failing: boolean
+  last_ok?: number
+  last_failed_at?: number
+  /** As the server worded it, with the webhook URL reduced to its host. */
+  last_error?: string
+  last_dropped_at?: number
+}
+
 export async function fetchFiringAlerts(): Promise<{
   alerts: FiringAlert[]
   /** Rules are being evaluated. */
   enabled: boolean
   /** Transitions are posted somewhere as well as recorded. */
   delivering: boolean
+  /** How the webhook is doing since start; for a global admin only. */
+  delivery?: DeliveryStatus
 }> {
   return get('/api/v1/alerts', 'alerts')
 }

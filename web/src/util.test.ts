@@ -7,6 +7,7 @@ import {
   graphGroups,
   graphGroupLabel,
   afterName,
+  deliveryWarning,
   agentQuietNote,
   alertKey,
   alertName,
@@ -445,6 +446,33 @@ test('flagCounts says nothing for a pooled read, whose rows are columns', () => 
 
 test('flagsIn names ICMP errors, which count against a series', () => {
   assert.deepEqual(flagsIn(1 << 4, 'icmp').map((f) => f.label), ['ICMP errors'])
+})
+
+test('deliveryWarning says what failed and when, and nothing while delivery works', () => {
+  const at = (ts: number) => `t${ts}`
+  const base = { ok: 3, failed: 0, dropped: 0, failing: false }
+  assert.equal(deliveryWarning({ ...base, failed: 2, last_failed_at: 50, last_ok: 90, last_error: 'x' }, at), null)
+  assert.equal(
+    deliveryWarning({ ...base, failed: 1, failing: true, last_ok: 40, last_failed_at: 50, last_error: 'webhook http://h:1/… returned 503' }, at),
+    'Alert webhook deliveries are failing. The last delivery, at t50, failed: webhook http://h:1/… returned 503. The last one that went through was at t40.',
+  )
+  assert.equal(
+    deliveryWarning({ ok: 0, failed: 0, dropped: 2, failing: true, last_dropped_at: 70 }, at),
+    'Alert webhook deliveries are failing. The delivery queue was full at t70 and dropped the oldest batch unsent. None has gone through since the master started. 2 batches dropped since start.',
+  )
+})
+
+test('deliveryWarning picks the newer of a failure and a drop, and says a recent drop after recovery', () => {
+  const at = (ts: number) => `t${ts}`
+  const failing = { ok: 1, failed: 1, dropped: 1, failing: true, last_ok: 10 }
+  // A failure at the same second as a drop, or after it, is what is said.
+  assert.match(deliveryWarning({ ...failing, last_failed_at: 50, last_dropped_at: 50, last_error: 'e' }, at)!, /The last delivery, at t50, failed: e\./)
+  assert.match(deliveryWarning({ ...failing, last_failed_at: 40, last_dropped_at: 50 }, at)!, /queue was full at t50/)
+  assert.match(deliveryWarning({ ...failing, last_failed_at: 50 }, at)!, /failed: no reason given\. .* 1 batch dropped since start\.$/)
+  // Recovered: a drop in the last day is still said, an older one is not.
+  const recovered = { ok: 5, failed: 0, dropped: 1, failing: false, last_ok: 200, last_dropped_at: 100 }
+  assert.match(deliveryWarning(recovered, at, 100 + 3600)!, /^Alert webhook deliveries are going through again, but the queue was full at t100/)
+  assert.equal(deliveryWarning(recovered, at, 100 + 86401), null)
 })
 
 test('relativeTime is coarse, and never for nothing', () => {

@@ -253,7 +253,12 @@ window that had data. Read the two together.
 ```
 
 `acked_by`, `acked_at` and `silenced_until` appear when they apply. `delivering` says a webhook
-is configured, not that deliveries succeed. To acknowledge, `POST /api/v1/alerts/ack` with
+is configured, not that deliveries succeed. Whether they do is in `delivery`, present for a global
+admin when a webhook is configured: `ok` and `failed` count POSTs since start, and `dropped` the
+batches the full queue discarded without posting;
+`failing` is true when a delivery failed or a batch was dropped and none has gone through since;
+`last_ok`, `last_failed_at` with `last_error`, and `last_dropped_at` are unix times, each absent
+until it happens. `last_error` names the webhook by scheme and host only. To acknowledge, `POST /api/v1/alerts/ack` with
 `{"rule_id": 2, "target_id": 7, "agent_id": 0}`; add `"ack": false` to clear it. An alert is
 per (rule, target, agent, family): `"family"` (`v4`, `v6` or `unknown`) picks the series and
 defaults to the target's current family. Any other value is a 400.

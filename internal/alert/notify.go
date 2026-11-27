@@ -119,7 +119,9 @@ func (w *Webhook) Notify(ctx context.Context, alerts []Alert) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.URL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		// A URL that does not parse is quoted whole in the error, credential
+		// and all, and this error is shown to an administrator as well as logged.
+		return fmt.Errorf("alert: webhook %s: cannot build the request", RedactURL(w.URL))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -175,10 +177,22 @@ type Queue struct {
 	cancel context.CancelFunc
 	once   sync.Once
 
-	// Outcomes, for /metrics: a receiver that is down otherwise shows only in
-	// the log, and alerting that fails is the one failure alerting cannot report.
+	// Outcomes, for /metrics and for an administrator in the API: a receiver
+	// that is down otherwise shows only in the log, and alerting that fails is
+	// the one failure alerting cannot report.
 	ok, failed, dropped atomic.Uint64
 	lastOK              atomic.Int64 // unix seconds; 0 until a delivery succeeds
+	lastDrop            atomic.Int64 // unix seconds; 0 until a batch is dropped
+	lastFailure         atomic.Pointer[failure]
+	// failing is set by a failed delivery or a dropped batch, and cleared by
+	// the next delivery that goes through.
+	failing atomic.Bool
+}
+
+// failure is the last delivery that did not go through.
+type failure struct {
+	at  int64
+	err string
 }
 
 // DeliveryStats counts what the queue did with the batches it was given. Each
@@ -187,11 +201,28 @@ type DeliveryStats struct {
 	OK, Failed, Dropped uint64
 	// LastOK is the unix time of the last successful delivery, 0 if none yet.
 	LastOK int64
+	// LastFailedAt and LastError are the last delivery that failed: when, and
+	// the error as the notifier worded it (a Webhook redacts its URL). Zero and
+	// empty if none has failed since start.
+	LastFailedAt int64
+	LastError    string
+	// LastDroppedAt is when the queue last dropped a batch, 0 if never.
+	LastDroppedAt int64
+	// Failing is whether delivery is broken now rather than once: a delivery
+	// failed or a batch was dropped, and none has gone through since.
+	Failing bool
 }
 
-// Stats reports the delivery counts since start.
+// Stats reports what the queue did since start: counts, the last success,
+// failure and drop, and whether delivery is failing now. A dropped batch stays
+// lost after a later delivery clears Failing; LastDroppedAt is what says so.
 func (q *Queue) Stats() DeliveryStats {
-	return DeliveryStats{OK: q.ok.Load(), Failed: q.failed.Load(), Dropped: q.dropped.Load(), LastOK: q.lastOK.Load()}
+	d := DeliveryStats{OK: q.ok.Load(), Failed: q.failed.Load(), Dropped: q.dropped.Load(),
+		LastOK: q.lastOK.Load(), LastDroppedAt: q.lastDrop.Load(), Failing: q.failing.Load()}
+	if f := q.lastFailure.Load(); f != nil {
+		d.LastFailedAt, d.LastError = f.at, f.err
+	}
+	return d
 }
 
 // queueDeliveryTimeout bounds one delivery, as the webhook's own client does.
@@ -231,11 +262,14 @@ func (q *Queue) send(alerts []Alert) {
 	defer cancel()
 	if err := q.inner.Notify(ctx, alerts); err != nil {
 		q.failed.Add(1)
+		q.lastFailure.Store(&failure{at: time.Now().Unix(), err: err.Error()})
+		q.failing.Store(true)
 		log.Printf("alert: deliver %d alert(s): %v", len(alerts), err)
 		return
 	}
 	q.ok.Add(1)
 	q.lastOK.Store(time.Now().Unix())
+	q.failing.Store(false)
 }
 
 // Notify queues a batch and returns at once.
@@ -249,6 +283,8 @@ func (q *Queue) Notify(_ context.Context, alerts []Alert) error {
 		select {
 		case old := <-q.ch:
 			q.dropped.Add(1)
+			q.lastDrop.Store(time.Now().Unix())
+			q.failing.Store(true)
 			log.Printf("alert: the delivery queue is full; dropped a batch of %d alert(s), the oldest", len(old))
 		default:
 		}

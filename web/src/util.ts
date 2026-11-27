@@ -495,6 +495,33 @@ export function flagNote(f: { label: string; count: number }, intervals: number,
     : `${f.label} in ${f.count} of ${intervals} ${intervals === 1 ? 'interval' : 'intervals'}, last at ${lastAt}`
 }
 
+/**
+ * What to tell an admin about webhook delivery, or null when there is nothing
+ * to say. Words, not a colour, and with when, so "failing" can be told from
+ * "failed once last week". A batch dropped in the last day is said even after
+ * deliveries recovered: it is not recovered with them, and a resolve in it is
+ * never announced again.
+ */
+export function deliveryWarning(
+  d: { ok: number; failed: number; dropped: number; failing: boolean; last_ok?: number; last_failed_at?: number; last_error?: string; last_dropped_at?: number },
+  at: (unixSeconds: number) => string = (ts) => new Date(ts * 1000).toLocaleString(),
+  now = Date.now() / 1000,
+): string | null {
+  const drops = d.dropped > 0 ? ` ${d.dropped} ${d.dropped === 1 ? 'batch' : 'batches'} dropped since start.` : ''
+  if (!d.failing) {
+    if (!d.last_dropped_at || now - d.last_dropped_at > 86400) return null
+    return `Alert webhook deliveries are going through again, but the queue was full at ${at(d.last_dropped_at)} and dropped a batch unsent; a transition in it was never delivered.${drops}`
+  }
+  const parts: string[] = []
+  if (d.last_failed_at && (!d.last_dropped_at || d.last_failed_at >= d.last_dropped_at)) {
+    parts.push(`The last delivery, at ${at(d.last_failed_at)}, failed: ${d.last_error ?? 'no reason given'}.`)
+  } else if (d.last_dropped_at) {
+    parts.push(`The delivery queue was full at ${at(d.last_dropped_at)} and dropped the oldest batch unsent.`)
+  }
+  parts.push(d.last_ok ? `The last one that went through was at ${at(d.last_ok)}.` : 'None has gone through since the master started.')
+  return `Alert webhook deliveries are failing. ${parts.join(' ')}${drops}`
+}
+
 /** How long ago, in words: "just now", "40s ago", "3 hours ago". */
 export function relativeTime(unixSeconds: number | undefined, now = Date.now() / 1000): string {
   if (unixSeconds === undefined) return 'never'
