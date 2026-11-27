@@ -218,6 +218,52 @@ function AppHeader({
   onMenu: (m: HeaderMenu) => void
 }) {
   const who = me?.name ?? me?.email ?? me?.subject ?? ''
+  const headerRef = useRef<HTMLElement>(null)
+  const tabsRef = useRef<HTMLElement>(null)
+  // The bar's height, as a CSS variable for what has to stop below it (scroll
+  // padding, the sticky sidebar). Measured, because it depends on the width,
+  // the text size and who is signed in, and a guessed figure was wrong for some.
+  // offsetHeight is in the same units as the stylesheet's lengths, root zoom
+  // for larger text included.
+  useEffect(() => {
+    const header = headerRef.current
+    if (!header) return
+    const set = () => document.documentElement.style.setProperty('--appbar-h', `${header.offsetHeight}px`)
+    set()
+    const ro = new ResizeObserver(set)
+    ro.observe(header)
+    return () => ro.disconnect()
+  }, [])
+  // On a phone the tabs are one row that scrolls sideways, with no scrollbar:
+  // say which edge has more beyond it (data-more, which fades that edge), and
+  // keep the current tab in sight, so the page you are on is never off-screen.
+  useEffect(() => {
+    const nav = tabsRef.current
+    if (!nav) return
+    const mark = () => {
+      const left = nav.scrollLeft > 1
+      const right = nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 1
+      nav.dataset.more = left && right ? 'both' : left ? 'left' : right ? 'right' : ''
+    }
+    mark()
+    nav.addEventListener('scroll', mark, { passive: true })
+    const ro = new ResizeObserver(mark)
+    ro.observe(nav)
+    return () => {
+      nav.removeEventListener('scroll', mark)
+      ro.disconnect()
+    }
+    // Again when a tab is added (Access, once the signed-in role is known): the
+    // row's box keeps its size, so the observer does not see it.
+  }, [views.length])
+  useEffect(() => {
+    const nav = tabsRef.current
+    const tab = nav?.querySelector<HTMLElement>('[aria-current="page"]')
+    if (!nav || !tab || nav.scrollWidth <= nav.clientWidth) return
+    // From the rects, not offsetLeft: that is relative to the bar, not the row.
+    const at = tab.getBoundingClientRect().left - nav.getBoundingClientRect().left + nav.scrollLeft
+    nav.scrollLeft = Math.max(0, at - (nav.clientWidth - tab.offsetWidth) / 2)
+  }, [view, views.length])
 
   // An open popover closes on Esc (focus back on its trigger), on a press
   // outside its own menu, and when focus moves out of it: left open after a
@@ -243,7 +289,7 @@ function AppHeader({
     }
   }, [menu, onMenu])
   return (
-    <header className="appbar">
+    <header className="appbar" ref={headerRef}>
       <div className="appbar-inner">
         <button className="brand" onClick={() => onView('overview')}>
           {/* The same ribbon as the tab icon: the smoke and its median. */}
@@ -253,7 +299,7 @@ function AppHeader({
           </span>
           {me?.version && <span className="version-tag">{me.version}</span>}
         </button>
-        <nav className="tabs">
+        <nav className="tabs" ref={tabsRef}>
           {views.map((v) => (
             <button
               key={v}
@@ -267,7 +313,13 @@ function AppHeader({
         </nav>
         <span className="spacer" />
         <button className="search-button" onClick={onOpenPalette}>
-          <span>Search</span>
+          {/* Only shown on a phone, where the word does not fit; the word
+              stays the button's name there too. */}
+          <svg className="search-icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path d="m20 20-4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          <span className="search-label">Search</span>
           <kbd>⌘K</kbd>
         </button>
         <FamilyFilter choice={family} onChange={onFamily} />
@@ -289,11 +341,18 @@ function AppHeader({
           <div className="usermenu">
             <button
               className="chip-button"
+              // Name and role as one phrase; the spans ran together as
+              // "Tim de Bruijnviewer". It starts with the visible name.
+              aria-label={`${who || 'Signed in'}, ${me.role}`}
               aria-expanded={menu === 'user'}
               aria-controls="user-popover"
               onClick={() => onMenu(menu === 'user' ? null : 'user')}
             >
-              <span className="avatar">{(who || '?').slice(0, 1).toUpperCase()}</span>
+              {/* Decoration: the name beside it says who, and read together
+                  the two made "TTim de Bruijn". */}
+              <span className="avatar" aria-hidden="true">
+                {(who || '?').slice(0, 1).toUpperCase()}
+              </span>
               <span className="who">{who}</span>
               <span className="role-tag">{me.role}</span>
             </button>
