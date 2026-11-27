@@ -32,6 +32,9 @@ type dnsResult struct {
 	TXKernel time.Time
 	RX       time.Time
 	RXKernel bool
+	// RCode is the reply's response code (the low four bits of its flags, so
+	// without any EDNS extension): 0 is NOERROR. Only meaningful with RX set.
+	RCode uint8
 }
 
 // dnsRoundTrip sends one DNS query on a socket of its own and times the reply,
@@ -146,10 +149,11 @@ func dnsRoundTrip(ctx context.Context, query []byte, wantID uint16, addr netip.A
 		}
 		// A reply for a different query is not ours to time. On a connected
 		// socket this is vanishingly unlikely, and checking costs two bytes.
-		if n < 2 || binary.BigEndian.Uint16(buf[:2]) != wantID {
+		if n < 4 || binary.BigEndian.Uint16(buf[:2]) != wantID {
 			continue
 		}
 		res.RX = time.Now()
+		res.RCode = buf[3] & 0x0f
 		if caps.KernelRX {
 			if t, ok := timestamp.FromOOB(oob[:oobn]); ok {
 				res.RX, res.RXKernel = t, true

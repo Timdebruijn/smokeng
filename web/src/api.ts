@@ -523,6 +523,12 @@ export interface Series {
   /** Per row, with lossPositions: how many intervals the finding rests on. */
   lossWindows: (number | null)[]
   /**
+   * Why the far end gave the row's failed probes no successful answer — a
+   * refused connection, an HTTP status, a DNS rcode (store.ProbeError) — or null
+   * where none failed that way. Of a pooled read, each column's commonest.
+   */
+  probeErrors: (number | null)[]
+  /**
    * The extra per-packet distributions measured beside the round trip, keyed
    * by series name. Absent from the map when no interval in the window carried
    * one, which is how "this target does not measure it" reads.
@@ -632,6 +638,45 @@ const ICMP_NAMES: Record<number, string> = {
 
 export function icmpErrorName(packed: number): string {
   return ICMP_NAMES[packed] ?? `ICMP type ${packed >> 8} code ${packed & 0xff}`
+}
+
+/** store.ProbeConn*: why a connection to the service gave no answer. */
+const PROBE_CONN: Record<number, string> = {
+  1: 'connection refused',
+  2: 'connection reset',
+  3: 'timed out',
+  4: 'TLS or certificate rejected',
+  5: 'connection failed',
+  6: 'closed without a response',
+  7: 'no route to host',
+}
+
+/** The DNS response codes, by number (RFC 1035 and 2136). */
+const DNS_RCODES: Record<number, string> = {
+  1: 'FORMERR',
+  2: 'SERVFAIL',
+  3: 'NXDOMAIN',
+  4: 'NOTIMP',
+  5: 'REFUSED',
+  6: 'YXDOMAIN',
+  7: 'YXRRSET',
+  8: 'NXRRSET',
+  9: 'NOTAUTH',
+  10: 'NOTZONE',
+}
+
+/**
+ * A probe error (store.ProbeError: kind in the top four bits, detail below) in
+ * words. An unknown one is shown as its parts rather than guessed at, so data
+ * from a newer prober stays legible.
+ */
+export function probeErrorName(code: number): string {
+  const kind = code >> 12
+  const detail = code & 0xfff
+  if (kind === 1) return PROBE_CONN[detail] ?? `connection error ${detail}`
+  if (kind === 2) return `HTTP ${detail}`
+  if (kind === 3) return `DNS ${DNS_RCODES[detail] ?? `rcode ${detail}`}`
+  return `probe error ${code}`
 }
 
 /** One recorded route, and when it took effect. */

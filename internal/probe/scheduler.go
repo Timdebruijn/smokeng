@@ -170,6 +170,9 @@ type ping struct {
 	// Why this probe could not be sent, when it could not. See
 	// store.SendReason*; zero means it was not recorded.
 	sendReason uint8
+	// Why the far end gave this probe no successful answer, when a probe type
+	// can tell (store.ProbeError); zero means it could not, or did not need to.
+	probeErr uint16
 }
 
 func newCollector(n int, late *atomic.Int64) *collector {
@@ -271,6 +274,18 @@ func (c *collector) onICMPError(idx int, icmpType, code uint8) {
 	p.icmpErr, p.icmpType, p.icmpCode = true, icmpType, code
 }
 
+// onProbeError records why an application-level probe got no successful
+// answer. The probe stays lost; this only says why.
+func (c *collector) onProbeError(idx int, code uint16) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done {
+		return
+	}
+	// finalize reads it only for a probe without a reply, and 0 is no reason.
+	c.pings[idx].probeErr = code
+}
+
 func (c *collector) onTXKernel(idx int, t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -322,6 +337,7 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	// interval, and the common cause is the useful one.
 	errCounts := map[uint16]int{}
 	sendCounts := map[uint8]int{}
+	probeCounts := map[uint16]int{}
 	deadline := now.Add(-timeout)
 	// Which positions were counted and gave no sample, in send order. Filled in
 	// the loop that builds Samples, so the two cannot disagree: a position is
@@ -337,7 +353,10 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 		// already set above; this only decides not to count the probe.)
 		// Counting it as attempted would report loss that never happened, and
 		// a service restart would look like an outage.
-		if cond.truncated && p.rx.IsZero() && !p.sendFailed && p.txUser.After(deadline) {
+		// A probe that already failed with an answer of its own (a refusal, an
+		// HTTP status) finished: it was not abandoned, so it counts, as a send
+		// failure does.
+		if cond.truncated && p.rx.IsZero() && !p.sendFailed && p.probeErr == 0 && p.txUser.After(deadline) {
 			continue
 		}
 		// A probe the kernel refused to transmit was still attempted, and is
@@ -356,6 +375,9 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 			errCounts[store.ICMPError(p.icmpType, p.icmpCode)]++
 		}
 		if p.rx.IsZero() {
+			if p.probeErr != 0 {
+				probeCounts[p.probeErr]++
+			}
 			continue
 		}
 		tx := p.txKern
@@ -421,6 +443,9 @@ func (c *collector) finalize(spec TargetSpec, bucket int64, cond conditions) sto
 	// one worth acting on.
 	if len(sendCounts) > 0 {
 		m.SendErr = new(modeOf(sendCounts))
+	}
+	if len(probeCounts) > 0 {
+		m.ProbeErr = new(modeOf(probeCounts))
 	}
 	m.Series = c.series
 	m.LossMask = lossMask(spec, m, lost)

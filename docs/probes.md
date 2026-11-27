@@ -9,7 +9,7 @@ Every probe type produces a distribution of N round-trip times per interval. Pic
 | Type | Timer starts | Timer stops | Loss is |
 | --- | --- | --- | --- |
 | `icmp` | echo request handed to the kernel | echo reply received | no reply within `timeout_ms` |
-| `dns` | UDP query written | a reply with the same query ID arrives | no reply within `timeout_ms` |
+| `dns` | UDP query written | a reply with the same query ID arrives | no reply within `timeout_ms`, or a reply whose response code is not NOERROR |
 | `tcp` | `connect()` called | handshake complete | timeout, or connection refused |
 | `http` / `https` | request started (new connection) | response headers received | timeout, refused or reset, TLS rejected, status 400 or higher |
 | `irtt` | per packet, by the irtt client | reply for that packet | packet without a reply |
@@ -25,10 +25,10 @@ failure* with a reason. The loss rail shows it labelled as smokeng's side, not t
 | Event | Counted as |
 | --- | --- |
 | Timeout (any type) | loss |
-| `http`/`https` status 400 or higher | loss; the status is named once per interval in the log |
-| `tcp` connection refused (`ECONNREFUSED`) | loss; the log says so once per interval |
+| `http`/`https` status 400 or higher | loss, with the status as the probe error |
+| `tcp` or `http(s)` connection refused, reset, timed out, rejected in TLS, closed without a response, or without a route | loss, with which of those as the probe error |
 | ICMP error for an echo (unreachable, prohibited) | loss, with the error named on the graph |
-| `dns` reply of any kind (NXDOMAIN and SERVFAIL included) | **not loss**; see [DNS](#dns) |
+| `dns` reply whose response code is not NOERROR (SERVFAIL, REFUSED, NXDOMAIN, …) | loss, with the response code as the probe error; see [DNS](#dns) |
 | Out of file descriptors, ports or buffers on the prober (`tcp`, `http`) | send failure |
 | Query or request that could not be built or written | send failure |
 | `irtt` session that never opened | send failure for every probe of the interval |
@@ -36,6 +36,14 @@ failure* with a reason. The loss rail shows it labelled as smokeng's side, not t
 | The prober's routing table has no route to the target's address, asked once per interval before any probe is sent | **no data**, reason `no route to the target` |
 | `irtt` session that paced fewer packets than asked | not counted at all; the interval is narrower |
 | Receive queue overflow on the ICMP socket | interval flagged `dropped replies`; some loss is ours |
+
+**The probe error** says why `tcp`, `http(s)` and `dns` probes failed at the service. Each
+interval keeps the commonest one, like the ICMP error and the send reason. The graph shows it as
+a badge beside the plot with a count, the overview row names it under the host, and the target's
+page lists it above the figures. It is in the CSV download and the measurements API as
+`probe_error`. A probe abandoned by a shutdown or a settings change gets none, since nothing was
+learned about the far end. Intervals measured before this release have none, and so do intervals
+from an agent older than it, which does not record one.
 
 **No data is neither loss nor a clean interval.** In the two no-data rows the prober could not
 ask the target anything, for a reason that lies with its own host, so the interval says nothing
@@ -75,15 +83,28 @@ Settings: `packet_size`, `dscp`, `timeout_ms`.
 ## DNS
 
 **Times** one UDP query to the target, which is the resolver being measured, from the write to
-the reply. Only the reply ID is matched; the answer is not inspected.
+the reply. The reply is matched on its ID, and its response code is read; the answer section
+is not inspected.
 
 - **The same query goes out every interval**, so a recursive resolver answers from cache after
   the first one. You are measuring the cache, not the resolver's upstream work. To test the
   upstream, query an authoritative server, or a name you control with a short TTL.
 - Without `dns_query` the probe asks `.` NS, the smallest question any resolver can answer.
   `dns_rr_type` defaults to `A` for a named query.
-- **A reply of any kind is a success**, SERVFAIL and NXDOMAIN included. A resolver that
-  returns errors fast looks fast and healthy. UDP only; there is no TCP fallback.
+- **Only a NOERROR reply is a success.** Any other response code is loss, with the code as the
+  probe error, for the reason an HTTP status of 400 or more is: a resolver that answers SERVFAIL
+  fast would otherwise look fast and healthy. NXDOMAIN counts too: the probe asks one fixed name,
+  and a resolver saying it does not exist is not the answer it is set up to time. Only the four
+  bits in the header are read, so an EDNS extended response code is not seen. UDP only; there is
+  no TCP fallback.
+- **Probers before this release counted a reply of any kind as a success**, SERVFAIL and
+  NXDOMAIN included. The rule is the prober's, so it follows the binary that measures: the master
+  for `local`, and each agent for its own targets. A `dns` target's loss can rise at the upgrade
+  without anything changing on the resolver, and while agents are upgraded one by one the same
+  target can show loss from an upgraded agent and none from one that is not. Before upgrading,
+  check that each `dns` target's `dns_query` and record type get NOERROR from its resolver (a
+  name that does not exist now reads as total loss), and look at loss-based alert rules on `dns`
+  targets, which will fire on it. The probe error says which response code it was.
 - A resolver going slow is invisible to ICMP.
 
 Settings: `dns_query`, `dns_rr_type`, `probe_port` (default 53), `dscp`, `timeout_ms`.
@@ -95,7 +116,8 @@ aborted with a reset, so the prober does not pin ephemeral ports in TIME_WAIT.
 
 - It goes through a queue ICMP does not share, so it catches a router that deprioritises ICMP.
 - **A refused connection counts as loss.** The host answered, but the service did not, and the
-  service is what a `tcp` target asks about.
+  service is what a `tcp` target asks about. The probe error tells a refusal from a timeout or a
+  reset.
 - It measures the handshake, not the service. To ask "does it serve", use `http`.
 - `probe_port` has no default. A `tcp` target without it is not measured at all; the log and
   the target's page say so.
@@ -113,7 +135,9 @@ headers**: TCP handshake, TLS handshake for `https`, request, and the server's p
   separate the two, compare with a `tcp` target on the same port.
 - Timing stops at the headers. The body is not read, so transfer speed does not widen the band.
 - There is no keep-alive: every probe includes the handshakes, so every sample is a cold client.
-- **Status 400 or higher is loss.** 1xx to 3xx are good measurements.
+- **Status 400 or higher is loss**, with the status as the probe error. 1xx to 3xx are good
+  measurements. A failed connection is loss too, and the probe error says whether it was refused,
+  reset, timed out or rejected in TLS.
 - **Redirects are not followed.** A 3xx is one round trip to this host and is recorded as such.
 - smokeng resolves the name itself and dials that address. The URL, and so virtual hosting and
   certificate verification, use the target's `host`.

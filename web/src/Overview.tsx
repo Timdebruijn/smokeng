@@ -5,6 +5,7 @@ import {
   fetchFiringAlerts,
   fetchSeries,
   fetchTargets,
+  probeErrorName,
   type AgentInfo,
   type AlertEvent,
   type FiringAlert,
@@ -19,6 +20,7 @@ import {
   flagCounts,
   flagNote,
   agentQuietNote,
+  probeErrorCounts,
   groupRows,
   STATUS_COLOR,
   orderedTargets,
@@ -150,13 +152,15 @@ export default function Overview({
             try {
               const s = await fetchSeries(x.target.id, x.agentId, now - WINDOW_S, now, undefined, x.family)
               // Read without columns, so interval by interval: one row is one interval.
-              const notes = flagCounts(s, x.target.settings.probe_type.effective).map((f) =>
-                flagNote(
-                  f,
-                  s.ts.length,
-                  new Date(f.last * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }),
+              const at = (ts: number) =>
+                new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+              const notes = [
+                ...flagCounts(s, x.target.settings.probe_type.effective).map((f) => flagNote(f, s.ts.length, at(f.last))),
+                // Why probes failed at the service, which the loss column cannot say.
+                ...probeErrorCounts(s).map((e) =>
+                  flagNote({ label: probeErrorName(e.code), count: e.count }, s.ts.length, at(e.last)),
                 ),
-              )
+              ]
               return { ...x, ...summarise(s), notes: quiet ? [quiet, ...notes] : notes, spark: sparkOf(s) }
             } catch {
               // Not "no data": nothing was learned about the series at all. A

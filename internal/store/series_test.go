@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 )
 
@@ -366,4 +368,85 @@ func TestSendReasonSurvivesTheOutbox(t *testing.T) {
 	if len(pend) != 1 || pend[0].SendErr == nil || *pend[0].SendErr != want {
 		t.Fatalf("the reason did not survive the outbox: %+v", pend)
 	}
+}
+
+// The probe error goes in and comes back, from the store and from the agent's
+// outbox, or it exists in the prober and nowhere else.
+func TestProbeErrorRoundTripsThroughTheStore(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	want := ProbeError(ProbeErrDNS, 2)
+	writeOne(t, s, Measurement{TargetID: 1, AgentID: 7, TS: 1000, Sent: 2, Received: 1,
+		Samples: []uint32{10}, ProbeErr: &want})
+	writeOne(t, s, Measurement{TargetID: 1, AgentID: 7, TS: 2000, Sent: 1, Received: 1, Samples: []uint32{20}})
+	got, err := s.QueryRange(ctx, 1, 7, 0, 0, 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ProbeErr == nil || *got[0].ProbeErr != want || got[1].ProbeErr != nil {
+		t.Fatalf("from the store: %+v", got)
+	}
+	pend, err := s.PendingMeasurements(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pend) != 2 || pend[0].ProbeErr == nil || *pend[0].ProbeErr != want {
+		t.Fatalf("from the outbox: %+v", pend)
+	}
+}
+
+// v32 adds probe_error to a table that already holds history. An existing v31
+// database opens at v32 with every row as it was and no probe error invented
+// for any of them, and opening it again changes nothing.
+func TestV32LeavesExistingRowsWithoutProbeError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v31.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 31 {
+		if _, err := db.Exec(migrations[i]); err != nil {
+			t.Fatalf("v%d: %v", i+1, err)
+		}
+	}
+	for _, q := range []string{
+		`INSERT INTO measurements (target_id, agent_id, family, ts, sent, received, flags, samples, icmp_error, send_error)
+		   VALUES (5, 0, 4, 1000, 5, 1, 0, X'01A09C01', 259, 2)`,
+		`INSERT INTO measurements (target_id, agent_id, family, ts, sent, received, flags, samples)
+		   VALUES (5, 0, 4, 1060, 3, 1, 0, X'01A09C01')`,
+		`PRAGMA user_version = 31`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	db.Close()
+
+	check := func(what string) {
+		t.Helper()
+		s, err := Open(path)
+		if err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		defer s.Close()
+		var version int
+		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 32 {
+			t.Fatalf("%s: user_version %d (%v), want 32", what, version, err)
+		}
+		got, err := s.QueryRange(context.Background(), 5, LocalAgentID, 4, 0, 1<<40)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 || got[0].Sent != 5 || got[0].Received != 1 || got[0].ICMPErr == nil || *got[0].ICMPErr != 259 ||
+			got[0].SendErr == nil || *got[0].SendErr != 2 || got[1].Sent != 3 || got[1].ICMPErr != nil {
+			t.Fatalf("%s: rows = %+v", what, got)
+		}
+		for _, m := range got {
+			if m.ProbeErr != nil {
+				t.Errorf("%s: a probe error invented for an old row: %+v", what, m)
+			}
+		}
+	}
+	check("migrating a v31 database")
+	check("opening it again")
 }

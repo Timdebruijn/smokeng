@@ -310,3 +310,33 @@ func TestQueryColumnsNoDataIsAGapThatKeepsItsFlag(t *testing.T) {
 		t.Errorf("mixed: %+v, want 4 rounds, 20/40 replies, one flagged", c)
 	}
 }
+
+// A pooled column carries the probe error most of its intervals had, a tie
+// going to the lower code, and none when none had one.
+func TestQueryColumnsKeepsTheCommonestProbeError(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	refused := ProbeError(ProbeErrConn, ProbeConnRefused)
+	http503 := ProbeError(ProbeErrHTTP, 503)
+	errs := []*uint16{&http503, &refused, &http503, nil, nil, nil, &http503, &refused}
+	var ms []Measurement
+	for i, e := range errs {
+		m := rowWith(int64(1000+i*60), 5)
+		m.ProbeErr = e
+		ms = append(ms, m)
+	}
+	if err := s.WriteMeasurements(ctx, ms); err != nil {
+		t.Fatal(err)
+	}
+	// Four columns of two intervals: (503, refused) (503, none) (none, none) (503, refused).
+	_, cols, err := s.QueryColumns(ctx, 1, 0, 0, 1000, 1000+8*60, 4)
+	if err != nil || len(cols) != 4 {
+		t.Fatalf("cols = %d, err = %v", len(cols), err)
+	}
+	want := []*uint16{&refused, &http503, nil, &refused}
+	for i, c := range cols {
+		if (c.ProbeErr == nil) != (want[i] == nil) || c.ProbeErr != nil && *c.ProbeErr != *want[i] {
+			t.Errorf("column %d: ProbeErr = %v, want %v", i, c.ProbeErr, want[i])
+		}
+	}
+}

@@ -106,7 +106,10 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 			}
 			return
 		}
-		return // no response inside the timeout, or a refused/reset connection: loss
+		// No response inside the timeout, or a refused, reset or TLS-rejected
+		// connection: loss, with which of those it was.
+		col.onProbeError(idx, connError(ctx, err))
+		return
 	}
 	// Do returns once the headers are in hand; the body is still streaming.
 	// Stamp here, which is time-to-first-byte, and do not read the body: how
@@ -121,6 +124,7 @@ func probeHTTP(ctx context.Context, col *collector, idx int, addr netip.Addr, sp
 		// healthy green band over an outage, so it counts as loss — and is
 		// named once per interval, because "100% loss" alone would send you
 		// looking at the network for a fault that is in the application.
+		col.onProbeError(idx, store.ProbeError(store.ProbeErrHTTP, uint16(min(resp.StatusCode, 0xfff))))
 		if idx == 0 {
 			log.Printf("probe: %s (%s): %s returned HTTP %d; counted as loss",
 				spec.label(), spec.Host, url, resp.StatusCode)

@@ -6,6 +6,7 @@ import {
   fetchAlertRules,
   fetchAvailability,
   fetchSeries,
+  probeErrorName,
   isUnset,
   type AgentInfo,
   type SeriesName,
@@ -117,7 +118,8 @@ export default function Detail({
 }) {
   const { rangeS, from, to, refreshKey, live, zoom, setZoom, pickRange, toggleLive } = useTimeWindow()
   // Per family, under the key familyKey gives: a both target has two sets of figures.
-  const [stats, setStats] = useState<Record<string, ReturnType<typeof summarise> | null>>({})
+  // With the window's commonest probe error, which the one pooled column carries.
+  const [stats, setStats] = useState<Record<string, (ReturnType<typeof summarise> & { probeError: number | null }) | null>>({})
   const [rules, setRules] = useState<AlertRule[]>([])
 
   const probeType = String(target.settings.probe_type.effective || 'icmp')
@@ -144,7 +146,7 @@ export default function Detail({
       // One column: the server pools the whole window, so these are taken over
       // every sample in it (its 256 quantiles past that many), at any length.
       fetchSeries(target.id, agentId, from, to, 1, f)
-        .then((s) => !cancelled && setStats((o) => ({ ...o, [familyKey(f)]: summarise(s) })))
+        .then((s) => !cancelled && setStats((o) => ({ ...o, [familyKey(f)]: { ...summarise(s), probeError: s.probeErrors[0] ?? null } })))
         .catch(() => !cancelled && setStats((o) => ({ ...o, [familyKey(f)]: null })))
     }
     return () => {
@@ -221,7 +223,12 @@ export default function Detail({
           return (
             <Fragment key={familyKey(f)}>
               {f && <p className="family-label">{f}</p>}
-              <FlagNotes flags={st ? flagsIn(st.flags, probeType) : []} rangeS={rangeS} zoomed={zoom !== null} />
+              <FlagNotes
+                flags={st ? flagsIn(st.flags, probeType) : []}
+                probeError={st?.probeError ?? null}
+                rangeS={rangeS}
+                zoomed={zoom !== null}
+              />
               <div className="stat-grid">
                 <Stat label="Median" value={st?.median != null ? fmtUs(st.median) : '—'} />
                 <Stat label="p95" value={st?.p95 != null ? fmtUs(st.p95) : '—'} />
@@ -632,14 +639,23 @@ function AvailabilityPanel({ target, families }: { target: Target; families: (Fa
  * which flags occurred but not how often: the badges beside the graph count
  * them once the window is short enough to show intervals one by one.
  */
-function FlagNotes({ flags, rangeS, zoomed }: { flags: { label: string; title: string }[]; rangeS: number; zoomed: boolean }) {
-  if (flags.length === 0) return null
+function FlagNotes({
+  flags,
+  probeError,
+  rangeS,
+  zoomed,
+}: {
+  flags: { label: string; title: string }[]
+  probeError: number | null
+  rangeS: number
+  zoomed: boolean
+}) {
+  if (flags.length === 0 && probeError === null) return null
   return (
     <div className="warn-line flag-notes">
       <p>
-        <strong>Quality flags</strong> {zoomed ? 'in the zoomed window' : `in the last ${rangeWords(rangeS)}`}:
-        what was recorded about how these figures were measured, and about probes that did not go out or were
-        refused. The badges beside the graph count the intervals; zoom in to see which intervals they are.
+        <strong>Recorded {zoomed ? 'in the zoomed window' : `in the last ${rangeWords(rangeS)}`}</strong>. The
+        badges beside the graph count the intervals; zoom in to see which intervals they are.
       </p>
       <ul>
         {flags.map((f) => (
@@ -647,6 +663,12 @@ function FlagNotes({ flags, rangeS, zoomed }: { flags: { label: string; title: s
             <strong>{f.label}</strong>: {f.title}
           </li>
         ))}
+        {probeError !== null && (
+          <li>
+            <strong>{probeErrorName(probeError)}</strong>: the commonest reason probes failed at the service. Those
+            probes count as lost, and the loss figure below includes them.
+          </li>
+        )}
       </ul>
     </div>
   )

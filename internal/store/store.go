@@ -38,6 +38,12 @@ type Measurement struct {
 	// bug here. That question came up on a real deployment and the stored data
 	// could not answer it.
 	SendErr *uint8
+	// ProbeErr is why the far end did not give probes a successful answer this
+	// interval — the most frequent reason, as ICMPErr is — or nil when none
+	// failed that way. It is what an application-level probe learned beyond
+	// "lost": a refused connection, an HTTP 503, a DNS SERVFAIL. Every probe it
+	// describes counts as lost; see ProbeError for the encoding.
+	ProbeErr *uint16
 	// LossMask says which probes of the interval were lost, in send order; see
 	// lossmask.go. nil means not recorded: the interval predates it, was not
 	// lossy in part, or its positions cannot be trusted.
@@ -86,6 +92,33 @@ const (
 // KnownSeries lists every series name the store recognises, in the order a UI
 // should offer them.
 var KnownSeries = series.All
+
+// Kinds of ProbeError, in its top four bits. The low twelve are the detail:
+// one of the ProbeConn* codes, an HTTP status, or a DNS rcode.
+const (
+	// ProbeErrConn is the connection to the service failing: refused, reset,
+	// timed out, rejected in TLS, or another error from the dial or request.
+	ProbeErrConn uint16 = 1 << 12
+	// ProbeErrHTTP is an HTTP response with a status of 400 or more.
+	ProbeErrHTTP uint16 = 2 << 12
+	// ProbeErrDNS is a DNS response whose rcode is not NOERROR.
+	ProbeErrDNS uint16 = 3 << 12
+)
+
+// Details of ProbeErrConn. Coarse on purpose, like SendReason*: each one
+// sends an operator somewhere different, and the full error is in the log.
+const (
+	ProbeConnRefused     uint16 = 1 // a RST: the host is up, the port is not served
+	ProbeConnReset       uint16 = 2 // an established connection was reset
+	ProbeConnTimeout     uint16 = 3 // no answer inside the probe's timeout
+	ProbeConnTLS         uint16 = 4 // the TLS handshake or the certificate was rejected
+	ProbeConnOther       uint16 = 5 // any other dial or request error
+	ProbeConnClosed      uint16 = 6 // the far end closed the connection without a response
+	ProbeConnUnreachable uint16 = 7 // no route to the host, reported to the dial
+)
+
+// ProbeError packs a kind and its detail into the stored code.
+func ProbeError(kind, detail uint16) uint16 { return kind | detail&0x0fff }
 
 // Why the local side could not put a probe on the wire. Kept deliberately
 // coarse: the value has to mean the same thing across every probe type, and a
