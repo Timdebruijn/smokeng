@@ -1,6 +1,6 @@
 // Small functions with a rule worth testing, kept free of React so a test can
 // load them with nothing but Node.
-import type { Target } from './api'
+import { icmpErrorName, probeErrorName, sendReasonLabel, type Target } from './api.ts'
 
 /**
  * The smallest and largest of the numbers in values, or null if there are none.
@@ -423,6 +423,9 @@ export function worstStatus(statuses: RowStatus[]): RowStatus {
 /** store.FlagICMPError: the plot names each ICMP error rather than this bit alone. */
 export const FLAG_ICMP_ERROR = 1 << 4
 
+/** store.FlagSendFailed: probes that never went out. */
+export const FLAG_SEND_FAILED = 1 << 6
+
 export const QUALITY_FLAGS: { bit: number; label: string; title: string }[] = [
   { bit: 1 << 0, label: 'userspace TX', title: 'Send timestamps taken in userspace; scheduler jitter widens the smoke.' },
   { bit: 1 << 1, label: 'userspace RX', title: 'Receive timestamps taken in userspace; scheduler jitter widens the smoke.' },
@@ -557,22 +560,108 @@ export function agentQuietNote(
 export const PROBE_ERROR_TITLE =
   'Why probes failed at the service — a refused connection, an HTTP status, a DNS response code — so they count as lost.'
 
+/** Per probe error in a series (Series.probeErrors): see codeCounts. */
+export function probeErrorCounts(s: { ts: ArrayLike<number>; probeErrors: (number | null)[] }) {
+  return codeCounts(s.ts, s.probeErrors)
+}
+
 /**
- * Per probe error in a series (Series.probeErrors): how many rows carried it,
- * and when the last of them started; commonest first, then by code.
+ * Per code in one of a series' per-row codes (probe errors, ICMP errors, send
+ * reasons): how many rows carried it, and when the last of them started;
+ * commonest first, then by code.
  */
-export function probeErrorCounts(s: {
-  ts: ArrayLike<number>
-  probeErrors: (number | null)[]
-}): { code: number; count: number; last: number }[] {
+export function codeCounts(
+  ts: ArrayLike<number>,
+  codes: (number | null)[],
+): { code: number; count: number; last: number }[] {
   const by = new Map<number, { code: number; count: number; last: number }>()
-  for (let i = 0; i < s.probeErrors.length; i++) {
-    const code = s.probeErrors[i]
-    if (code === null) continue
+  for (let i = 0; i < codes.length; i++) {
+    const code = codes[i]
+    if (code === null || code === undefined) continue
     const e = by.get(code) ?? { code, count: 0, last: 0 }
     e.count++
-    e.last = Math.max(e.last, s.ts[i])
+    e.last = Math.max(e.last, ts[i])
     by.set(code, e)
   }
   return [...by.values()].sort((a, b) => b.count - a.count || a.code - b.code)
+}
+
+/** What a positional-loss note means, wherever it is shown. */
+export const POSITIONAL_TITLE =
+  'Probes were lost at fixed places in the send order, which is consistent with rate limiting by the target, not proof of it.'
+
+/** How many rows of a raw read were flagged as positional loss, and when the last started. */
+export function positionalCount(s: { ts: ArrayLike<number>; lossPositions: (number[] | null)[] }): { count: number; last: number } {
+  let count = 0
+  let last = 0
+  for (let i = 0; i < s.lossPositions.length; i++) {
+    if (s.lossPositions[i] === null) continue
+    count++
+    last = Math.max(last, s.ts[i])
+  }
+  return { count, last }
+}
+
+/** Whether a series' ICMP errors are ICMPv6: its own family, else its target's. */
+export function isV6(family: string | undefined, target: { address_family: string | null }): boolean {
+  return (family ?? target.address_family) === 'v6'
+}
+
+/**
+ * The flags as a list names them, less the two a list names more exactly when
+ * it has their codes: "ICMP errors" when it names the ICMP error, "not sent"
+ * when it names the send reason.
+ */
+export function namedFlags<F extends { label: string }>(flags: F[], icmpNamed: boolean, sendNamed: boolean): F[] {
+  return flags.filter((f) => !(f.label === 'ICMP errors' && icmpNamed) && !(f.label === 'not sent' && sendNamed))
+}
+
+/**
+ * What an overview row says under its host, from an interval-by-interval read:
+ * each counted flag, with the ICMP error and the send reason named rather than
+ * left as "ICMP errors" and "not sent" when the read says which; the probe
+ * errors; and positional loss. Each as "<what> in N of M intervals, last at T".
+ * Intervals flagged without a code (stored before codes were, or by an older
+ * agent) keep the bare flag, counted on their own.
+ */
+export function seriesNotes(
+  s: {
+    ts: ArrayLike<number>
+    flags: ArrayLike<number>
+    icmpErrors: (number | null)[]
+    sendErrors: (number | null)[]
+    probeErrors: (number | null)[]
+    lossPositions: (number[] | null)[]
+  },
+  probeType: unknown,
+  at: (unixSeconds: number) => string,
+  v6 = false,
+): string[] {
+  const n = s.ts.length
+  const note = (label: string, e: { count: number; last: number }) => flagNote({ label, count: e.count }, n, at(e.last))
+  const icmp = codeCounts(s.ts, s.icmpErrors)
+  const send = codeCounts(s.ts, s.sendErrors)
+  const positional = positionalCount(s)
+  // Flagged, and no code to name it by.
+  const uncoded = (bit: number, codes: (number | null)[]) => {
+    let count = 0
+    let last = 0
+    for (let i = 0; i < n; i++) {
+      if (!(s.flags[i] & bit) || codes[i] !== null) continue
+      count++
+      last = Math.max(last, s.ts[i])
+    }
+    return { count, last }
+  }
+  const remainder = (label: string, e: { count: number; last: number }) => (e.count > 0 ? [note(label, e)] : [])
+  return [
+    ...namedFlags(flagCounts(s, probeType), icmp.length > 0, send.length > 0).map((f) => note(f.label, f)),
+    ...icmp.map((e) => note(icmpErrorName(e.code, v6), e)),
+    ...(icmp.length > 0 ? remainder('ICMP errors', uncoded(FLAG_ICMP_ERROR, s.icmpErrors)) : []),
+    ...send.map((e) => note(`not sent: ${sendReasonLabel(e.code)}`, e)),
+    ...(send.length > 0 ? remainder('not sent', uncoded(FLAG_SEND_FAILED, s.sendErrors)) : []),
+    // Why probes failed at the service, which the loss column cannot say.
+    ...probeErrorCounts(s).map((e) => note(probeErrorName(e.code), e)),
+    ...(positional.count > 0 ? [note('positional loss', positional)] : []),
+  ]
 }

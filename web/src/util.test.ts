@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { availabilityURL, fetchSeries, pathsURL, probeErrorName, seriesURL, type Target } from './api.ts'
+import { availabilityURL, fetchSeries, icmpErrorName, pathsURL, probeErrorName, sendReasonLabel, seriesURL, type Target } from './api.ts'
 import { axisLabel } from './layout.ts'
 import {
   graphGroups,
@@ -22,6 +22,10 @@ import {
   flagCounts,
   flagNote,
   flagsIn,
+  codeCounts,
+  positionalCount,
+  seriesNotes,
+  namedFlags,
   probeErrorCounts,
   QUALITY_FLAGS,
   groupOfPath,
@@ -514,4 +518,76 @@ test('probeErrorCounts counts rows per error, commonest first, with the last sta
     { code: 0x1003, count: 1, last: 500 },
   ])
   assert.deepEqual(probeErrorCounts({ ts: [1], probeErrors: [null] }), [])
+})
+
+test('codeCounts and positionalCount count rows and keep the last start', () => {
+  assert.deepEqual(codeCounts([10, 20, 30], [0x0303, null, 0x0303]), [{ code: 0x0303, count: 2, last: 30 }])
+  assert.deepEqual(positionalCount({ ts: [10, 20, 30], lossPositions: [null, [16, 17], []] }), { count: 2, last: 30 })
+  assert.deepEqual(positionalCount({ ts: [10], lossPositions: [null] }), { count: 0, last: 0 })
+})
+
+test('seriesNotes names the ICMP error and the send reason instead of the bare flags, and adds positional loss', () => {
+  const ICMP = 1 << 4
+  const NOT_SENT = 1 << 6
+  const at = (ts: number) => `t${ts}`
+  const s = {
+    ts: [100, 200, 300, 400],
+    flags: [ICMP, ICMP, NOT_SENT, 0],
+    icmpErrors: [0x030d, 0x030d, null, null],
+    sendErrors: [null, null, 3, null],
+    probeErrors: [null, null, null, null],
+    lossPositions: [null, [18, 19, 20], null, [20]],
+  }
+  assert.deepEqual(seriesNotes(s, 'icmp', at), [
+    'administratively filtered in 2 of 4 intervals, last at t200',
+    'not sent: no route in 1 of 4 intervals, last at t300',
+    'positional loss in 2 of 4 intervals, last at t400',
+  ])
+  // Without the codes (a read that does not carry them), the flags stay as they are.
+  const bare = { ...s, icmpErrors: [null, null, null, null], sendErrors: [null, null, null, null], lossPositions: [null, null, null, null] }
+  assert.deepEqual(seriesNotes(bare, 'icmp', at), [
+    'not sent in 1 of 4 intervals, last at t300',
+    'ICMP errors in 2 of 4 intervals, last at t200',
+  ])
+})
+
+test('icmpErrorName reads ICMPv6 types for a v6 series, and an unknown code as its parts', () => {
+  assert.equal(icmpErrorName(0x0300), 'network unreachable')
+  assert.equal(icmpErrorName(0x0300, true), 'hop limit exceeded')
+  assert.equal(icmpErrorName(0x0101, true), 'administratively prohibited')
+  assert.equal(icmpErrorName(0x0104, true), 'port unreachable')
+  assert.equal(icmpErrorName(0x0402, true), 'parameter problem (code 2)')
+  assert.equal(icmpErrorName(0x0101), 'ICMP type 1 code 1')
+  assert.equal(icmpErrorName(0x0909, true), 'ICMPv6 type 9 code 9')
+  assert.equal(sendReasonLabel(3), 'no route')
+  assert.equal(sendReasonLabel(99), 'reason 99')
+})
+
+test('seriesNotes names unknown codes by their parts, reads v6 as ICMPv6, and keeps uncoded intervals', () => {
+  const ICMP = 1 << 4
+  const NOT_SENT = 1 << 6
+  const at = (ts: number) => `t${ts}`
+  const s = {
+    ts: [100, 200, 300, 400],
+    // The last two were flagged by an older prober that stored no code.
+    flags: [ICMP, NOT_SENT, ICMP, NOT_SENT],
+    icmpErrors: [0x0101, null, null, null],
+    sendErrors: [null, 99, null, null],
+    probeErrors: [null, null, null, null],
+    lossPositions: [null, null, null, null],
+  }
+  assert.deepEqual(seriesNotes(s, 'icmp', at), [
+    'ICMP type 1 code 1 in 1 of 4 intervals, last at t100',
+    'ICMP errors in 1 of 4 intervals, last at t300',
+    'not sent: reason 99 in 1 of 4 intervals, last at t200',
+    'not sent in 1 of 4 intervals, last at t400',
+  ])
+  assert.equal(seriesNotes(s, 'icmp', at, true)[0], 'administratively prohibited in 1 of 4 intervals, last at t100')
+})
+
+test('namedFlags drops a bare flag only where its code is named', () => {
+  const flags = [{ label: 'not sent' }, { label: 'cut short' }, { label: 'ICMP errors' }]
+  assert.deepEqual(namedFlags(flags, true, false).map((f) => f.label), ['not sent', 'cut short'])
+  assert.deepEqual(namedFlags(flags, false, true).map((f) => f.label), ['cut short', 'ICMP errors'])
+  assert.deepEqual(namedFlags(flags, false, false), flags)
 })

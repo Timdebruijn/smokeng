@@ -84,6 +84,11 @@ var pooledSchema = arrow.NewSchema([]arrow.Field{
 	// The probe error most of the column's intervals that had one carried,
 	// null when none had one (store.Column.ProbeErr).
 	{Name: "probe_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
+	// The ICMP error and send reason likewise: each column's commonest, in the
+	// encoding of the raw read's columns of the same names. After probe_error,
+	// so no field moved for them.
+	{Name: "icmp_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
+	{Name: "send_error", Type: arrow.PrimitiveTypes.Uint8, Nullable: true},
 }, nil)
 
 // handleMeasurements streams one series over [from, to) as Arrow IPC.
@@ -181,6 +186,8 @@ func writePooledArrow(w io.Writer, cols []store.Column, batchRows int) {
 		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
 	}
 	probeErrB := rb.Field(9 + len(store.KnownSeries)).(*array.Uint16Builder)
+	icmpB := rb.Field(10 + len(store.KnownSeries)).(*array.Uint16Builder)
+	sendErrB := rb.Field(11 + len(store.KnownSeries)).(*array.Uint8Builder)
 
 	flush := func() bool {
 		rec := rb.NewRecord()
@@ -211,6 +218,16 @@ func writePooledArrow(w io.Writer, cols []store.Column, batchRows int) {
 			probeErrB.Append(*c.ProbeErr)
 		} else {
 			probeErrB.AppendNull()
+		}
+		if c.ICMPErr != nil {
+			icmpB.Append(*c.ICMPErr)
+		} else {
+			icmpB.AppendNull()
+		}
+		if c.SendErr != nil {
+			sendErrB.Append(*c.SendErr)
+		} else {
+			sendErrB.AppendNull()
 		}
 		if (i+1)%batchRows == 0 && !flush() {
 			return

@@ -46,7 +46,12 @@ export interface RoundTripData {
  * `send_error` or `probe_error` column: an empty cell there would read as "none".
  * `probe_error` is why the interval's failed probes got no successful answer.
  */
-export function roundTripRows(d: RoundTripData, flagDefs: { bit: number; label: string }[], intervalS: number): Row[] {
+export function roundTripRows(
+  d: RoundTripData,
+  flagDefs: { bit: number; label: string }[],
+  intervalS: number,
+  v6 = false,
+): Row[] {
   const p = d.pooled
   const rows: Row[] = [
     [
@@ -82,7 +87,7 @@ export function roundTripRows(d: RoundTripData, flagDefs: { bit: number; label: 
       ...(p
         ? []
         : [
-            err === null || err === undefined ? NaN : icmpErrorName(err),
+            err === null || err === undefined ? NaN : icmpErrorName(err, v6),
             se === null || se === undefined ? NaN : sendReasonName(se),
             pe === null || pe === undefined ? NaN : probeErrorName(pe),
           ]),

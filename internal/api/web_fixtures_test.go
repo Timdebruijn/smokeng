@@ -271,6 +271,8 @@ type pooledJSON struct {
 	Quantiles  [][]uint32            `json:"quantiles"`
 	Series     map[string][]*[]int32 `json:"series"`
 	ProbeErr   []*uint16             `json:"probe_error"`
+	ICMP       []*uint16             `json:"icmp_error"`
+	SendErr    []*uint8              `json:"send_error"`
 }
 
 func fixtureColumns() []store.Column {
@@ -287,6 +289,12 @@ func fixtureColumns() []store.Column {
 		}
 		if i%2 == 1 {
 			c.ProbeErr = new(store.ProbeError(store.ProbeErrDNS, 2)) // SERVFAIL
+		}
+		if i%3 == 0 {
+			c.ICMPErr = new(store.ICMPError(3, 13)) // administratively filtered
+		}
+		if i == 2 {
+			c.SendErr = new(store.SendReasonUnreachable)
 		}
 		// Every state a pooled series has: values, measured and empty, absent.
 		c.Series = map[string][]int32{}
@@ -319,6 +327,8 @@ func pooledFixture() (arrowBytes, jsonBytes []byte) {
 		want.Positional = append(want.Positional, c.Positional)
 		want.Quantiles = append(want.Quantiles, append([]uint32{}, c.Quantiles...))
 		want.ProbeErr = append(want.ProbeErr, c.ProbeErr)
+		want.ICMP = append(want.ICMP, c.ICMPErr)
+		want.SendErr = append(want.SendErr, c.SendErr)
 		for _, name := range store.KnownSeries {
 			if v, ok := c.Series[name]; ok {
 				v := append([]int32{}, v...)

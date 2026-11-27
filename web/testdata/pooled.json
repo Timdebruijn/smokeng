@@ -120,5 +120,19 @@
   null,
   12290,
   null
+ ],
+ "icmp_error": [
+  781,
+  null,
+  null,
+  781,
+  null
+ ],
+ "send_error": [
+  null,
+  null,
+  3,
+  null,
+  null
  ]
 }

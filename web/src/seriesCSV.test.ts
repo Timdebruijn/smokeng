@@ -43,6 +43,11 @@ test('an ICMP error and a send error are named in their own columns', () => {
   assert.ok(Number.isNaN(rows[3][icmp]))
 })
 
+test('an ICMP error of a v6 series is named as ICMPv6', () => {
+  const rows = roundTripRows({ ...data, icmpErrors: [null, 0x0300, null, null] }, FLAGS, 60, true)
+  assert.equal(rows[2][rows[0].indexOf('icmp_error')], 'hop limit exceeded')
+})
+
 test('a probe error is named in its own column', () => {
   const rows = roundTripRows({ ...data, probeErrors: [null, 0x2000 | 503, null, null] }, FLAGS, 60)
   const probe = rows[0].indexOf('probe_error')

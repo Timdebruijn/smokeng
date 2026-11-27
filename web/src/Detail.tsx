@@ -6,7 +6,11 @@ import {
   fetchAlertRules,
   fetchAvailability,
   fetchSeries,
+  icmpErrorName,
   probeErrorName,
+  sendReasonLabel,
+  sendReasonName,
+  type Series,
   isUnset,
   type AgentInfo,
   type SeriesName,
@@ -22,6 +26,10 @@ import {
   agentQuietNote,
   countedFlags,
   flagsIn,
+  isV6,
+  namedFlags,
+  POSITIONAL_TITLE,
+  positionalCount,
   measurementLabel,
   rangeWords,
   rowStatus,
@@ -118,8 +126,10 @@ export default function Detail({
 }) {
   const { rangeS, from, to, refreshKey, live, zoom, setZoom, pickRange, toggleLive } = useTimeWindow()
   // Per family, under the key familyKey gives: a both target has two sets of figures.
-  // With the window's commonest probe error, which the one pooled column carries.
-  const [stats, setStats] = useState<Record<string, (ReturnType<typeof summarise> & { probeError: number | null }) | null>>({})
+  // With what the one pooled column says beyond the figures: the window's
+  // commonest probe error, ICMP error and send reason, and how many intervals
+  // were flagged as positional loss.
+  const [stats, setStats] = useState<Record<string, (ReturnType<typeof summarise> & WindowCodes) | null>>({})
   const [rules, setRules] = useState<AlertRule[]>([])
 
   const probeType = String(target.settings.probe_type.effective || 'icmp')
@@ -146,7 +156,7 @@ export default function Detail({
       // One column: the server pools the whole window, so these are taken over
       // every sample in it (its 256 quantiles past that many), at any length.
       fetchSeries(target.id, agentId, from, to, 1, f)
-        .then((s) => !cancelled && setStats((o) => ({ ...o, [familyKey(f)]: { ...summarise(s), probeError: s.probeErrors[0] ?? null } })))
+        .then((s) => !cancelled && setStats((o) => ({ ...o, [familyKey(f)]: { ...summarise(s), ...windowCodes(s) } })))
         .catch(() => !cancelled && setStats((o) => ({ ...o, [familyKey(f)]: null })))
     }
     return () => {
@@ -225,7 +235,8 @@ export default function Detail({
               {f && <p className="family-label">{f}</p>}
               <FlagNotes
                 flags={st ? flagsIn(st.flags, probeType) : []}
-                probeError={st?.probeError ?? null}
+                v6={isV6(f, target)}
+                codes={st ?? NO_CODES}
                 rangeS={rangeS}
                 zoomed={zoom !== null}
               />
@@ -639,18 +650,48 @@ function AvailabilityPanel({ target, families }: { target: Target; families: (Fa
  * which flags occurred but not how often: the badges beside the graph count
  * them once the window is short enough to show intervals one by one.
  */
+/** What a one-column read of the window says beyond its figures. */
+interface WindowCodes {
+  probeError: number | null
+  icmpError: number | null
+  sendError: number | null
+  positional: number
+}
+
+const NO_CODES: WindowCodes = { probeError: null, icmpError: null, sendError: null, positional: 0 }
+
+/**
+ * A window too short to pool comes back raw, at most one interval: the codes
+ * are then that interval's, and positional loss is whether it was flagged.
+ */
+function windowCodes(s: Series): WindowCodes {
+  return {
+    probeError: s.probeErrors[0] ?? null,
+    icmpError: s.icmpErrors[0] ?? null,
+    sendError: s.sendErrors[0] ?? null,
+    positional: s.pooled ? (s.pooled.positional[0] ?? 0) : positionalCount(s).count,
+  }
+}
+
 function FlagNotes({
-  flags,
-  probeError,
+  flags: allFlags,
+  codes,
+  v6,
   rangeS,
   zoomed,
 }: {
   flags: { label: string; title: string }[]
-  probeError: number | null
+  codes: WindowCodes
+  v6: boolean
   rangeS: number
   zoomed: boolean
 }) {
-  if (flags.length === 0 && probeError === null) return null
+  const { probeError, icmpError, sendError, positional } = codes
+  // Named, where the read says which, instead of "ICMP errors" and "not sent".
+  const flags = namedFlags(allFlags, icmpError !== null, sendError !== null)
+  if (flags.length === 0 && probeError === null && icmpError === null && sendError === null && positional === 0) {
+    return null
+  }
   return (
     <div className="warn-line flag-notes">
       <p>
@@ -663,10 +704,30 @@ function FlagNotes({
             <strong>{f.label}</strong>: {f.title}
           </li>
         ))}
+        {icmpError !== null && (
+          <li>
+            <strong>{icmpErrorName(icmpError, v6)}</strong>: the commonest ICMP error probes were refused with, rather
+            than going unanswered.
+          </li>
+        )}
+        {sendError !== null && (
+          <li>
+            {/* Not "they count as lost": with no address or no route nothing was
+                sent at all, and those intervals are gaps (docs/probes.md). */}
+            <strong>not sent: {sendReasonLabel(sendError)}</strong>, the commonest reason probes never went out:{' '}
+            {sendReasonName(sendError)}.
+          </li>
+        )}
         {probeError !== null && (
           <li>
             <strong>{probeErrorName(probeError)}</strong>: the commonest reason probes failed at the service. Those
             probes count as lost, and the loss figure below includes them.
+          </li>
+        )}
+        {positional > 0 && (
+          <li>
+            <strong>positional loss</strong> in {positional} {positional === 1 ? 'interval' : 'intervals'}:{' '}
+            {POSITIONAL_TITLE}
           </li>
         )}
       </ul>

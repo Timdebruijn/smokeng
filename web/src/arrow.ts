@@ -446,15 +446,16 @@ function pinned(
 }
 
 /**
- * An optional unsigned 16-bit column: its index, or -1 when the response has
- * none. An integer column of another width is refused, as a pinned column is; a
- * column of that name that is not an integer is treated as absent.
+ * An optional unsigned integer column of the given width: its index, or -1 when
+ * the response has none. An integer column of another width is refused, as a
+ * pinned column is; a column of that name that is not an integer is treated as
+ * absent.
  */
-function optionalU16(cols: ColSpec[], name: string): number {
+function optionalUint(cols: ColSpec[], name: string, bytes: 1 | 2): number {
   const i = cols.findIndex((c) => c.name === name && c.kind === 'int')
   if (i < 0) return -1
   const spec = (cols[i] as { int: IntSpec }).int
-  if (spec.bytes !== 2 || spec.signed) fail(`the ${name} column is not an unsigned 16-bit integer`)
+  if (spec.bytes !== bytes || spec.signed) fail(`the ${name} column is not an unsigned ${bytes * 8}-bit integer`)
   return i
 }
 
@@ -564,7 +565,7 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
     offsets: samples.offsets, values: samples.values as Uint32Array,
     icmpErrors, sendErrors, lossPositions, lossWindows, extra,
     // Optional: a master from before it writes none, which reads as nothing failed that way.
-    probeErrors: optionalInts(chunks, rows, optionalU16(cols, 'probe_error')),
+    probeErrors: optionalInts(chunks, rows, optionalUint(cols, 'probe_error', 2)),
   }
 }
 
@@ -573,7 +574,8 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
  * shape of a series, so the renderer and the readouts take it as they take
  * intervals — ts is the column's start, sent and received its sums, and the
  * samples its quantiles — with what only a column has kept in `pooled`. The
- * extra series are pooled the same way; there are no per-interval errors.
+ * extra series are pooled the same way. Of the per-row codes a column carries
+ * its intervals' commonest (probe, ICMP and send errors); loss positions none.
  */
 function assemblePooled(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
   const iTs = need(cols, 'ts', 'timestamp')
@@ -614,12 +616,14 @@ function assemblePooled(cols: ColSpec[], chunks: Chunk[][], rows: number): Serie
   return {
     ts, sent, received, flags,
     offsets: q.offsets, values: q.values as Uint32Array,
-    icmpErrors: new Array(rows).fill(null),
-    sendErrors: new Array(rows).fill(null),
+    // Each column's commonest, as with the probe error; absent from a master
+    // before they were pooled, which reads as none.
+    icmpErrors: optionalInts(chunks, rows, optionalUint(cols, 'icmp_error', 2)),
+    sendErrors: optionalInts(chunks, rows, optionalUint(cols, 'send_error', 1)),
     lossPositions: new Array(rows).fill(null),
     lossWindows: new Array(rows).fill(null),
     // The commonest probe error of each column's intervals (store.Column.ProbeErr).
-    probeErrors: optionalInts(chunks, rows, optionalU16(cols, 'probe_error')),
+    probeErrors: optionalInts(chunks, rows, optionalUint(cols, 'probe_error', 2)),
     extra,
     pooled: { ends, rounds, flagged, positional },
   }
