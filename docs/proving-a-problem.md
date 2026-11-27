@@ -51,7 +51,7 @@ Give the reader something they can open and something they can check.
 1. **The time window**, with the time zone, in UTC if the ISP works in UTC.
 2. **The targets**, by host and address family, and the vantage point each was measured from.
 3. **A screenshot of the detail view** for the window. It has the pooled median, p95 and spread
-   above the smoke plot, and the quality badges next to the name. There is no screenshot
+   above the smoke plot, and the quality badges above the plot. There is no screenshot
    button; use your operating system's.
 4. **The availability CSV.** The detail view's Availability section has a `Download CSV` for
    24 hours, 7 or 30 days. It holds one row per vantage point: availability, coverage, up,

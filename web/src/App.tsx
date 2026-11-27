@@ -581,7 +581,8 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           {zoom ? (
             <ResetZoom onReset={() => setZoom(null)} />
           ) : (
-            <span className="hint small">drag on a plot to zoom</span>
+            // Only where there is a plot to drag on.
+            series.length > 0 && <span className="hint small">drag on a plot to zoom</span>
           )}
           {custom && (
             <form
@@ -615,7 +616,7 @@ function Graphs({ family, onOpenDetail }: { family: FamilyChoice; onOpenDetail: 
           </p>
         )}
         {!error && leaves.length > 0 && shown.length === 0 && (
-          <div className="card empty">No targets selected — check some in the target list.</div>
+          <div className="card empty">No targets selected — check some in the target list (☰ opens it on a narrow screen).</div>
         )}
         {!error && shown.length > 0 && series.length === 0 && (
           <div className="card empty">The selected targets are hidden by the family filter.</div>

@@ -270,7 +270,7 @@ export default function Detail({
                 a measurement over it would contradict it. */}
             {agentId === null
               ? 'not measured'
-              : `${agentNames.length > 1 ? `from ${agentNames[0]}` : 'measured'} · pooled over the window below`}
+              : `${agentNames.length > 1 ? `from ${agentNames[0]}` : 'measured'} · pooled over this window`}
           </span>
           <span className="spacer" />
           <div className="range-group" role="group" aria-label="Time range">
@@ -696,7 +696,7 @@ function FlagNotes({
     <div className="warn-line flag-notes">
       <p>
         <strong>Recorded {zoomed ? 'in the zoomed window' : `in the last ${rangeWords(rangeS)}`}</strong>. The
-        badges beside the graph count the intervals; zoom in to see which intervals they are.
+        badges above the graph count the intervals; zoom in to see which intervals they are.
       </p>
       <ul>
         {flags.map((f) => (

@@ -454,7 +454,7 @@ export const QUALITY_FLAGS: { bit: number; label: string; title: string }[] = [
     // refusing the traffic, which arrives as a local error, and this prober's
     // own deadline expiring, where nothing was asked of the target at all.
     // Worded so it also reads right in a list away from those badges.
-    title: 'These probes never went out, and count as lost. The reason badges beside the graph say why — and whether the cause was here or at the far end.',
+    title: 'These probes never went out, and count as lost. The reason badges on the graph say why — and whether the cause was here or at the far end.',
   },
   {
     bit: FLAG_ICMP_ERROR,

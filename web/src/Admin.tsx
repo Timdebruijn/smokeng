@@ -459,7 +459,7 @@ function TargetDetail({ target, agents, busy, isAdmin, onPatch, onDelete, onAddC
               busy={busy || !mayChange(target, isAdmin, s.adminOnly)}
               root={isRoot}
               validate={(v) => validateSetting(target, s, v)}
-              onSet={(v) => onPatch({ settings: { [s.key]: v } }, `${s.label} ${v === null ? 'reverted to inherited' : 'saved'}`)}
+              onSet={(v) => onPatch({ settings: { [s.key]: v } }, `${s.label} ${v === null ? 'reset to inherited' : 'saved'}`)}
             />
           ))}
         </tbody>
