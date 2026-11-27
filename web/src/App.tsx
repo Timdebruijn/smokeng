@@ -218,15 +218,52 @@ function AppHeader({
   onMenu: (m: HeaderMenu) => void
 }) {
   const who = me?.name ?? me?.email ?? me?.subject ?? ''
-  // On a phone the tabs are one row that scrolls sideways; keep the current
-  // one in sight there, so the page you are on is never a tab off-screen.
+  const headerRef = useRef<HTMLElement>(null)
   const tabsRef = useRef<HTMLElement>(null)
+  // The bar's height, as a CSS variable for what has to stop below it (scroll
+  // padding, the sticky sidebar). Measured, because it depends on the width,
+  // the text size and who is signed in, and a guessed figure was wrong for some.
+  // offsetHeight is in the same units as the stylesheet's lengths, root zoom
+  // for larger text included.
+  useEffect(() => {
+    const header = headerRef.current
+    if (!header) return
+    const set = () => document.documentElement.style.setProperty('--appbar-h', `${header.offsetHeight}px`)
+    set()
+    const ro = new ResizeObserver(set)
+    ro.observe(header)
+    return () => ro.disconnect()
+  }, [])
+  // On a phone the tabs are one row that scrolls sideways, with no scrollbar:
+  // say which edge has more beyond it (data-more, which fades that edge), and
+  // keep the current tab in sight, so the page you are on is never off-screen.
+  useEffect(() => {
+    const nav = tabsRef.current
+    if (!nav) return
+    const mark = () => {
+      const left = nav.scrollLeft > 1
+      const right = nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 1
+      nav.dataset.more = left && right ? 'both' : left ? 'left' : right ? 'right' : ''
+    }
+    mark()
+    nav.addEventListener('scroll', mark, { passive: true })
+    const ro = new ResizeObserver(mark)
+    ro.observe(nav)
+    return () => {
+      nav.removeEventListener('scroll', mark)
+      ro.disconnect()
+    }
+    // Again when a tab is added (Access, once the signed-in role is known): the
+    // row's box keeps its size, so the observer does not see it.
+  }, [views.length])
   useEffect(() => {
     const nav = tabsRef.current
     const tab = nav?.querySelector<HTMLElement>('[aria-current="page"]')
     if (!nav || !tab || nav.scrollWidth <= nav.clientWidth) return
-    nav.scrollLeft = Math.max(0, tab.offsetLeft - (nav.clientWidth - tab.offsetWidth) / 2)
-  }, [view])
+    // From the rects, not offsetLeft: that is relative to the bar, not the row.
+    const at = tab.getBoundingClientRect().left - nav.getBoundingClientRect().left + nav.scrollLeft
+    nav.scrollLeft = Math.max(0, at - (nav.clientWidth - tab.offsetWidth) / 2)
+  }, [view, views.length])
 
   // An open popover closes on Esc (focus back on its trigger), on a press
   // outside its own menu, and when focus moves out of it: left open after a
@@ -252,7 +289,7 @@ function AppHeader({
     }
   }, [menu, onMenu])
   return (
-    <header className="appbar">
+    <header className="appbar" ref={headerRef}>
       <div className="appbar-inner">
         <button className="brand" onClick={() => onView('overview')}>
           {/* The same ribbon as the tab icon: the smoke and its median. */}

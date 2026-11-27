@@ -730,10 +730,11 @@ a.button {
 }
 
 /* The viewport scrolls under the sticky .appbar, so a focused element that is
-   scrolled into view must stop below it. 72px is the 56px bar plus a margin;
-   the phone block raises it for the two-row bar. */
+   scrolled into view must stop below it. --appbar-h is the bar's height as
+   measured (AppHeader), however many rows it wraps to at whatever width and
+   text size; 56px is the one-row bar until it is known. */
 html {
-  scroll-padding-top: 72px;
+  scroll-padding-top: calc(var(--appbar-h, 56px) + 16px);
 }
 
 .appbar-inner {
@@ -1045,8 +1046,8 @@ html {
   min-width: 200px;
   padding: 12px;
   position: sticky;
-  top: 70px;
-  max-height: calc(100vh - 90px);
+  top: calc(var(--appbar-h, 56px) + 14px);
+  max-height: calc(100vh - var(--appbar-h, 56px) - 34px);
   overflow-y: auto;
 }
 
@@ -2018,18 +2019,13 @@ dialog.modal-host::backdrop {
 /* ── Phones ────────────────────────────────────────────────────────────── */
 
 @media (max-width: 640px) {
-  /* One row for the brand and the header actions, the tabs below it,
-     wrapping onto as many rows as they need so none is out of sight. */
+  /* Two rows: the mark and the controls, then the tabs. Measured at 375 and
+     390px wide, signed in or not, the bar is 97px high; narrower, or with
+     larger text, the controls take a second row (141px at 320px). */
   .appbar-inner {
     gap: 8px;
     row-gap: 0;
     padding-top: 4px;
-  }
-
-  /* Two rows: the mark and the controls, then the tabs. Measured at 375 and
-     390px wide, signed in or not, the bar is 97px high. */
-  html {
-    scroll-padding-top: 108px;
   }
 
   /* The tabs are one row that scrolls sideways rather than two or three rows
@@ -2049,9 +2045,18 @@ dialog.modal-host::backdrop {
     display: none;
   }
 
-  .sidebar {
-    top: 108px;
-    max-height: calc(100vh - 128px);
+  /* With no scrollbar, the edge that has more beyond it fades out, so a
+     scrolled-off tab is visible as one (data-more, set by AppHeader). */
+  .tabs[data-more='right'] {
+    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  }
+
+  .tabs[data-more='left'] {
+    mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent);
+  }
+
+  .tabs[data-more='both'] {
+    mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
   }
 
   .tab {
@@ -2070,7 +2075,7 @@ dialog.modal-host::backdrop {
   /* Words that do not fit are kept as the buttons' names, out of sight: the
      wordmark (the mark beside it says the same), the Search label (a magnifier
      instead), and the signed-in name and role (the avatar's initial instead;
-     the menu it opens names both). */
+     the menu it opens shows the account's address and the role). */
   .brand-name,
   .search-label,
   .usermenu .who,
@@ -2080,6 +2085,8 @@ dialog.modal-host::backdrop {
     height: 1px;
     margin: -1px;
     overflow: hidden;
+    padding: 0;
+    border: 0;
     clip-path: inset(50%);
     white-space: nowrap;
   }
@@ -2088,7 +2095,8 @@ dialog.modal-host::backdrop {
     display: block;
   }
 
-  /* Touch targets of 44px (WCAG 2.5.5), up from 32px. */
+  /* Touch targets of 44px, up from 32px: what 2.5.5 (AAA) asks, past the 24px
+     of 2.5.8, which is the AA level this interface claims. */
   .appbar .icon-button,
   .search-button {
     width: 44px;
@@ -2210,19 +2218,6 @@ dialog.modal-host::backdrop {
 
 /* ── Low windows (zoom, landscape phones) ──────────────────────────────── */
 
-/* Below about 360px the controls no longer fit beside the mark and take a
-   second row: the bar is 141px high at 320px wide. */
-@media (max-width: 360px) {
-  html {
-    scroll-padding-top: 152px;
-  }
-
-  .sidebar {
-    top: 152px;
-    max-height: calc(100vh - 172px);
-  }
-}
-
 /* A narrow phone: the name gets the full width of its row and the figures go
    on a line of their own below it. Beside them, a title like "Eigen resolver op
    de OPNsense — recursieve lookup" took six lines at 375px and still squeezed
@@ -2230,7 +2225,7 @@ dialog.modal-host::backdrop {
 @media (max-width: 480px) {
   .health-row,
   .health-legend {
-    grid-template-columns: 8px 48px repeat(3, minmax(48px, 1fr));
+    grid-template-columns: 8px 48px repeat(3, minmax(48px, auto));
     row-gap: 4px;
   }
 
