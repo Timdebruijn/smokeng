@@ -8,6 +8,7 @@ import {
   fetchSeries,
   icmpErrorName,
   probeErrorName,
+  sendReasonLabel,
   sendReasonName,
   type Series,
   isUnset,
@@ -25,6 +26,8 @@ import {
   agentQuietNote,
   countedFlags,
   flagsIn,
+  isV6,
+  namedFlags,
   POSITIONAL_TITLE,
   positionalCount,
   measurementLabel,
@@ -232,6 +235,7 @@ export default function Detail({
               {f && <p className="family-label">{f}</p>}
               <FlagNotes
                 flags={st ? flagsIn(st.flags, probeType) : []}
+                v6={isV6(f, target)}
                 codes={st ?? NO_CODES}
                 rangeS={rangeS}
                 zoomed={zoom !== null}
@@ -672,19 +676,19 @@ function windowCodes(s: Series): WindowCodes {
 function FlagNotes({
   flags: allFlags,
   codes,
+  v6,
   rangeS,
   zoomed,
 }: {
   flags: { label: string; title: string }[]
   codes: WindowCodes
+  v6: boolean
   rangeS: number
   zoomed: boolean
 }) {
   const { probeError, icmpError, sendError, positional } = codes
   // Named, where the read says which, instead of "ICMP errors" and "not sent".
-  const flags = allFlags.filter(
-    (f) => !(f.label === 'ICMP errors' && icmpError !== null) && !(f.label === 'not sent' && sendError !== null),
-  )
+  const flags = namedFlags(allFlags, icmpError !== null, sendError !== null)
   if (flags.length === 0 && probeError === null && icmpError === null && sendError === null && positional === 0) {
     return null
   }
@@ -702,7 +706,7 @@ function FlagNotes({
         ))}
         {icmpError !== null && (
           <li>
-            <strong>{icmpErrorName(icmpError)}</strong>: the commonest ICMP error probes were refused with, rather
+            <strong>{icmpErrorName(icmpError, v6)}</strong>: the commonest ICMP error probes were refused with, rather
             than going unanswered.
           </li>
         )}
@@ -710,7 +714,8 @@ function FlagNotes({
           <li>
             {/* Not "they count as lost": with no address or no route nothing was
                 sent at all, and those intervals are gaps (docs/probes.md). */}
-            <strong>not sent, {sendReasonName(sendError)}</strong>: the commonest reason probes never went out.
+            <strong>not sent: {sendReasonLabel(sendError)}</strong>, the commonest reason probes never went out:{' '}
+            {sendReasonName(sendError)}.
           </li>
         )}
         {probeError !== null && (

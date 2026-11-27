@@ -637,6 +637,23 @@ export function sendReasonName(code: number): string {
   return SEND_REASONS[code] ?? `reason ${code}`
 }
 
+/** The same reasons in a few words, for a note that names many things at once. */
+const SEND_REASON_LABELS: Record<number, string> = {
+  1: 'write refused',
+  2: 'refused by the far end',
+  3: 'no route',
+  4: 'no address',
+  5: 'session refused',
+  6: 'session broke',
+  7: 'session fell short',
+  8: 'session got no reply',
+  9: 'prober deadline',
+}
+
+export function sendReasonLabel(code: number): string {
+  return SEND_REASON_LABELS[code] ?? `reason ${code}`
+}
+
 /**
  * Names for the ICMP errors worth telling apart. Anything else is shown as
  * its raw type and code rather than guessed at.
@@ -655,8 +672,27 @@ const ICMP_NAMES: Record<number, string> = {
   0x0b01: 'fragment reassembly timeout',
 }
 
-export function icmpErrorName(packed: number): string {
-  return ICMP_NAMES[packed] ?? `ICMP type ${packed >> 8} code ${packed & 0xff}`
+/**
+ * The same for ICMPv6, whose types are numbered differently: the prober stores
+ * the raw ICMPv6 type and code for a v6 series, so 3/0 there is "hop limit
+ * exceeded", not "network unreachable".
+ */
+const ICMP6_NAMES: Record<number, string> = {
+  0x0100: 'no route to destination',
+  0x0101: 'administratively prohibited',
+  0x0103: 'address unreachable',
+  0x0104: 'port unreachable',
+  0x0200: 'packet too big',
+  0x0300: 'hop limit exceeded',
+  0x0301: 'fragment reassembly time exceeded',
+}
+
+/** An ICMP error by name, read as ICMPv6 for a v6 series. */
+export function icmpErrorName(packed: number, v6 = false): string {
+  const type = packed >> 8
+  const code = packed & 0xff
+  if (v6) return ICMP6_NAMES[packed] ?? (type === 4 ? `parameter problem (code ${code})` : `ICMPv6 type ${type} code ${code}`)
+  return ICMP_NAMES[packed] ?? `ICMP type ${type} code ${code}`
 }
 
 /** store.ProbeConn*: why a connection to the service gave no answer. */

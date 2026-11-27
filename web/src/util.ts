@@ -1,6 +1,6 @@
 // Small functions with a rule worth testing, kept free of React so a test can
 // load them with nothing but Node.
-import { icmpErrorName, probeErrorName, sendReasonName, type Target } from './api.ts'
+import { icmpErrorName, probeErrorName, sendReasonLabel, type Target } from './api.ts'
 
 /**
  * The smallest and largest of the numbers in values, or null if there are none.
@@ -423,6 +423,9 @@ export function worstStatus(statuses: RowStatus[]): RowStatus {
 /** store.FlagICMPError: the plot names each ICMP error rather than this bit alone. */
 export const FLAG_ICMP_ERROR = 1 << 4
 
+/** store.FlagSendFailed: probes that never went out. */
+export const FLAG_SEND_FAILED = 1 << 6
+
 export const QUALITY_FLAGS: { bit: number; label: string; title: string }[] = [
   { bit: 1 << 0, label: 'userspace TX', title: 'Send timestamps taken in userspace; scheduler jitter widens the smoke.' },
   { bit: 1 << 1, label: 'userspace RX', title: 'Receive timestamps taken in userspace; scheduler jitter widens the smoke.' },
@@ -599,11 +602,27 @@ export function positionalCount(s: { ts: ArrayLike<number>; lossPositions: (numb
   return { count, last }
 }
 
+/** Whether a series' ICMP errors are ICMPv6: its own family, else its target's. */
+export function isV6(family: string | undefined, target: { address_family: string | null }): boolean {
+  return (family ?? target.address_family) === 'v6'
+}
+
+/**
+ * The flags as a list names them, less the two a list names more exactly when
+ * it has their codes: "ICMP errors" when it names the ICMP error, "not sent"
+ * when it names the send reason.
+ */
+export function namedFlags<F extends { label: string }>(flags: F[], icmpNamed: boolean, sendNamed: boolean): F[] {
+  return flags.filter((f) => !(f.label === 'ICMP errors' && icmpNamed) && !(f.label === 'not sent' && sendNamed))
+}
+
 /**
  * What an overview row says under its host, from an interval-by-interval read:
  * each counted flag, with the ICMP error and the send reason named rather than
  * left as "ICMP errors" and "not sent" when the read says which; the probe
  * errors; and positional loss. Each as "<what> in N of M intervals, last at T".
+ * Intervals flagged without a code (stored before codes were, or by an older
+ * agent) keep the bare flag, counted on their own.
  */
 export function seriesNotes(
   s: {
@@ -616,18 +635,31 @@ export function seriesNotes(
   },
   probeType: unknown,
   at: (unixSeconds: number) => string,
+  v6 = false,
 ): string[] {
   const n = s.ts.length
   const note = (label: string, e: { count: number; last: number }) => flagNote({ label, count: e.count }, n, at(e.last))
   const icmp = codeCounts(s.ts, s.icmpErrors)
   const send = codeCounts(s.ts, s.sendErrors)
   const positional = positionalCount(s)
+  // Flagged, and no code to name it by.
+  const uncoded = (bit: number, codes: (number | null)[]) => {
+    let count = 0
+    let last = 0
+    for (let i = 0; i < n; i++) {
+      if (!(s.flags[i] & bit) || codes[i] !== null) continue
+      count++
+      last = Math.max(last, s.ts[i])
+    }
+    return { count, last }
+  }
+  const remainder = (label: string, e: { count: number; last: number }) => (e.count > 0 ? [note(label, e)] : [])
   return [
-    ...flagCounts(s, probeType)
-      .filter((f) => !(f.label === 'ICMP errors' && icmp.length > 0) && !(f.label === 'not sent' && send.length > 0))
-      .map((f) => note(f.label, f)),
-    ...icmp.map((e) => note(icmpErrorName(e.code), e)),
-    ...send.map((e) => note(`not sent, ${sendReasonName(e.code)}`, e)),
+    ...namedFlags(flagCounts(s, probeType), icmp.length > 0, send.length > 0).map((f) => note(f.label, f)),
+    ...icmp.map((e) => note(icmpErrorName(e.code, v6), e)),
+    ...(icmp.length > 0 ? remainder('ICMP errors', uncoded(FLAG_ICMP_ERROR, s.icmpErrors)) : []),
+    ...send.map((e) => note(`not sent: ${sendReasonLabel(e.code)}`, e)),
+    ...(send.length > 0 ? remainder('not sent', uncoded(FLAG_SEND_FAILED, s.sendErrors)) : []),
     // Why probes failed at the service, which the loss column cannot say.
     ...probeErrorCounts(s).map((e) => note(probeErrorName(e.code), e)),
     ...(positional.count > 0 ? [note('positional loss', positional)] : []),

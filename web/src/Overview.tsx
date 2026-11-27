@@ -18,6 +18,7 @@ import {
   countedFlags,
   agentQuietNote,
   seriesNotes,
+  isV6,
   groupRows,
   STATUS_COLOR,
   orderedTargets,
@@ -151,7 +152,7 @@ export default function Overview({
               // Read without columns, so interval by interval: one row is one interval.
               const at = (ts: number) =>
                 new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-              const notes = seriesNotes(s, x.target.settings.probe_type.effective, at)
+              const notes = seriesNotes(s, x.target.settings.probe_type.effective, at, isV6(x.family, x.target))
               return { ...x, ...summarise(s), notes: quiet ? [quiet, ...notes] : notes, spark: sparkOf(s) }
             } catch {
               // Not "no data": nothing was learned about the series at all. A

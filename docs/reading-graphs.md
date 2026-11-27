@@ -130,9 +130,10 @@ intervals that start in it:
 - the hover readout gives the column's span, its median, replies out of sent, and how many
   intervals it holds, with coverage against the target's current interval. A column whose
   intervals are missing reads as low coverage, and one with none is a gap;
-- quality flags are listed without counts, and ICMP errors are named only as "ICMP errors":
-  a column knows which flags its intervals carried, not how many of each, nor which error.
-  `positional loss` is listed the same way, without a count and without the positions.
+- quality flags are listed without counts: a column knows which flags its intervals carried,
+  not how many of each. Of the ICMP errors, send reasons and probe errors it keeps the
+  commonest of its intervals, so those are named, also without counts, and the hover says
+  "mostly" before them. `positional loss` is listed without a count and without the positions.
   Zoom in to see the intervals themselves.
 
 The detail view's median, p95, spread and loss are taken over the whole window the same way,
@@ -266,8 +267,11 @@ a row that is yellow there is yellow there too.
 
 Both name what a badge leaves as a category. The overview row names each ICMP error and each
 reason probes were not sent, instead of `ICMP errors` and `not sent`, for example `host prohibited
-in 3 of 12 intervals` or `not sent, no route to the target in 12 of 12 intervals`; the target's
-page names the commonest of each in its window. Both also name the probe errors, which explain
+in 3 of 12 intervals` or `not sent: no route in 12 of 12 intervals`; the target's
+page names the commonest of each in its window. An ICMP error of a v6 series is read as ICMPv6,
+whose types are numbered differently (3/0 there is `hop limit exceeded`). Intervals flagged
+before codes were stored, or by an older agent, keep the bare `ICMP errors` or `not sent`,
+counted on their own. Both also name the probe errors, which explain
 loss rather than flag it, for example `HTTP 503 in 12 of 12 intervals, last at 22:25`, and
 positional loss, which says something about the target: the overview row in how many intervals,
 the target's page in how many intervals of its window.

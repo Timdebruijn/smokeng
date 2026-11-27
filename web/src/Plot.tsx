@@ -11,6 +11,9 @@ import {
 import {
   countedFlags,
   FLAG_ICMP_ERROR,
+  FLAG_SEND_FAILED,
+  isV6,
+  POSITIONAL_TITLE,
   measurementLabel,
   PROBE_ERROR_TITLE,
   probeErrorCounts,
@@ -85,7 +88,6 @@ function flagBadge(f: (typeof FLAGS)[number], count: number, probeType: unknown)
   }
 }
 
-const FLAG_SEND_FAILED = 1 << 6
 
 /** How often each code appears on rows carrying `bit`, most frequent first. */
 function tally(flags: Uint8Array, codes: (number | null)[], bit: number): [number, number][] {
@@ -111,6 +113,7 @@ function pooledFlags(
   icmpErrors: (number | null)[],
   sendErrors: (number | null)[],
   probeType: unknown,
+  v6: boolean,
 ): Badge[] {
   let any = 0
   for (let i = 0; i < flags.length; i++) any |= flags[i]
@@ -121,7 +124,7 @@ function pooledFlags(
     f.bit === FLAG_ICMP_ERROR ? { label: f.label, title: `${f.title} Zoom in to see which.`, count: 0 } : flagBadge(f, 0, probeType),
   )
   for (const code of icmpCodes) {
-    out.push({ label: icmpErrorName(code), title: 'Probes were refused with this ICMP error rather than going unanswered.', count: 0 })
+    out.push({ label: icmpErrorName(code, v6), title: 'Probes were refused with this ICMP error rather than going unanswered.', count: 0 })
   }
   for (const reason of new Set(sendErrors.filter((c) => c !== null))) {
     out.push({ label: sendReasonName(reason), title: 'Why probes could not be put on the wire, as opposed to going unanswered.', count: 0 })
@@ -131,8 +134,7 @@ function pooledFlags(
   if (positional.some((n) => n > 0)) {
     out.push({
       label: 'positional loss',
-      title:
-        'Some intervals here lost their probes at fixed places in the send order, which is consistent with rate limiting by the target. Zoom in to see which positions.',
+      title: `${POSITIONAL_TITLE} Zoom in to see which positions.`,
       count: 0,
       aboutTarget: true,
     })
@@ -154,6 +156,7 @@ function flagCounts(
   probeErrors: (number | null)[],
   ts: Float64Array,
   probeType: unknown,
+  v6: boolean,
 ): Badge[] {
   // ICMP errors are left to the named entries below, one per error.
   const out: Badge[] = FLAGS.filter((f) => f.bit !== FLAG_ICMP_ERROR).map((f) => {
@@ -167,7 +170,7 @@ function flagCounts(
   // silence.
   for (const [packed, count] of tally(flags, icmpErrors, FLAG_ICMP_ERROR)) {
     out.push({
-      label: icmpErrorName(packed),
+      label: icmpErrorName(packed, v6),
       title: 'Probes were refused with this ICMP error rather than going unanswered.',
       count,
     })
@@ -262,6 +265,8 @@ export default function Plot({
   // tell the plots of one target apart.
   const hintId = useId()
   const plotName = [target.title ?? target.path, family, agentName && `from ${agentName}`].filter(Boolean).join(' ')
+  // The prober stores a v6 series' ICMP errors as ICMPv6 types and codes.
+  const v6 = isV6(family, target)
 
   // Pixel ↔ time mapping, in CSS pixels over the density area only.
   const xToTime = useCallback((xCss: number, widthCss: number): number | null => {
@@ -355,7 +360,7 @@ export default function Plot({
     // Of a pooled column, the commonest of its intervals' codes, and said so.
     const most = (name: string) => (rows.pooled ? `mostly ${name}` : name)
     const err = rows.icmpErrors[idx]
-    if (err !== null && err !== undefined) lines.push(most(icmpErrorName(err)))
+    if (err !== null && err !== undefined) lines.push(most(icmpErrorName(err, v6)))
     const se = rows.sendErrors[idx]
     if (se !== null && se !== undefined) lines.push(most(sendReasonName(se)))
     const pe = rows.probeErrors[idx]
@@ -452,7 +457,7 @@ export default function Plot({
         )
         setQuality(
           series.pooled
-            ? pooledFlags(series.flags, series.pooled.positional, series.probeErrors, series.icmpErrors, series.sendErrors, probeType)
+            ? pooledFlags(series.flags, series.pooled.positional, series.probeErrors, series.icmpErrors, series.sendErrors, probeType, v6)
             : flagCounts(
                 series.flags,
                 series.icmpErrors,
@@ -462,6 +467,7 @@ export default function Plot({
                 series.probeErrors,
                 series.ts,
                 probeType,
+                v6,
               ),
         )
         // Counts are per interval; a pooled read has columns, so none are shown.
@@ -587,6 +593,7 @@ export default function Plot({
         rows,
         FLAGS,
         Number(target.settings.interval_s.effective) || 0,
+        v6,
       ),
     )
   }
