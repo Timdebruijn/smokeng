@@ -369,7 +369,11 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 			if sendErrs != nil && !sendErrs.IsNull(i) {
 				m.SendErr = new(sendErrs.Value(i))
 			}
-			if probeErrs != nil && !probeErrs.IsNull(i) {
+			// A value without a kind in its top four bits is no code at all (0
+			// included) and is read as none, not stored to show as "probe error
+			// 0". A kind this master does not know is kept: it is a newer
+			// prober's, and the UI names it by its parts.
+			if probeErrs != nil && !probeErrs.IsNull(i) && probeErrs.Value(i)>>12 != 0 {
 				m.ProbeErr = new(probeErrs.Value(i))
 			}
 			// Only 4 and 6 are families. Any other value is read as none stated,

@@ -319,3 +319,24 @@ func TestDecodeBatchIgnoresAProbeErrorOfTheWrongType(t *testing.T) {
 		t.Fatalf("got %+v, want the row kept without a probe error", out)
 	}
 }
+
+// A probe_error with no kind, 0 included, is no code: it is read as none rather
+// than stored to show as "probe error 0". An unknown kind is a newer prober's,
+// and is kept.
+func TestDecodeBatchReadsAProbeErrorWithoutAKindAsNone(t *testing.T) {
+	zero, kindless, future := uint16(0), uint16(503), uint16(0x7001)
+	out, err := DecodeBatch(mustEncode(t, []store.Measurement{
+		{TargetID: 1, TS: 100, Sent: 1, ProbeErr: &zero},
+		{TargetID: 1, TS: 200, Sent: 1, ProbeErr: &kindless},
+		{TargetID: 1, TS: 300, Sent: 1, ProbeErr: &future},
+	}), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].ProbeErr != nil || out[1].ProbeErr != nil {
+		t.Errorf("a kindless probe error was kept: %v, %v", out[0].ProbeErr, out[1].ProbeErr)
+	}
+	if out[2].ProbeErr == nil || *out[2].ProbeErr != future {
+		t.Errorf("an unknown kind was dropped: %v", out[2].ProbeErr)
+	}
+}

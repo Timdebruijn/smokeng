@@ -42,7 +42,8 @@ interval keeps the commonest one, like the ICMP error and the send reason. The g
 a badge beside the plot with a count, the overview row names it under the host, and the target's
 page lists it above the figures. It is in the CSV download and the measurements API as
 `probe_error`. A probe abandoned by a shutdown or a settings change gets none, since nothing was
-learned about the far end. Before schema 32 nothing was recorded, so older intervals have none.
+learned about the far end. Intervals measured before this release have none, and so do intervals
+from an agent older than it, which does not record one.
 
 **No data is neither loss nor a clean interval.** In the two no-data rows the prober could not
 ask the target anything, for a reason that lies with its own host, so the interval says nothing
@@ -96,9 +97,14 @@ is not inspected.
   and a resolver saying it does not exist is not the answer it is set up to time. Only the four
   bits in the header are read, so an EDNS extended response code is not seen. UDP only; there is
   no TCP fallback.
-- **Before schema 32 a reply of any kind was a success**, SERVFAIL and NXDOMAIN included, so a
-  `dns` target's loss can rise at the upgrade without anything changing on the resolver. The
-  probe error then says which response code it was.
+- **Probers before this release counted a reply of any kind as a success**, SERVFAIL and
+  NXDOMAIN included. The rule is the prober's, so it follows the binary that measures: the master
+  for `local`, and each agent for its own targets. A `dns` target's loss can rise at the upgrade
+  without anything changing on the resolver, and while agents are upgraded one by one the same
+  target can show loss from an upgraded agent and none from one that is not. Before upgrading,
+  check that each `dns` target's `dns_query` and record type get NOERROR from its resolver (a
+  name that does not exist now reads as total loss), and look at loss-based alert rules on `dns`
+  targets, which will fire on it. The probe error says which response code it was.
 - A resolver going slow is invisible to ICMP.
 
 Settings: `dns_query`, `dns_rr_type`, `probe_port` (default 53), `dscp`, `timeout_ms`.

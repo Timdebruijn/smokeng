@@ -3,7 +3,6 @@ package probe
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"io"
 	"net"
@@ -30,20 +29,18 @@ func connError(ctx context.Context, err error) uint16 {
 	if ctx.Err() != nil {
 		return 0
 	}
+	// A certificate the handshake rejects arrives wrapped in a
+	// CertificateVerificationError, whatever x509 error is inside it.
 	var (
-		unknownCA *x509.UnknownAuthorityError
-		hostname  x509.HostnameError
-		invalid   x509.CertificateInvalidError
-		verify    *tls.CertificateVerificationError
-		record    tls.RecordHeaderError
-		alert     tls.AlertError
+		verify *tls.CertificateVerificationError
+		record tls.RecordHeaderError
+		alert  tls.AlertError
 	)
 	var netErr net.Error
 	var opErr *net.OpError
 	detail := store.ProbeConnOther
 	switch {
-	case errors.As(err, &verify), errors.As(err, &unknownCA), errors.As(err, &hostname),
-		errors.As(err, &invalid), errors.As(err, &record), errors.As(err, &alert),
+	case errors.As(err, &verify), errors.As(err, &record), errors.As(err, &alert),
 		// An alert the server sent (it wants a client certificate, it supports
 		// no common version) arrives as an OpError "remote error"; AlertError
 		// only wraps alerts this side sent.
