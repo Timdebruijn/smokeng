@@ -22,6 +22,9 @@ import {
   flagCounts,
   flagNote,
   flagsIn,
+  codeCounts,
+  positionalCount,
+  seriesNotes,
   probeErrorCounts,
   QUALITY_FLAGS,
   groupOfPath,
@@ -514,4 +517,35 @@ test('probeErrorCounts counts rows per error, commonest first, with the last sta
     { code: 0x1003, count: 1, last: 500 },
   ])
   assert.deepEqual(probeErrorCounts({ ts: [1], probeErrors: [null] }), [])
+})
+
+test('codeCounts and positionalCount count rows and keep the last start', () => {
+  assert.deepEqual(codeCounts([10, 20, 30], [0x0303, null, 0x0303]), [{ code: 0x0303, count: 2, last: 30 }])
+  assert.deepEqual(positionalCount({ ts: [10, 20, 30], lossPositions: [null, [16, 17], []] }), { count: 2, last: 30 })
+  assert.deepEqual(positionalCount({ ts: [10], lossPositions: [null] }), { count: 0, last: 0 })
+})
+
+test('seriesNotes names the ICMP error and the send reason instead of the bare flags, and adds positional loss', () => {
+  const ICMP = 1 << 4
+  const NOT_SENT = 1 << 6
+  const at = (ts: number) => `t${ts}`
+  const s = {
+    ts: [100, 200, 300, 400],
+    flags: [ICMP, ICMP, NOT_SENT, 0],
+    icmpErrors: [0x030d, 0x030d, null, null],
+    sendErrors: [null, null, 3, null],
+    probeErrors: [null, null, null, null],
+    lossPositions: [null, [18, 19, 20], null, [20]],
+  }
+  assert.deepEqual(seriesNotes(s, 'icmp', at), [
+    'administratively filtered in 2 of 4 intervals, last at t200',
+    'not sent, no route to the target in 1 of 4 intervals, last at t300',
+    'positional loss in 2 of 4 intervals, last at t400',
+  ])
+  // Without the codes (a read that does not carry them), the flags stay as they are.
+  const bare = { ...s, icmpErrors: [null, null, null, null], sendErrors: [null, null, null, null], lossPositions: [null, null, null, null] }
+  assert.deepEqual(seriesNotes(bare, 'icmp', at), [
+    'not sent in 1 of 4 intervals, last at t300',
+    'ICMP errors in 2 of 4 intervals, last at t200',
+  ])
 })

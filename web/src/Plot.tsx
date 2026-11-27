@@ -108,13 +108,24 @@ function pooledFlags(
   flags: Uint8Array,
   positional: Float64Array,
   probeErrors: (number | null)[],
+  icmpErrors: (number | null)[],
+  sendErrors: (number | null)[],
   probeType: unknown,
 ): Badge[] {
   let any = 0
   for (let i = 0; i < flags.length; i++) any |= flags[i]
-  const out: Badge[] = FLAGS.filter((f) => any & f.bit).map((f) =>
+  const icmpCodes = new Set(icmpErrors.filter((c) => c !== null))
+  // ICMP errors are named by each column's commonest when the read carries
+  // them, as in a raw read; "ICMP errors" alone only from a master that does not.
+  const out: Badge[] = FLAGS.filter((f) => any & f.bit && !(f.bit === FLAG_ICMP_ERROR && icmpCodes.size > 0)).map((f) =>
     f.bit === FLAG_ICMP_ERROR ? { label: f.label, title: `${f.title} Zoom in to see which.`, count: 0 } : flagBadge(f, 0, probeType),
   )
+  for (const code of icmpCodes) {
+    out.push({ label: icmpErrorName(code), title: 'Probes were refused with this ICMP error rather than going unanswered.', count: 0 })
+  }
+  for (const reason of new Set(sendErrors.filter((c) => c !== null))) {
+    out.push({ label: sendReasonName(reason), title: 'Why probes could not be put on the wire, as opposed to going unanswered.', count: 0 })
+  }
   // Not one of the flag bits: the master derives it from the order probes were
   // sent in, so it has its own column and is added here by hand.
   if (positional.some((n) => n > 0)) {
@@ -341,13 +352,14 @@ export default function Plot({
       const cover = interval > 0 ? Math.min(1, (rounds * interval) / (rows.pooled.ends[idx] - rows.ts[idx])) : NaN
       lines.push(`${rounds} interval${rounds === 1 ? '' : 's'}${Number.isNaN(cover) ? '' : ` · ${Math.round(cover * 100)}% covered`}`)
     }
+    // Of a pooled column, the commonest of its intervals' codes, and said so.
+    const most = (name: string) => (rows.pooled ? `mostly ${name}` : name)
     const err = rows.icmpErrors[idx]
-    if (err !== null && err !== undefined) lines.push(icmpErrorName(err))
+    if (err !== null && err !== undefined) lines.push(most(icmpErrorName(err)))
     const se = rows.sendErrors[idx]
-    if (se !== null && se !== undefined) lines.push(sendReasonName(se))
-    // Of a pooled column, the commonest of its intervals' probe errors.
+    if (se !== null && se !== undefined) lines.push(most(sendReasonName(se)))
     const pe = rows.probeErrors[idx]
-    if (pe !== null && pe !== undefined) lines.push(rows.pooled ? `mostly ${probeErrorName(pe)}` : probeErrorName(pe))
+    if (pe !== null && pe !== undefined) lines.push(most(probeErrorName(pe)))
     // The route in force at this instant, so a step in the smoke can be read
     // against the path that carried it.
     const inForce = pathsRef.current.findLast((c) => c.ts <= t)
@@ -440,7 +452,7 @@ export default function Plot({
         )
         setQuality(
           series.pooled
-            ? pooledFlags(series.flags, series.pooled.positional, series.probeErrors, probeType)
+            ? pooledFlags(series.flags, series.pooled.positional, series.probeErrors, series.icmpErrors, series.sendErrors, probeType)
             : flagCounts(
                 series.flags,
                 series.icmpErrors,

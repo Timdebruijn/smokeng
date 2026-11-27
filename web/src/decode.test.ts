@@ -641,10 +641,11 @@ test('a pooled read decodes to its columns, in the shape of a series', () => {
   assert.deepEqual(Array.from(s.pooled!.flagged), want.flagged)
   assert.deepEqual(Array.from(s.pooled!.positional), want.positional)
   assert.deepEqual(rows(s), want.quantiles)
-  // Each column's commonest probe error, as written.
+  // Each column's commonest probe error, ICMP error and send reason, as written.
   assert.deepEqual(s.probeErrors, want.probe_error)
+  assert.deepEqual(s.icmpErrors, want.icmp_error)
+  assert.deepEqual(s.sendErrors, want.send_error)
   // Nothing per interval is invented for a column.
-  assert.ok(s.icmpErrors.every((v) => v === null) && s.sendErrors.every((v) => v === null))
   assert.ok(s.lossPositions.every((v) => v === null) && s.lossWindows.every((v) => v === null))
   // The extra series, pooled: values, measured-and-empty, and null, as written.
   for (const series of SERIES_NAMES) {

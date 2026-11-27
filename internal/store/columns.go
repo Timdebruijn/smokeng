@@ -39,10 +39,13 @@ type Column struct {
 	// Positional is how many intervals in the column were flagged as losing
 	// probes at fixed send positions (Measurement.Positional).
 	Positional int
-	// ProbeErr is the probe error most intervals in the column that had one
-	// carried (Measurement.ProbeErr), or nil when none had one. One value per
-	// column, like one per interval: the common cause is the one to act on.
+	// ProbeErr, ICMPErr and SendErr are the probe error, ICMP error and send
+	// reason most intervals in the column that had one carried, or nil when none
+	// had one. One value per column, like one per interval: the common cause is
+	// the one to act on.
 	ProbeErr *uint16
+	ICMPErr  *uint16
+	SendErr  *uint8
 	// Quantiles holds the pooled samples, sorted ascending, when there are at
 	// most ColumnQuantiles of them; otherwise ColumnQuantiles evenly spaced
 	// order statistics (the sample at each mid-rank), each standing for an
@@ -149,8 +152,9 @@ type pooler struct {
 	out  []Column
 	// outIdx is the column index of each entry of out.
 	outIdx []uint64
-	// probeErrs counts the current column's intervals per probe error.
-	probeErrs map[uint16]int
+	// The current column's intervals per probe error, ICMP error and send reason.
+	probeErrs, icmpErrs tally[uint16]
+	sendErrs            tally[uint8]
 }
 
 func newPooler(from, to int64, n int) *pooler {
@@ -193,12 +197,9 @@ func (p *pooler) add(m Measurement) error {
 		c.Flags |= m.Flags
 		c.Flagged++
 	}
-	if m.ProbeErr != nil {
-		if p.probeErrs == nil {
-			p.probeErrs = map[uint16]int{}
-		}
-		p.probeErrs[*m.ProbeErr]++
-	}
+	p.probeErrs.add(m.ProbeErr)
+	p.icmpErrs.add(m.ICMPErr)
+	p.sendErrs.add(m.SendErr)
 	// One column's pool is what stays in memory, so this is the bound: a plot
 	// asking for a year in one column is asking for every sample at once.
 	if len(p.pool)+len(m.Samples) > maxSamplesPerRead {
@@ -213,22 +214,43 @@ func (p *pooler) close() {
 		return
 	}
 	p.cur.Quantiles = quantiles(p.pool, ColumnQuantiles)
-	if len(p.probeErrs) > 0 {
-		// Most intervals wins; a tie goes to the lower code, so a read is stable.
-		var best uint16
-		bestN := 0
-		for code, n := range p.probeErrs {
-			if n > bestN || n == bestN && code < best {
-				best, bestN = code, n
-			}
-		}
-		p.cur.ProbeErr = &best
-		clear(p.probeErrs)
-	}
+	p.cur.ProbeErr = p.probeErrs.take()
+	p.cur.ICMPErr = p.icmpErrs.take()
+	p.cur.SendErr = p.sendErrs.take()
 	p.out = append(p.out, *p.cur)
 	p.outIdx = append(p.outIdx, p.idx)
 	p.cur = nil
 	p.pool = p.pool[:0]
+}
+
+// tally counts a column's intervals per code.
+type tally[K uint8 | uint16] map[K]int
+
+func (t *tally[K]) add(code *K) {
+	if code == nil {
+		return
+	}
+	if *t == nil {
+		*t = tally[K]{}
+	}
+	(*t)[*code]++
+}
+
+// take returns the commonest code, nil if none, and empties the tally. Most
+// intervals wins; a tie goes to the lower code, so a read is stable.
+func (t tally[K]) take() *K {
+	if len(t) == 0 {
+		return nil
+	}
+	var best K
+	bestN := 0
+	for code, n := range t {
+		if n > bestN || n == bestN && code < best {
+			best, bestN = code, n
+		}
+	}
+	clear(t)
+	return &best
 }
 
 func (p *pooler) finish() []Column {

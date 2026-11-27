@@ -340,3 +340,35 @@ func TestQueryColumnsKeepsTheCommonestProbeError(t *testing.T) {
 		}
 	}
 }
+
+// A pooled column carries the commonest ICMP error and send reason of its
+// intervals too, by the same rule as the probe error.
+func TestQueryColumnsKeepsTheCommonestICMPErrorAndSendReason(t *testing.T) {
+	s := openTemp(t)
+	ctx := t.Context()
+	filtered, unreachable := ICMPError(3, 13), ICMPError(3, 1)
+	noRoute, refused := SendReasonUnreachable, SendReasonRefused
+	icmp := []*uint16{&filtered, &unreachable, &unreachable, nil}
+	send := []*uint8{&refused, &noRoute, nil, nil}
+	var ms []Measurement
+	for i := range icmp {
+		m := rowWith(int64(1000+i*60), 5)
+		m.ICMPErr, m.SendErr = icmp[i], send[i]
+		ms = append(ms, m)
+	}
+	if err := s.WriteMeasurements(ctx, ms); err != nil {
+		t.Fatal(err)
+	}
+	// Two columns of two intervals: (filtered, unreachable | refused, no route), (unreachable, none | none, none).
+	_, cols, err := s.QueryColumns(ctx, 1, 0, 0, 1000, 1000+4*60, 2)
+	if err != nil || len(cols) != 2 {
+		t.Fatalf("cols = %d, err = %v", len(cols), err)
+	}
+	// A tie goes to the lower code: 0x0301 over 0x030d, and refused (2) over no route (3).
+	if c := cols[0]; c.ICMPErr == nil || *c.ICMPErr != unreachable || c.SendErr == nil || *c.SendErr != refused {
+		t.Errorf("column 0: ICMP %v send %v", c.ICMPErr, c.SendErr)
+	}
+	if c := cols[1]; c.ICMPErr == nil || *c.ICMPErr != unreachable || c.SendErr != nil {
+		t.Errorf("column 1: ICMP %v send %v", c.ICMPErr, c.SendErr)
+	}
+}

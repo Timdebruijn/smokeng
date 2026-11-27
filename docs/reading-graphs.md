@@ -262,10 +262,15 @@ A flagged row on the overview says by what under its host: each badge that count
 many of the hour's intervals, and when the last of them started, for example `cut short in 1
 of 12 intervals, last at 22:25`. A target's own page lists the badges in its window above the
 figures, each with what it means, and the mark before its name follows the overview's rule:
-a row that is yellow there is yellow there too. Both say `ICMP errors` as one entry; the badges
-beside the plot name each error. Both also name the probe errors, which explain loss
-rather than flag it: the overview row the same way, for example `HTTP 503 in 12 of 12 intervals,
-last at 22:25`, and the target's page the commonest one in its window.
+a row that is yellow there is yellow there too.
+
+Both name what a badge leaves as a category. The overview row names each ICMP error and each
+reason probes were not sent, instead of `ICMP errors` and `not sent`, for example `host prohibited
+in 3 of 12 intervals` or `not sent, no route to the target in 12 of 12 intervals`; the target's
+page names the commonest of each in its window. Both also name the probe errors, which explain
+loss rather than flag it, for example `HTTP 503 in 12 of 12 intervals, last at 22:25`, and
+positional loss, which says something about the target: the overview row in how many intervals,
+the target's page in how many intervals of its window.
 
 | Badge | Meaning | What to do |
 | --- | --- | --- |

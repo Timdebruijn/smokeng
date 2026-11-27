@@ -522,7 +522,10 @@ export interface Series {
   flags: Uint8Array
   offsets: Uint32Array // length rows+1
   values: Uint32Array // all samples, concatenated
-  /** ICMP type<<8|code per row, or null where nothing was refused. */
+  /**
+   * ICMP type<<8|code per row, or null where nothing was refused. Of a pooled
+   * read, as with sendErrors and probeErrors, each column's commonest.
+   */
   icmpErrors: (number | null)[]
   /**
    * Why the local side could not send, per row, or null where it sent

@@ -164,9 +164,11 @@ none is absent, not an empty row. Tell the two shapes apart by the fields: only 
 | `quantiles` | list of uint32 | The pooled round-trip times in microseconds, sorted ascending: all of them when there are at most 256, otherwise 256 order statistics at evenly spaced ranks, each standing for an equal share of the replies. Every value is a measured sample. |
 | `ipdv_send`, `ipdv_receive`, `server_processing` | list of int32, nullable | The irtt series, pooled the same way. Null where no interval in the column measured the series; empty where intervals measured it with nothing to give. |
 | `probe_error` | uint16, nullable | The `probe_error` most of the column's intervals that had one carried, a tie going to the lower code. Null when none had one. |
+| `icmp_error` | uint16, nullable | The same for `icmp_error`, in the raw read's encoding. |
+| `send_error` | uint8, nullable | The same for `send_error`. |
 
 Nothing is averaged and nothing is stored: the column is pooled from the stored intervals when
-it is read. Per-interval details (`icmp_error`, `send_error`, `loss_positions`) are not in a pooled read; `probe_error` is there only as each column's commonest. A read is
+it is read. `loss_positions` is not in a pooled read (`positional` counts the intervals it was set on), and `probe_error`, `icmp_error` and `send_error` are there only as each column's commonest; a master from v0.33.0 sends only `probe_error`, which a reader should treat as the other two absent. A read is
 refused with `400` when it would walk more than 10 million rows — intervals plus their irtt series
 rows; thirty days of a one-second series — or one column would pool more than 20 million samples;
 ask for a shorter window, or more columns.
