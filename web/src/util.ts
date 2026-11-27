@@ -494,3 +494,27 @@ export function flagNote(f: { label: string; count: number }, intervals: number,
     ? `${f.label} in every interval`
     : `${f.label} in ${f.count} of ${intervals} ${intervals === 1 ? 'interval' : 'intervals'}, last at ${lastAt}`
 }
+
+/** What a probe-error badge or note means, wherever it is shown. */
+export const PROBE_ERROR_TITLE =
+  'Why probes failed at the service — a refused connection, an HTTP status, a DNS response code — so they count as lost.'
+
+/**
+ * Per probe error in a series (Series.probeErrors): how many rows carried it,
+ * and when the last of them started; commonest first, then by code.
+ */
+export function probeErrorCounts(s: {
+  ts: ArrayLike<number>
+  probeErrors: (number | null)[]
+}): { code: number; count: number; last: number }[] {
+  const by = new Map<number, { code: number; count: number; last: number }>()
+  for (let i = 0; i < s.probeErrors.length; i++) {
+    const code = s.probeErrors[i]
+    if (code === null) continue
+    const e = by.get(code) ?? { code, count: 0, last: 0 }
+    e.count++
+    e.last = Math.max(e.last, s.ts[i])
+    by.set(code, e)
+  }
+  return [...by.values()].sort((a, b) => b.count - a.count || a.code - b.code)
+}

@@ -445,6 +445,30 @@ function pinned(
   return at
 }
 
+/**
+ * An optional unsigned 16-bit column: its index, or -1 when the response has
+ * none. An integer column of another width is refused, as a pinned column is; a
+ * column of that name that is not an integer is treated as absent.
+ */
+function optionalU16(cols: ColSpec[], name: string): number {
+  const i = cols.findIndex((c) => c.name === name && c.kind === 'int')
+  if (i < 0) return -1
+  const spec = (cols[i] as { int: IntSpec }).int
+  if (spec.bytes !== 2 || spec.signed) fail(`the ${name} column is not an unsigned 16-bit integer`)
+  return i
+}
+
+/** A nullable optional column read row by row, all null when it is absent. */
+function optionalInts(chunks: Chunk[][], rows: number, col: number): (number | null)[] {
+  const out: (number | null)[] = new Array(rows).fill(null)
+  if (col < 0) return out
+  let r = 0
+  for (const ch of chunks) {
+    for (let i = 0; i < ch[col].rows; i++, r++) out[r] = ch[col].valid(i) ? ch[col].int!(i) : null
+  }
+  return out
+}
+
 function need(cols: ColSpec[], name: string, kind: ColSpec['kind']): number {
   const i = cols.findIndex((c) => c.name === name && c.kind === kind)
   return i >= 0 ? i : fail(`the response has no ${name} column of the right type`)
@@ -539,6 +563,8 @@ function assemble(cols: ColSpec[], chunks: Chunk[][], rows: number): Series {
     ts, sent, received, flags,
     offsets: samples.offsets, values: samples.values as Uint32Array,
     icmpErrors, sendErrors, lossPositions, lossWindows, extra,
+    // Optional: a master from before it writes none, which reads as nothing failed that way.
+    probeErrors: optionalInts(chunks, rows, optionalU16(cols, 'probe_error')),
   }
 }
 
@@ -592,6 +618,8 @@ function assemblePooled(cols: ColSpec[], chunks: Chunk[][], rows: number): Serie
     sendErrors: new Array(rows).fill(null),
     lossPositions: new Array(rows).fill(null),
     lossWindows: new Array(rows).fill(null),
+    // The commonest probe error of each column's intervals (store.Column.ProbeErr).
+    probeErrors: optionalInts(chunks, rows, optionalU16(cols, 'probe_error')),
     extra,
     pooled: { ends, rounds, flagged, positional },
   }

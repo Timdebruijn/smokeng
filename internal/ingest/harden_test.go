@@ -34,6 +34,7 @@ func oneRow(t *testing.T, seriesLen int, opts ...ipc.Option) []byte {
 	field[*array.Uint8Builder](t, rb, "send_error").AppendNull()
 	field[*array.BinaryBuilder](t, rb, "loss_mask").AppendNull()
 	field[*array.Uint8Builder](t, rb, "family").AppendNull()
+	field[*array.Uint16Builder](t, rb, "probe_error").AppendNull()
 	for i, name := range store.KnownSeries {
 		sl := field[*array.ListBuilder](t, rb, name)
 		if i > 0 || seriesLen < 0 {
@@ -195,6 +196,7 @@ func TestDecodeBatchNormalisesUnsortedValues(t *testing.T) {
 	sl.ValueBuilder().(*array.Int32Builder).AppendValues([]int32{5, -3, 1}, nil)
 	field[*array.ListBuilder](t, rb, store.SeriesIPDVReceive).AppendNull()
 	field[*array.ListBuilder](t, rb, store.SeriesServerProcessing).AppendNull()
+	field[*array.Uint16Builder](t, rb, "probe_error").AppendNull()
 	rec := rb.NewRecord()
 	defer rec.Release()
 	if err := w.Write(rec); err != nil {
@@ -268,6 +270,7 @@ func TestDecodeBatchRefusesOversizedDecompression(t *testing.T) {
 		for _, name := range store.KnownSeries {
 			field[*array.ListBuilder](t, rb, name).AppendNull()
 		}
+		field[*array.Uint16Builder](t, rb, "probe_error").AppendNull()
 	}
 	rec := rb.NewRecord()
 	defer rec.Release()

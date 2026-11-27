@@ -1,7 +1,7 @@
 // The rows of the CSV each plot downloads: what the plot draws, with the figures
 // its readout gives, and nothing it does not know. A missing figure is NaN, which
 // csvCell writes as an empty cell; a gap is a row that is not there.
-import { icmpErrorName, sendReasonName } from './api.ts'
+import { icmpErrorName, probeErrorName, sendReasonName } from './api.ts'
 
 export type Row = (string | number)[]
 
@@ -30,6 +30,7 @@ export interface RoundTripData {
   flags: ArrayLike<number>
   icmpErrors: (number | null)[]
   sendErrors: (number | null)[]
+  probeErrors: (number | null)[]
   lossPositions: (number[] | null)[]
   /** A pooled read: each row is a pixel column [ts, ends) of `rounds` intervals. */
   pooled?: { ends: ArrayLike<number>; rounds: ArrayLike<number>; positional: ArrayLike<number> }
@@ -41,8 +42,9 @@ export interface RoundTripData {
  * interval carried (in a pooled column: that any of its intervals carried), as
  * the badges beside the plot do. `intervalS` is the target's interval now, with
  * which a pooled column's coverage is estimated as the readout does (0: unknown).
- * A pooled read carries no per-interval details, so its file has no `icmp_error`
- * or `send_error` column: an empty cell there would read as "none".
+ * A pooled read carries no per-interval details, so its file has no `icmp_error`,
+ * `send_error` or `probe_error` column: an empty cell there would read as "none".
+ * `probe_error` is why the interval's failed probes got no successful answer.
  */
 export function roundTripRows(d: RoundTripData, flagDefs: { bit: number; label: string }[], intervalS: number): Row[] {
   const p = d.pooled
@@ -53,7 +55,7 @@ export function roundTripRows(d: RoundTripData, flagDefs: { bit: number; label: 
       'sent',
       'received',
       'loss_percent',
-      ...(p ? [] : ['icmp_error', 'send_error']),
+      ...(p ? [] : ['icmp_error', 'send_error', 'probe_error']),
       'flags',
     ],
   ]
@@ -62,6 +64,7 @@ export function roundTripRows(d: RoundTripData, flagDefs: { bit: number; label: 
     if (p ? p.positional[i] > 0 : d.lossPositions[i] !== null) labels.push('positional loss')
     const err = d.icmpErrors[i]
     const se = d.sendErrors[i]
+    const pe = d.probeErrors[i]
     const span = p ? p.ends[i] - d.ts[i] : 0
     rows.push([
       isoUTC(d.ts[i]),
@@ -81,6 +84,7 @@ export function roundTripRows(d: RoundTripData, flagDefs: { bit: number; label: 
         : [
             err === null || err === undefined ? NaN : icmpErrorName(err),
             se === null || se === undefined ? NaN : sendReasonName(se),
+            pe === null || pe === undefined ? NaN : probeErrorName(pe),
           ]),
       labels.join('; '),
     ])

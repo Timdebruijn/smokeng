@@ -171,8 +171,14 @@ func TestV28GivesEveryRowItsFamilyAndKeepsTheRest(t *testing.T) {
 	// The rebuild writes each table's definition out again by hand. A column
 	// that lost its type, its NOT NULL or its default there would pass every
 	// check on the rows above and bite on the next insert that relies on it.
+	// Open migrates past v28 to the latest version, so the columns later
+	// migrations add are expected; they are not v28 rebuilding anything.
+	addedLater := map[string][]string{"measurements": {"probe_error INTEGER notnull=0 default=NULL"}}
 	for _, tb := range tables {
-		if got := columnsOf(t, s.db, tb.name); !slices.Equal(got, columnsBefore[tb.name]) {
+		got := slices.DeleteFunc(columnsOf(t, s.db, tb.name), func(c string) bool {
+			return slices.Contains(addedLater[tb.name], c)
+		})
+		if !slices.Equal(got, columnsBefore[tb.name]) {
 			t.Errorf("%s: columns besides family changed:\nbefore %v\nafter  %v", tb.name, columnsBefore[tb.name], got)
 		}
 	}

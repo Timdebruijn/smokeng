@@ -197,7 +197,7 @@ func (s *SQLite) TouchAgent(ctx context.Context, id, at int64, version string) e
 // confirmed by the master, oldest first so a backlog drains in order.
 func (s *SQLite) PendingMeasurements(ctx context.Context, limit int) ([]Measurement, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT target_id, agent_id, family, ts, sent, received, flags, samples, icmp_error, send_error, loss_mask
+		SELECT target_id, agent_id, family, ts, sent, received, flags, samples, icmp_error, send_error, loss_mask, probe_error
 		FROM measurements WHERE submitted = 0 ORDER BY ts LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -208,7 +208,7 @@ func (s *SQLite) PendingMeasurements(ctx context.Context, limit int) ([]Measurem
 		var m Measurement
 		var blob []byte
 		if err := rows.Scan(&m.TargetID, &m.AgentID, &m.Family, &m.TS, &m.Sent, &m.Received,
-			&m.Flags, &blob, &m.ICMPErr, &m.SendErr, &m.LossMask); err != nil {
+			&m.Flags, &blob, &m.ICMPErr, &m.SendErr, &m.LossMask, &m.ProbeErr); err != nil {
 			return nil, err
 		}
 		if m.Samples, err = enc.Decode(blob); err != nil {

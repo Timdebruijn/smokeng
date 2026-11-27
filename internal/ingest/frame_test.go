@@ -281,6 +281,37 @@ func TestScreenFramesNeverPanics(t *testing.T) {
 // does not check it either. A bitmap shorter than its column was an
 // out-of-range panic on the ninth row.
 func TestDecodeBatchRefusesAShortValidityBitmap(t *testing.T) {
+	_, err := DecodeBatch(shortBitmapBatch(t, "icmp_error"), 3)
+	if err == nil {
+		t.Fatal("a batch whose validity bitmap is shorter than its column was decoded")
+	}
+	if !strings.Contains(err.Error(), "validity bitmap") {
+		t.Errorf("the error does not name the bitmap: %v", err)
+	}
+}
+
+// probe_error is optional, so a short bitmap there costs the column, not the
+// batch: the rows are kept without it. Refusing would cost the measurements, and
+// reading it unchecked would panic on the first row.
+func TestDecodeBatchIgnoresAProbeErrorWithAShortBitmap(t *testing.T) {
+	out, err := DecodeBatch(shortBitmapBatch(t, "probe_error"), 3)
+	if err != nil {
+		t.Fatalf("a short bitmap on probe_error refused the batch: %v", err)
+	}
+	if len(out) != 20 {
+		t.Fatalf("%d rows kept, want 20", len(out))
+	}
+	for _, m := range out {
+		if m.ProbeErr != nil {
+			t.Fatalf("a probe error read from a column with a short bitmap: %#x", *m.ProbeErr)
+		}
+	}
+}
+
+// shortBitmapBatch is twenty rows whose uint16 column `column` has a one-byte
+// validity bitmap.
+func shortBitmapBatch(t *testing.T, column string) []byte {
+	t.Helper()
 	const rows = 20
 	rb := array.NewRecordBuilder(memory.DefaultAllocator, BatchSchema)
 	defer rb.Release()
@@ -298,12 +329,12 @@ func TestDecodeBatchRefusesAShortValidityBitmap(t *testing.T) {
 		for _, name := range store.KnownSeries {
 			field[*array.ListBuilder](t, rb, name).AppendNull()
 		}
+		field[*array.Uint16Builder](t, rb, "probe_error").AppendNull()
 	}
 	rec := rb.NewRecord()
 	defer rec.Release()
 
-	// icmp_error with a one-byte bitmap for twenty rows.
-	icmpIdx := rec.Schema().FieldIndices("icmp_error")[0]
+	icmpIdx := rec.Schema().FieldIndices(column)[0]
 	short := array.NewData(arrow.PrimitiveTypes.Uint16, rows,
 		[]*memory.Buffer{memory.NewBufferBytes([]byte{0xFF}), memory.NewBufferBytes(make([]byte, rows*2))},
 		nil, 1, 0)
@@ -322,13 +353,7 @@ func TestDecodeBatchRefusesAShortValidityBitmap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := DecodeBatch(buf.Bytes(), 3)
-	if err == nil {
-		t.Fatal("a batch whose validity bitmap is shorter than its column was decoded")
-	}
-	if !strings.Contains(err.Error(), "validity bitmap") {
-		t.Errorf("the error does not name the bitmap: %v", err)
-	}
+	return buf.Bytes()
 }
 
 func TestDecodeBatchCapsRows(t *testing.T) {

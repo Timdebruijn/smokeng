@@ -2,6 +2,7 @@ package probe
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -31,10 +32,24 @@ func runOne(t *testing.T, spec TargetSpec) store0 {
 	col := newCollector(spec.Pings, &late)
 	runUserspaceProbe(context.Background(), col, 0, netip.MustParseAddr("127.0.0.1"), spec)
 	m := col.finalize(spec, 0, conditions{})
-	return store0{sent: m.Sent, received: m.Received, samples: len(m.Samples)}
+	return store0{sent: m.Sent, received: m.Received, samples: len(m.Samples), probeErr: m.ProbeErr}
 }
 
-type store0 struct{ sent, received, samples int }
+type store0 struct {
+	sent, received, samples int
+	probeErr                *uint16
+}
+
+// wantProbeErr fails unless got carries exactly want (0 meaning none).
+func wantProbeErr(t *testing.T, got *uint16, want uint16) {
+	t.Helper()
+	switch {
+	case want == 0 && got != nil:
+		t.Errorf("probe error %#x, want none", *got)
+	case want != 0 && (got == nil || *got != want):
+		t.Errorf("probe error %v, want %#x", got, want)
+	}
+}
 
 // listenTCP opens a listener that accepts and immediately closes, which is the
 // far end of a tcp-connect probe.
@@ -80,6 +95,7 @@ func TestProbeTCPCountsRefusalAsLoss(t *testing.T) {
 	if got.sent != 1 || got.received != 0 {
 		t.Fatalf("refused port: got %+v, want one sent and nothing received", got)
 	}
+	wantProbeErr(t, got.probeErr, store.ProbeError(store.ProbeErrConn, store.ProbeConnRefused))
 }
 
 func portOf(t *testing.T, srv *httptest.Server) int {
@@ -109,6 +125,7 @@ func TestProbeHTTPMeasuresA200(t *testing.T) {
 	if got.sent != 1 || got.received != 1 {
 		t.Fatalf("200: got %+v, want one sent and one received", got)
 	}
+	wantProbeErr(t, got.probeErr, 0)
 }
 
 // The transport worked and the server answered, but it did not serve what was
@@ -121,6 +138,58 @@ func TestProbeHTTPCountsServerErrorAsLoss(t *testing.T) {
 	if got.sent != 1 || got.received != 0 {
 		t.Fatalf("503: got %+v, want one sent and nothing received", got)
 	}
+	wantProbeErr(t, got.probeErr, store.ProbeError(store.ProbeErrHTTP, 503))
+}
+
+// A server that answers the handshake with an alert, here because it wants a
+// client certificate, rejected the TLS too; so does a port that answers https
+// in plain HTTP.
+func TestProbeHTTPSNamesARemoteTLSRejection(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	srv.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	spec := userspaceSpec(t, "https", portOf(t, srv))
+	spec.TLSSkipVerify = true // so the server's certificate is not what fails
+	wantProbeErr(t, runOne(t, spec).probeErr, store.ProbeError(store.ProbeErrConn, store.ProbeConnTLS))
+
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	t.Cleanup(plain.Close)
+	wantProbeErr(t, runOne(t, userspaceSpec(t, "https", portOf(t, plain))).probeErr,
+		store.ProbeError(store.ProbeErrConn, store.ProbeConnTLS))
+}
+
+// A request abandoned by its target's context learned nothing about the
+// service, so it carries no reason; one that ran out its own timeout did.
+func TestProbeHTTPAbandonedHasNoReason(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(2 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	spec := userspaceSpec(t, "http", portOf(t, srv))
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	var late atomic.Int64
+	col := newCollector(1, &late)
+	runUserspaceProbe(ctx, col, 0, netip.MustParseAddr("127.0.0.1"), spec)
+	if m := col.finalize(spec, 0, conditions{}); m.ProbeErr != nil {
+		t.Errorf("an abandoned request got reason %#x", *m.ProbeErr)
+	}
+}
+
+// A certificate the prober does not trust is a definite answer, and a
+// different one from silence: it says the TLS is wrong, not the network.
+func TestProbeHTTPSNamesARejectedCertificate(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	t.Cleanup(srv.Close)
+	got := runOne(t, userspaceSpec(t, "https", portOf(t, srv)))
+	if got.sent != 1 || got.received != 0 {
+		t.Fatalf("untrusted certificate: got %+v, want one sent and nothing received", got)
+	}
+	wantProbeErr(t, got.probeErr, store.ProbeError(store.ProbeErrConn, store.ProbeConnTLS))
 }
 
 // A redirect is one round trip to this host. Following it would add a second,
@@ -156,6 +225,7 @@ func TestProbeHTTPTimesOut(t *testing.T) {
 	if got.sent != 1 || got.received != 0 {
 		t.Fatalf("slow server: got %+v, want one sent and nothing received", got)
 	}
+	wantProbeErr(t, got.probeErr, store.ProbeError(store.ProbeErrConn, store.ProbeConnTimeout))
 }
 
 // validateSpec is what stops a target being scheduled at all. tcp is the only

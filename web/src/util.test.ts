@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { availabilityURL, fetchSeries, pathsURL, seriesURL, type Target } from './api.ts'
+import { availabilityURL, fetchSeries, pathsURL, probeErrorName, seriesURL, type Target } from './api.ts'
 import { axisLabel } from './layout.ts'
 import {
   graphGroups,
@@ -19,6 +19,7 @@ import {
   flagCounts,
   flagNote,
   flagsIn,
+  probeErrorCounts,
   QUALITY_FLAGS,
   groupOfPath,
   groupRows,
@@ -442,4 +443,25 @@ test('flagCounts says nothing for a pooled read, whose rows are columns', () => 
 
 test('flagsIn names ICMP errors, which count against a series', () => {
   assert.deepEqual(flagsIn(1 << 4, 'icmp').map((f) => f.label), ['ICMP errors'])
+})
+
+test('probeErrorName reads every kind, and an unknown code as its parts', () => {
+  assert.equal(probeErrorName(0x1001), 'connection refused')
+  assert.equal(probeErrorName(0x1004), 'TLS or certificate rejected')
+  assert.equal(probeErrorName(0x2000 | 503), 'HTTP 503')
+  assert.equal(probeErrorName(0x3002), 'DNS SERVFAIL')
+  assert.equal(probeErrorName(0x3003), 'DNS NXDOMAIN')
+  assert.equal(probeErrorName(0x3000 | 23), 'DNS rcode 23')
+  assert.equal(probeErrorName(0x1000 | 99), 'connection error 99')
+  assert.equal(probeErrorName(0x7001), 'probe error 28673')
+})
+
+test('probeErrorCounts counts rows per error, commonest first, with the last start', () => {
+  const s = { ts: [100, 200, 300, 400, 500], probeErrors: [0x2000 | 503, null, 0x1001, 0x2000 | 503, 0x1003] }
+  assert.deepEqual(probeErrorCounts(s), [
+    { code: 0x2000 | 503, count: 2, last: 400 },
+    { code: 0x1001, count: 1, last: 300 },
+    { code: 0x1003, count: 1, last: 500 },
+  ])
+  assert.deepEqual(probeErrorCounts({ ts: [1], probeErrors: [null] }), [])
 })
