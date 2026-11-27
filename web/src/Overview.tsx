@@ -19,6 +19,7 @@ import {
   countedFlags,
   flagCounts,
   flagNote,
+  agentQuietNote,
   probeErrorCounts,
   groupRows,
   STATUS_COLOR,
@@ -139,10 +140,15 @@ export default function Overview({
         // including its quality flags.
         const series = leaves.flatMap((t) => resolveSeries(t, byName, ', '))
 
+        const agentById = new Map(agents.map((a: AgentInfo) => [a.id, a]))
         const built = await Promise.all(
           series.map(async (x) => {
             const none = { median: null, p95: null, loss: 0, sent: 0, received: 0, flags: 0, notes: [], spark: [] }
             if (x.agentId === null) return { ...x, ...none }
+            // A silent agent explains a row with no data, and an old one with
+            // little; said first, since it is the cause of what follows.
+            const agent = agentById.get(x.agentId)
+            const quiet = agent ? agentQuietNote(agent) : null
             try {
               const s = await fetchSeries(x.target.id, x.agentId, now - WINDOW_S, now, undefined, x.family)
               // Read without columns, so interval by interval: one row is one interval.
@@ -155,9 +161,12 @@ export default function Overview({
                   flagNote({ label: probeErrorName(e.code), count: e.count }, s.ts.length, at(e.last)),
                 ),
               ]
-              return { ...x, ...summarise(s), notes, spark: sparkOf(s) }
+              return { ...x, ...summarise(s), notes: quiet ? [quiet, ...notes] : notes, spark: sparkOf(s) }
             } catch {
-              return { ...x, ...none }
+              // Not "no data": nothing was learned about the series at all. A
+              // silent agent stays first, being the likelier cause.
+              const unread = 'could not be read'
+              return { ...x, ...none, notes: quiet ? [quiet, unread] : [unread] }
             }
           }),
         )

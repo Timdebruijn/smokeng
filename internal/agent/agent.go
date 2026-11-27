@@ -60,7 +60,7 @@ type Agent struct {
 
 const (
 	pullEvery = 60 * time.Second
-	pushEvery = 15 * time.Second
+	pushEvery = ingest.PushEvery
 	// pushBatch caps one submission. Well below the master's body limit, and
 	// small enough that a long backlog drains in visible steps rather than
 	// one enormous request that might time out repeatedly.

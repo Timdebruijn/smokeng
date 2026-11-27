@@ -183,6 +183,10 @@ Check reachability from the agent host:
 curl -m8 -sS -o /dev/null -w '%{http_code}\n' https://smokeng.example.org/healthz
 ```
 
+The Agents page says whether each agent is reporting, late or silent against its cadence (see
+[Late and silent agents](agents.md#late-and-silent-agents)), and the overview row of each of its
+targets leads with the same sentence.
+
 `/healthz` only proves the process answers. `smokeng_agent_last_seen_seconds` and
 `smokeng_ingest_rejected_total` show whether the agent is reaching the master. The refusal
 reason is in the log only: a metric label would tell a caller which check they failed.

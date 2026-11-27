@@ -57,7 +57,7 @@ The class says who may call a route:
 | `GET /api/v1/measurements` | read | One series, as an Arrow IPC stream. |
 | `GET /api/v1/availability` | read | Uptime and downtime episodes over a window. |
 | `GET /api/v1/paths` | read | Route changes for one series. |
-| `GET /api/v1/agents` | read | Agents and when they were last seen. |
+| `GET /api/v1/agents` | read | Agents, when they were last seen, and whether they report as often as they should (`report_every_s`, `state`: `reporting`, `late`, `silent` or `never`; see [Agents](agents.md#late-and-silent-agents)). |
 | `GET /api/v1/alert-rules` | read | Alert rules. |
 | `POST /api/v1/alert-rules` | write | Create a rule. |
 | `PATCH /api/v1/alert-rules/{id}` | write | Change a rule. |

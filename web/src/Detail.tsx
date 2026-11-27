@@ -19,6 +19,7 @@ import { fmtLoss, fmtUs } from './format'
 import { Stat, StatusDot, ErrorText, LivePill, ResetZoom, downloadCSV, useTimeWindow } from './shared'
 import {
   RANGES,
+  agentQuietNote,
   countedFlags,
   flagsIn,
   measurementLabel,
@@ -127,6 +128,12 @@ export default function Detail({
   // Null rather than 0: falling back to the local prober would show one
   // vantage point's measurements under another's name.
   const agentId = byName.get(agentNames[0]) ?? null
+  // Every agent the target is assigned, not only the one drawn first: a silent
+  // second vantage point is as much a reason for missing data.
+  const quiet = agentNames
+    .map((n) => agents.find((a) => a.name === n))
+    .map((a) => (a ? agentQuietNote(a) : null))
+    .filter((q) => q !== null)
   // One entry (family unset) for a single-family target; v4 then v6 for a both
   // target, less what the filter hides.
   const families = shownFamilies(target, family)
@@ -199,6 +206,14 @@ export default function Detail({
           Certificates are not verified for this target.
         </p>
       )}
+
+      {/* Before the figures, because it is why they stop: an agent that is not
+          reporting leaves "no data" behind it, which says nothing on its own. */}
+      {quiet.map((q) => (
+        <p key={q} className="hint warn-line">
+          {q}.
+        </p>
+      ))}
 
       {families.length === 0 ? (
         <p className="hint">This target's series are hidden by the family filter.</p>

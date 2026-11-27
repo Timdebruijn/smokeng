@@ -495,6 +495,37 @@ export function flagNote(f: { label: string; count: number }, intervals: number,
     : `${f.label} in ${f.count} of ${intervals} ${intervals === 1 ? 'interval' : 'intervals'}, last at ${lastAt}`
 }
 
+/** How long ago, in words: "just now", "40s ago", "3 hours ago". */
+export function relativeTime(unixSeconds: number | undefined, now = Date.now() / 1000): string {
+  if (unixSeconds === undefined) return 'never'
+  const deltaS = Math.floor(now) - unixSeconds
+  if (deltaS < 5) return 'just now'
+  if (deltaS < 60) return `${deltaS}s ago`
+  const m = Math.round(deltaS / 60)
+  if (m < 60) return `${m} minute${m === 1 ? '' : 's'} ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`
+  const d = Math.round(h / 24)
+  return `${d} day${d === 1 ? '' : 's'} ago`
+}
+
+/**
+ * Why an agent's targets may have no recent data, when its silence is the
+ * reason: it has never reported, or not as often as its targets say it should
+ * (state and report_every_s from /api/v1/agents). null while it is reporting,
+ * or when its silence means nothing.
+ */
+export function agentQuietNote(
+  a: { name: string; state?: string; report_every_s?: number; last_seen?: number },
+  now = Date.now() / 1000,
+): string | null {
+  if (a.state === 'never') return `${a.name} has never reported`
+  if ((a.state === 'late' || a.state === 'silent') && a.report_every_s) {
+    return `${a.name} is ${a.state}: last reported ${relativeTime(a.last_seen, now)}, expected every ${rangeWords(a.report_every_s)}`
+  }
+  return null
+}
+
 /** What a probe-error badge or note means, wherever it is shown. */
 export const PROBE_ERROR_TITLE =
   'Why probes failed at the service — a refused connection, an HTTP status, a DNS response code — so they count as lost.'
