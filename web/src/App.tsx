@@ -341,11 +341,18 @@ function AppHeader({
           <div className="usermenu">
             <button
               className="chip-button"
+              // Name and role as one phrase; the spans ran together as
+              // "Tim de Bruijnviewer". It starts with the visible name.
+              aria-label={`${who || 'Signed in'}, ${me.role}`}
               aria-expanded={menu === 'user'}
               aria-controls="user-popover"
               onClick={() => onMenu(menu === 'user' ? null : 'user')}
             >
-              <span className="avatar">{(who || '?').slice(0, 1).toUpperCase()}</span>
+              {/* Decoration: the name beside it says who, and read together
+                  the two made "TTim de Bruijn". */}
+              <span className="avatar" aria-hidden="true">
+                {(who || '?').slice(0, 1).toUpperCase()}
+              </span>
               <span className="who">{who}</span>
               <span className="role-tag">{me.role}</span>
             </button>

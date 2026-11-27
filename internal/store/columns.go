@@ -39,6 +39,10 @@ type Column struct {
 	// Positional is how many intervals in the column were flagged as losing
 	// probes at fixed send positions (Measurement.Positional).
 	Positional int
+	// ProbeErr is the probe error most intervals in the column that had one
+	// carried (Measurement.ProbeErr), or nil when none had one. One value per
+	// column, like one per interval: the common cause is the one to act on.
+	ProbeErr *uint16
 	// Quantiles holds the pooled samples, sorted ascending, when there are at
 	// most ColumnQuantiles of them; otherwise ColumnQuantiles evenly spaced
 	// order statistics (the sample at each mid-rank), each standing for an
@@ -69,7 +73,7 @@ func (s *SQLite) QueryColumns(ctx context.Context, targetID, agentID int64, fami
 		return nil, nil, fmt.Errorf("store: %d columns", n)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ts, sent, received, flags, samples, icmp_error, send_error FROM measurements
+		SELECT ts, sent, received, flags, samples, icmp_error, send_error, probe_error FROM measurements
 		WHERE target_id = ? AND agent_id = ? AND family = ? AND ts >= ? AND ts < ?
 		ORDER BY ts`, targetID, agentID, family, from, to)
 	if err != nil {
@@ -85,7 +89,7 @@ func (s *SQLite) QueryColumns(ctx context.Context, targetID, agentID int64, fami
 		}
 		m := Measurement{TargetID: targetID, AgentID: agentID, Family: family}
 		var blob []byte
-		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &m.ICMPErr, &m.SendErr); err != nil {
+		if err := rows.Scan(&m.TS, &m.Sent, &m.Received, &m.Flags, &blob, &m.ICMPErr, &m.SendErr, &m.ProbeErr); err != nil {
 			return nil, nil, err
 		}
 		if m.Samples, err = enc.Decode(blob); err != nil {
@@ -145,6 +149,8 @@ type pooler struct {
 	out  []Column
 	// outIdx is the column index of each entry of out.
 	outIdx []uint64
+	// probeErrs counts the current column's intervals per probe error.
+	probeErrs map[uint16]int
 }
 
 func newPooler(from, to int64, n int) *pooler {
@@ -187,6 +193,12 @@ func (p *pooler) add(m Measurement) error {
 		c.Flags |= m.Flags
 		c.Flagged++
 	}
+	if m.ProbeErr != nil {
+		if p.probeErrs == nil {
+			p.probeErrs = map[uint16]int{}
+		}
+		p.probeErrs[*m.ProbeErr]++
+	}
 	// One column's pool is what stays in memory, so this is the bound: a plot
 	// asking for a year in one column is asking for every sample at once.
 	if len(p.pool)+len(m.Samples) > maxSamplesPerRead {
@@ -201,6 +213,18 @@ func (p *pooler) close() {
 		return
 	}
 	p.cur.Quantiles = quantiles(p.pool, ColumnQuantiles)
+	if len(p.probeErrs) > 0 {
+		// Most intervals wins; a tie goes to the lower code, so a read is stable.
+		var best uint16
+		bestN := 0
+		for code, n := range p.probeErrs {
+			if n > bestN || n == bestN && code < best {
+				best, bestN = code, n
+			}
+		}
+		p.cur.ProbeErr = &best
+		clear(p.probeErrs)
+	}
 	p.out = append(p.out, *p.cur)
 	p.outIdx = append(p.outIdx, p.idx)
 	p.cur = nil

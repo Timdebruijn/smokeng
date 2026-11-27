@@ -47,6 +47,7 @@ func probeTCP(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 		// counts as loss exactly as a timeout does. Said once per interval
 		// rather than once per probe: twenty identical lines a minute would
 		// describe one unchanging fact.
+		col.onProbeError(idx, connError(ctx, err))
 		if idx == 0 && errors.Is(err, syscall.ECONNREFUSED) {
 			log.Printf("probe: %s (%s): tcp/%d refused the connection; counted as loss",
 				spec.label(), spec.Host, spec.ProbePort)

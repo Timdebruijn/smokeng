@@ -76,7 +76,24 @@ func probeDNS(ctx context.Context, col *collector, idx int, addr netip.Addr, spe
 	col.markSent(idx, 0, res.TXUser)
 	if err != nil {
 		// The query went out and no answer came back inside the timeout: loss,
-		// the same as an unanswered echo, and genuinely the resolver's.
+		// the same as an unanswered echo, and genuinely the resolver's. Which
+		// kind of no answer (silence, a port unreachable) is kept with it.
+		col.onProbeError(idx, connError(ctx, err))
+		return
+	}
+	// An answer that is not NOERROR is the resolver failing the question, the
+	// way an HTTP status of 400 or more is the server failing the request, and
+	// it counts as loss for the same reason: SERVFAIL timed as a healthy reply
+	// would draw a green band over a broken resolver. NXDOMAIN included: the
+	// probe asks one fixed name, and a resolver denying it exists is not the
+	// answer it is set up to time. The round trip did happen; the rcode is what
+	// says so, next to the loss.
+	if res.RCode != 0 {
+		col.onProbeError(idx, store.ProbeError(store.ProbeErrDNS, uint16(res.RCode)))
+		if idx == 0 {
+			log.Printf("probe: %s (%s): dns query to %s answered %s; counted as loss",
+				spec.label(), spec.Host, server, dns.RcodeToString[uint16(res.RCode)])
+		}
 		return
 	}
 	// Hand both stamps to the collector and let finalize decide. It already

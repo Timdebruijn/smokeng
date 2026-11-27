@@ -494,3 +494,85 @@ export function flagNote(f: { label: string; count: number }, intervals: number,
     ? `${f.label} in every interval`
     : `${f.label} in ${f.count} of ${intervals} ${intervals === 1 ? 'interval' : 'intervals'}, last at ${lastAt}`
 }
+
+/**
+ * What to tell an admin about webhook delivery, or null when there is nothing
+ * to say. Words, not a colour, and with when, so "failing" can be told from
+ * "failed once last week". A batch dropped in the last day is said even after
+ * deliveries recovered: it is not recovered with them, and a resolve in it is
+ * never announced again.
+ */
+export function deliveryWarning(
+  d: { ok: number; failed: number; dropped: number; failing: boolean; last_ok?: number; last_failed_at?: number; last_error?: string; last_dropped_at?: number },
+  at: (unixSeconds: number) => string = (ts) => new Date(ts * 1000).toLocaleString(),
+  now = Date.now() / 1000,
+): string | null {
+  const drops = d.dropped > 0 ? ` ${d.dropped} ${d.dropped === 1 ? 'batch' : 'batches'} dropped since start.` : ''
+  if (!d.failing) {
+    if (!d.last_dropped_at || now - d.last_dropped_at > 86400) return null
+    return `Alert webhook deliveries are going through again, but the queue was full at ${at(d.last_dropped_at)} and dropped a batch unsent; a transition in it was never delivered.${drops}`
+  }
+  const parts: string[] = []
+  if (d.last_failed_at && (!d.last_dropped_at || d.last_failed_at >= d.last_dropped_at)) {
+    parts.push(`The last delivery, at ${at(d.last_failed_at)}, failed: ${d.last_error ?? 'no reason given'}.`)
+  } else if (d.last_dropped_at) {
+    parts.push(`The delivery queue was full at ${at(d.last_dropped_at)} and dropped the oldest batch unsent.`)
+  }
+  parts.push(d.last_ok ? `The last one that went through was at ${at(d.last_ok)}.` : 'None has gone through since the master started.')
+  return `Alert webhook deliveries are failing. ${parts.join(' ')}${drops}`
+}
+
+/** How long ago, in words: "just now", "40s ago", "3 hours ago". */
+export function relativeTime(unixSeconds: number | undefined, now = Date.now() / 1000): string {
+  if (unixSeconds === undefined) return 'never'
+  const deltaS = Math.floor(now) - unixSeconds
+  if (deltaS < 5) return 'just now'
+  if (deltaS < 60) return `${deltaS}s ago`
+  const m = Math.round(deltaS / 60)
+  if (m < 60) return `${m} minute${m === 1 ? '' : 's'} ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`
+  const d = Math.round(h / 24)
+  return `${d} day${d === 1 ? '' : 's'} ago`
+}
+
+/**
+ * Why an agent's targets may have no recent data, when its silence is the
+ * reason: it has never reported, or not as often as its targets say it should
+ * (state and report_every_s from /api/v1/agents). null while it is reporting,
+ * or when its silence means nothing.
+ */
+export function agentQuietNote(
+  a: { name: string; state?: string; report_every_s?: number; last_seen?: number },
+  now = Date.now() / 1000,
+): string | null {
+  if (a.state === 'never') return `${a.name} has never reported`
+  if ((a.state === 'late' || a.state === 'silent') && a.report_every_s) {
+    return `${a.name} is ${a.state}: last reported ${relativeTime(a.last_seen, now)}, expected every ${rangeWords(a.report_every_s)}`
+  }
+  return null
+}
+
+/** What a probe-error badge or note means, wherever it is shown. */
+export const PROBE_ERROR_TITLE =
+  'Why probes failed at the service — a refused connection, an HTTP status, a DNS response code — so they count as lost.'
+
+/**
+ * Per probe error in a series (Series.probeErrors): how many rows carried it,
+ * and when the last of them started; commonest first, then by code.
+ */
+export function probeErrorCounts(s: {
+  ts: ArrayLike<number>
+  probeErrors: (number | null)[]
+}): { code: number; count: number; last: number }[] {
+  const by = new Map<number, { code: number; count: number; last: number }>()
+  for (let i = 0; i < s.probeErrors.length; i++) {
+    const code = s.probeErrors[i]
+    if (code === null) continue
+    const e = by.get(code) ?? { code, count: 0, last: 0 }
+    e.count++
+    e.last = Math.max(e.last, s.ts[i])
+    by.set(code, e)
+  }
+  return [...by.values()].sort((a, b) => b.count - a.count || a.code - b.code)
+}

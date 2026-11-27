@@ -57,7 +57,7 @@ The class says who may call a route:
 | `GET /api/v1/measurements` | read | One series, as an Arrow IPC stream. |
 | `GET /api/v1/availability` | read | Uptime and downtime episodes over a window. |
 | `GET /api/v1/paths` | read | Route changes for one series. |
-| `GET /api/v1/agents` | read | Agents and when they were last seen. |
+| `GET /api/v1/agents` | read | Agents, when they were last seen, and whether they report as often as they should (`report_every_s`, `state`: `reporting`, `late`, `silent` or `never`; see [Agents](agents.md#late-and-silent-agents)). |
 | `GET /api/v1/alert-rules` | read | Alert rules. |
 | `POST /api/v1/alert-rules` | write | Create a rule. |
 | `PATCH /api/v1/alert-rules/{id}` | write | Change a rule. |
@@ -133,6 +133,7 @@ An Arrow IPC stream (`application/vnd.apache.arrow.stream`), not JSON.
 | `samples` | list of uint32 | Round-trip times in microseconds, sorted ascending. |
 | `icmp_error` | uint16, nullable | ICMP type and code (`type<<8 \| code`) behind the failures. |
 | `send_error` | uint8, nullable | Why the local side could not send. |
+| `probe_error` | uint16, nullable | Why the interval's failed `tcp`, `http(s)` or `dns` probes got no successful answer, the commonest: kind in the top four bits, detail in the low twelve. Kind 1 is the connection (1 refused, 2 reset, 3 timed out, 4 TLS or certificate rejected, 5 other, 6 closed without a response, 7 no route), kind 2 an HTTP status, kind 3 a DNS response code. Absent from a master before schema 32; a reader should treat absent as null. |
 | `loss_positions` | list of uint16, nullable | Set when the master found the series to lose its probes at fixed places in the send order. The send positions, counted from 1, that lost clearly more than their share; an empty list when the loss leans to one end without a single position standing out. Null when the interval is not flagged. |
 | `loss_window` | uint8, nullable | With `loss_positions`: how many intervals the finding rests on, at most 60. |
 | `ipdv_send`, `ipdv_receive`, `server_processing` | list of int32, nullable | irtt series. Null means not measured, not zero. |
@@ -162,9 +163,10 @@ none is absent, not an empty row. Tell the two shapes apart by the fields: only 
 | `positional` | uint32 | How many intervals were flagged as losing probes at fixed send positions (`loss_positions` in a raw read). Not a quality bit, so not counted in `flagged`. |
 | `quantiles` | list of uint32 | The pooled round-trip times in microseconds, sorted ascending: all of them when there are at most 256, otherwise 256 order statistics at evenly spaced ranks, each standing for an equal share of the replies. Every value is a measured sample. |
 | `ipdv_send`, `ipdv_receive`, `server_processing` | list of int32, nullable | The irtt series, pooled the same way. Null where no interval in the column measured the series; empty where intervals measured it with nothing to give. |
+| `probe_error` | uint16, nullable | The `probe_error` most of the column's intervals that had one carried, a tie going to the lower code. Null when none had one. |
 
 Nothing is averaged and nothing is stored: the column is pooled from the stored intervals when
-it is read. Per-interval details (`icmp_error`, `send_error`, `loss_positions`) are not in a pooled read. A read is
+it is read. Per-interval details (`icmp_error`, `send_error`, `loss_positions`) are not in a pooled read; `probe_error` is there only as each column's commonest. A read is
 refused with `400` when it would walk more than 10 million rows — intervals plus their irtt series
 rows; thirty days of a one-second series — or one column would pool more than 20 million samples;
 ask for a shorter window, or more columns.
@@ -251,7 +253,12 @@ window that had data. Read the two together.
 ```
 
 `acked_by`, `acked_at` and `silenced_until` appear when they apply. `delivering` says a webhook
-is configured, not that deliveries succeed. To acknowledge, `POST /api/v1/alerts/ack` with
+is configured, not that deliveries succeed. Whether they do is in `delivery`, present for a global
+admin when a webhook is configured: `ok` and `failed` count POSTs since start, and `dropped` the
+batches the full queue discarded without posting;
+`failing` is true when a delivery failed or a batch was dropped and none has gone through since;
+`last_ok`, `last_failed_at` with `last_error`, and `last_dropped_at` are unix times, each absent
+until it happens. `last_error` names the webhook by scheme and host only. To acknowledge, `POST /api/v1/alerts/ack` with
 `{"rule_id": 2, "target_id": 7, "agent_id": 0}`; add `"ack": false` to clear it. An alert is
 per (rule, target, agent, family): `"family"` (`v4`, `v6` or `unknown`) picks the series and
 defaults to the target's current family. Any other value is a 400.

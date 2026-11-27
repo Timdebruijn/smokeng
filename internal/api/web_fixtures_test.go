@@ -30,6 +30,7 @@ type fixtureJSON struct {
 	Samples  [][]uint32 `json:"samples"`
 	ICMP     []*uint16  `json:"icmp_error"`
 	SendErr  []*uint8   `json:"send_error"`
+	ProbeErr []*uint16  `json:"probe_error"`
 	// Null where the interval is not flagged; an empty list is a flagged one
 	// whose loss leans to an end without a position standing out.
 	LossPositions []*[]uint16           `json:"loss_positions"`
@@ -52,6 +53,13 @@ func fixtureMeasurements(rows int) []store.Measurement {
 		}
 		if i%7 == 0 {
 			m.SendErr = send(2)
+		}
+		// An HTTP 503 and a refused connection, so both kinds cross the wire.
+		switch i % 4 {
+		case 1:
+			m.ProbeErr = icmp(store.ProbeError(store.ProbeErrHTTP, 503))
+		case 2:
+			m.ProbeErr = icmp(store.ProbeError(store.ProbeErrConn, store.ProbeConnRefused))
 		}
 		// Three states, as the reader must tell apart: not flagged, flagged with
 		// the tail (probes 16 to 20) standing out, and flagged with a profile that
@@ -108,6 +116,7 @@ func nullReceived() []byte {
 		for j := 0; j < len(store.KnownSeries); j++ {
 			rb.Field(9 + j).(*array.ListBuilder).AppendNull()
 		}
+		rb.Field(9 + len(store.KnownSeries)).(*array.Uint16Builder).AppendNull()
 	}
 	rec := rb.NewRecord()
 	defer rec.Release()
@@ -261,6 +270,7 @@ type pooledJSON struct {
 	Positional []int                 `json:"positional"`
 	Quantiles  [][]uint32            `json:"quantiles"`
 	Series     map[string][]*[]int32 `json:"series"`
+	ProbeErr   []*uint16             `json:"probe_error"`
 }
 
 func fixtureColumns() []store.Column {
@@ -274,6 +284,9 @@ func fixtureColumns() []store.Column {
 		}
 		if i == 4 {
 			c.Sent, c.Received = 70_000, 0
+		}
+		if i%2 == 1 {
+			c.ProbeErr = new(store.ProbeError(store.ProbeErrDNS, 2)) // SERVFAIL
 		}
 		// Every state a pooled series has: values, measured and empty, absent.
 		c.Series = map[string][]int32{}
@@ -305,6 +318,7 @@ func pooledFixture() (arrowBytes, jsonBytes []byte) {
 		want.Flagged = append(want.Flagged, c.Flagged)
 		want.Positional = append(want.Positional, c.Positional)
 		want.Quantiles = append(want.Quantiles, append([]uint32{}, c.Quantiles...))
+		want.ProbeErr = append(want.ProbeErr, c.ProbeErr)
 		for _, name := range store.KnownSeries {
 			if v, ok := c.Series[name]; ok {
 				v := append([]int32{}, v...)
@@ -365,7 +379,7 @@ func fixtureFiles() map[string][]byte {
 		// JSON, not null.
 		want := fixtureJSON{
 			TS: []int64{}, Sent: []int{}, Received: []int{}, Flags: []int{}, Samples: [][]uint32{},
-			ICMP: []*uint16{}, SendErr: []*uint8{},
+			ICMP: []*uint16{}, SendErr: []*uint8{}, ProbeErr: []*uint16{},
 			LossPositions: []*[]uint16{}, LossWindow: []*uint8{}, Series: map[string][]*[]int32{},
 		}
 		for _, name := range store.KnownSeries {
@@ -396,6 +410,7 @@ func fixtureFiles() map[string][]byte {
 			want.Samples = append(want.Samples, append([]uint32{}, m.Samples...))
 			want.ICMP = append(want.ICMP, m.ICMPErr)
 			want.SendErr = append(want.SendErr, m.SendErr)
+			want.ProbeErr = append(want.ProbeErr, m.ProbeErr)
 			for _, name := range store.KnownSeries {
 				if v, ok := m.Series[name]; ok {
 					v := append([]int32{}, v...)

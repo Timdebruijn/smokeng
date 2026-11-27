@@ -2344,3 +2344,9 @@ dialog.modal-host::backdrop {
   margin: 0.3rem 0 0.6rem;
   padding-left: 1.2rem;
 }
+
+/* An agent that is not reporting as often as it should, on the Agents page.
+   --warn-text: it is text, and has to reach 4.5:1 in both themes. */
+.agent-quiet {
+  color: var(--warn-text);
+}

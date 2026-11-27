@@ -6,6 +6,7 @@
  "samples": [],
  "icmp_error": [],
  "send_error": [],
+ "probe_error": [],
  "loss_positions": [],
  "loss_window": [],
  "series": {

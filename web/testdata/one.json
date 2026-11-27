@@ -20,6 +20,9 @@
  "send_error": [
   2
  ],
+ "probe_error": [
+  null
+ ],
  "loss_positions": [
   null
  ],

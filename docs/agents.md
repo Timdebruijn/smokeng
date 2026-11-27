@@ -188,6 +188,44 @@ smokeng agent remove  --db smokeng.db 3
 All of this is also in the UI under **Agents**, which is the easier place to do it: it
 shows when each agent last reported, and which targets it measures.
 
+### Late and silent agents
+
+An agent reports when it has measurements: it pushes every 15 seconds what it has buffered,
+and it has something new once per interval of its fastest target. So it should be heard from
+at least once every **cadence**, its shortest target interval plus 15 seconds, counting only
+enabled targets with a host. Against that, the Agents page says, in words:
+
+| State | When |
+| --- | --- |
+| reporting | last report within two cadences |
+| late | within ten cadences, but not two |
+| silent | not within ten cadences |
+| has never reported | the agent has targets and has never submitted anything |
+
+The status column says it with the cadence, for example `ams-01 is late: last reported 12
+minutes ago, expected every 5 minutes 15 seconds`, or `ams-01 has never reported`. That
+sentence also leads the overview row of each series the agent measures (hidden targets have no
+row) and the target page of each target it is assigned, so a row with no data says why.
+
+A late agent is often only buffering behind a broken link: its measurements arrive when the link
+returns, and the graphs fill in. It can also be one the master keeps refusing, for a clock too
+far off or a master under load: the agent keeps the batch and tries again, and its log says
+`master rejected the batch with …`. "Last reported" means the last batch the master accepted.
+
+Only targets the prober actually measures count: a `tcp` target without a port is skipped, so
+it sets no cadence. The cadence follows the master's tree as it is now, while an agent picks up
+a change within a minute, so making a target's interval much shorter can show its agent late or
+silent for a minute or two until the first new measurement arrives.
+
+The local prober, a disabled agent and an agent that measures no target have no state: the
+first is the master itself, the second is refused at the door, and the third has nothing to
+send. A scoped user's cadence counts only the targets they can see.
+
+The state is for reading, and is not evaluated by alert rules. To alert on agents, use
+`smokeng_agent_last_seen_seconds` (see [Monitoring smokeng itself](operations.md#monitoring-smokeng-itself)).
+The example rule there uses a fixed 300 seconds; set it above the cadence of your slowest agent,
+or it fires on every normal gap of an agent whose targets run every five minutes or slower.
+
 A disabled agent is refused at the door: its requests fail verification, and it keeps
 buffering locally rather than losing measurements.
 
