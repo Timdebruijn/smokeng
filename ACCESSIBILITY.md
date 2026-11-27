@@ -1,6 +1,6 @@
 # Accessibility statement for smokeng
 
-This statement covers the web interface that the smokeng binary serves. It follows the structure of the [W3C accessibility statement](https://www.w3.org/WAI/planning/statements/) and describes smokeng v0.33.0.
+This statement covers the web interface that the smokeng binary serves. It follows the structure of the [W3C accessibility statement](https://www.w3.org/WAI/planning/statements/) and describes smokeng v0.34.0.
 
 ## Conformance status
 
@@ -65,10 +65,12 @@ If something in smokeng does not work for you, open an issue at <https://github.
 
 ## Date
 
-This statement was written on 25 November 2026 for v0.30.0, reviewed on 26 November 2026 for v0.31.0, and on 27 November 2026 for v0.32.0 and again for v0.33.0, and is reviewed with every release that changes the interface.
+This statement was written on 25 November 2026 for v0.30.0, reviewed on 26 November 2026 for v0.31.0, and on 27 November 2026 for v0.32.0, v0.33.0 and v0.34.0, and is reviewed with every release that changes the interface.
 
 v0.31.0 changes the Targets page (settings edited in place, a probe type in the add form, an irtt key block) and groups the Overview and Graphs pages by target group. These parts were checked with the keyboard, in the accessibility tree and at 390 px, but were not part of either audit above, and no screen reader was tried on them.
 
 v0.32.0 says by what a series is flagged: a line of text under the target's name in its Overview row and a list of flag notes on a target's page, both in the existing warning text colour, with the time in 24-hour form. They add no controls. They were reviewed in the source and their unit tests pass, but were not part of either audit above and were not checked in a browser, with the keyboard or with a screen reader.
 
 v0.33.0 fits the header on a phone in two rows, with 44 px controls, a tab row that scrolls sideways and a user menu button named as one phrase. It also adds text for why a probe failed and for an agent that has gone quiet (on the Overview, a target's page and the Agents page) and a warning on the Alerts page when webhook deliveries fail. The header was rendered in Chromium at 375 and 390 px and measured. The rest was reviewed in the source and by unit tests. None of it was checked with the keyboard in a real browser or with a screen reader. Known from that review: at 320 px the header still takes about a fifth of the screen; the tab row hides its scrollbar, so with a mouse on a narrow window a cut-off last tab is the only hint that it scrolls; and around 150 % zoom the sticky header may cover a focused element (WCAG 2.4.11), because the space it reserves is fixed.
+
+v0.34.0 names the ICMP error, the reason probes were not sent and loss at fixed positions in the Overview row and on a target's page, as text in place of the bare "ICMP errors" and "not sent"; ICMP errors on an IPv6 series are named as ICMPv6. It adds no controls. It was reviewed in the source and by unit tests, not in a browser, with the keyboard or with a screen reader.
