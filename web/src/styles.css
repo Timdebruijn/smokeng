@@ -1391,8 +1391,14 @@ html {
 }
 
 /* The detail screen's plot is already inside a card, under a heading that
-   names the target — so it drops both its chrome and its own title. */
-.detail-plot .plot-head {
+   names the target — so it drops its own title, host and buttons. Its flag
+   badges stay: they are what the "Recorded …" note above it points to. The
+   badges' popovers stay too, or the explanation behind each could not open. */
+.detail-plot .plot-head > :not(.quality, .hint-pop) {
+  display: none;
+}
+
+.detail-plot .plot-head:not(:has(.quality)) {
   display: none;
 }
 
