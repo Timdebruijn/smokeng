@@ -350,7 +350,7 @@ export default function Compare({
       {error && <p className="hint small error">{error}</p>}
       <p className="hint small">
         Vantage points are never averaged — each line is its own measurement. Uncheck targets in the
-        target list to narrow the comparison. Only the median is drawn here; the distribution is in
+        target list (☰ on a narrow screen) to narrow the comparison. Only the median is drawn here; the distribution is in
         the plots on this page.
       </p>
     </div>

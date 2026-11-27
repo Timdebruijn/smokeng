@@ -104,8 +104,8 @@ route is recorded, rather than a wrong one.
   the interval under it: time, median, replies received out of sent, and any ICMP error. On a
   long window it is the pixel column under it instead; see [Long windows](#long-windows).
 - **Drag** — on the graphs view, select a time span to zoom every plot to it (at least five
-  seconds). `reset zoom` returns to the trailing window. The detail view does not take a
-  drag; use its range buttons.
+  seconds). `reset zoom` returns to the trailing window. The detail view takes a drag too,
+  for its own plot.
 - **Range buttons** — 15m, 1h, 6h, 24h, 7d, 30d; `log` toggles between logarithmic and
   linear latency, and `live` follows the present. A trailing window refreshes every ten
   seconds, or about once per pixel column when that is longer: a month every 43 minutes.
