@@ -968,7 +968,10 @@ row as unknown): the master files a row under the family it states, and under th
 family (v4 for a target measured over both) when it states none or a value that is not a family; the
 row is kept either way, as it is when a mask does not fit. A row of a family the target is not
 measured over is stored but not handed to alerting, since a state kept for it
-would have no later interval to clear it. The master checks each mask against its row's `sent` and `received`,
+would have no later interval to clear it. `probe_error` (`Uint16`, store.ProbeError) is the
+last field, optional and nullable too; a master ignores one of the wrong type or with a short
+validity bitmap and keeps the rows, and reads a value with no kind in its top four bits as none, where a `send_error` or `family` of the wrong type refuses the
+batch. The master checks each mask against its row's `sent` and `received`,
 and against the part of the prober's rule a row can show (its flags, and that the loss is
 partial), and drops a mask that fails either, keeping the row and logging one line per
 batch. It cannot check the rest: the probe type and the configured number of probes are

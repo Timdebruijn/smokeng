@@ -214,24 +214,8 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[SpecKey]TargetSpec, error) 
 		if !slices.Contains(strings.Fields(res.Agents.Effective), "local") {
 			continue
 		}
-		spec := TargetSpec{
-			TargetID:       n.ID,
-			Host:           *n.Host,
-			IntervalS:      res.IntervalS.Effective,
-			Pings:          res.PingsPerInterval.Effective,
-			Mode:           res.ProbeMode.Effective,
-			BurstGapMS:     res.BurstGapMS.Effective,
-			TimeoutMS:      res.TimeoutMS.Effective,
-			PacketSize:     res.PacketSize.Effective,
-			DSCP:           res.DSCP.Effective,
-			TraceIntervalS: res.TraceIntervalS.Effective,
-			ProbeType:      res.ProbeType.Effective,
-			ProbePort:      res.ProbePort.Effective,
-			DNSQuery:       res.DNSQuery.Effective,
-			DNSRRType:      res.DNSRRType.Effective,
-			HTTPPath:       res.HTTPPath.Effective,
-			TLSSkipVerify:  res.TLSSkipVerify.Effective,
-		}
+		spec := specFor(res)
+		spec.TargetID, spec.Host = n.ID, *n.Host
 		// A target that cannot be measured as configured is skipped and said
 		// out loud. Probing it anyway would mean guessing at the missing
 		// piece, and a graph drawn from a guess is worse than no graph.
@@ -249,6 +233,31 @@ func (e *Engine) loadSpecs(ctx context.Context) (map[SpecKey]TargetSpec, error) 
 	e.reportSpecProblems(targets, problems)
 	return specs, nil
 }
+
+// specFor is what a target's resolved settings make of a spec, short of the
+// target's identity and family.
+func specFor(res tree.Resolved) TargetSpec {
+	return TargetSpec{
+		IntervalS:      res.IntervalS.Effective,
+		Pings:          res.PingsPerInterval.Effective,
+		Mode:           res.ProbeMode.Effective,
+		BurstGapMS:     res.BurstGapMS.Effective,
+		TimeoutMS:      res.TimeoutMS.Effective,
+		PacketSize:     res.PacketSize.Effective,
+		DSCP:           res.DSCP.Effective,
+		TraceIntervalS: res.TraceIntervalS.Effective,
+		ProbeType:      res.ProbeType.Effective,
+		ProbePort:      res.ProbePort.Effective,
+		DNSQuery:       res.DNSQuery.Effective,
+		DNSRRType:      res.DNSRRType.Effective,
+		HTTPPath:       res.HTTPPath.Effective,
+		TLSSkipVerify:  res.TLSSkipVerify.Effective,
+	}
+}
+
+// Measurable reports whether a target with these resolved settings is probed
+// at all, on the master or an agent: both skip one that fails validateSpec.
+func Measurable(res tree.Resolved) bool { return validateSpec(specFor(res)) == nil }
 
 // validateSpec checks the settings a probe type needs but the tree cannot
 // enforce. tree.Validate sees one node's own settings; whether a port is set

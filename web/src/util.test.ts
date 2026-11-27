@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { availabilityURL, fetchSeries, pathsURL, seriesURL, type Target } from './api.ts'
+import { availabilityURL, fetchSeries, pathsURL, probeErrorName, seriesURL, type Target } from './api.ts'
 import { axisLabel } from './layout.ts'
 import {
   graphGroups,
   graphGroupLabel,
   afterName,
   deliveryWarning,
+  agentQuietNote,
   alertKey,
   alertName,
   RANGES,
+  relativeTime,
   rangeWords,
   countedFlags,
   countUnacked,
@@ -20,6 +22,7 @@ import {
   flagCounts,
   flagNote,
   flagsIn,
+  probeErrorCounts,
   QUALITY_FLAGS,
   groupOfPath,
   groupRows,
@@ -470,4 +473,45 @@ test('deliveryWarning picks the newer of a failure and a drop, and says a recent
   const recovered = { ok: 5, failed: 0, dropped: 1, failing: false, last_ok: 200, last_dropped_at: 100 }
   assert.match(deliveryWarning(recovered, at, 100 + 3600)!, /^Alert webhook deliveries are going through again, but the queue was full at t100/)
   assert.equal(deliveryWarning(recovered, at, 100 + 86401), null)
+})
+
+test('relativeTime is coarse, and never for nothing', () => {
+  assert.equal(relativeTime(undefined, 1000), 'never')
+  assert.equal(relativeTime(998, 1000), 'just now')
+  assert.equal(relativeTime(960, 1000), '40s ago')
+  assert.equal(relativeTime(1000 - 3 * 3600, 1000), '3 hours ago')
+})
+
+test('agentQuietNote says why a silent agent leaves no data, and nothing otherwise', () => {
+  const now = 100_000
+  assert.equal(agentQuietNote({ name: 'ams', state: 'never', report_every_s: 75 }, now), 'ams has never reported')
+  assert.equal(
+    agentQuietNote({ name: 'ams', state: 'silent', report_every_s: 315, last_seen: now - 3 * 3600 }, now),
+    'ams is silent: last reported 3 hours ago, expected every 5 minutes 15 seconds',
+  )
+  assert.match(agentQuietNote({ name: 'ams', state: 'late', report_every_s: 75, last_seen: now - 200 }, now)!, /^ams is late: /)
+  assert.equal(agentQuietNote({ name: 'ams', state: 'reporting', report_every_s: 75, last_seen: now }, now), null)
+  // No state: local, disabled, or measuring nothing.
+  assert.equal(agentQuietNote({ name: 'local' }, now), null)
+})
+
+test('probeErrorName reads every kind, and an unknown code as its parts', () => {
+  assert.equal(probeErrorName(0x1001), 'connection refused')
+  assert.equal(probeErrorName(0x1004), 'TLS or certificate rejected')
+  assert.equal(probeErrorName(0x2000 | 503), 'HTTP 503')
+  assert.equal(probeErrorName(0x3002), 'DNS SERVFAIL')
+  assert.equal(probeErrorName(0x3003), 'DNS NXDOMAIN')
+  assert.equal(probeErrorName(0x3000 | 23), 'DNS rcode 23')
+  assert.equal(probeErrorName(0x1000 | 99), 'connection error 99')
+  assert.equal(probeErrorName(0x7001), 'probe error 28673')
+})
+
+test('probeErrorCounts counts rows per error, commonest first, with the last start', () => {
+  const s = { ts: [100, 200, 300, 400, 500], probeErrors: [0x2000 | 503, null, 0x1001, 0x2000 | 503, 0x1003] }
+  assert.deepEqual(probeErrorCounts(s), [
+    { code: 0x2000 | 503, count: 2, last: 400 },
+    { code: 0x1001, count: 1, last: 300 },
+    { code: 0x1003, count: 1, last: 500 },
+  ])
+  assert.deepEqual(probeErrorCounts({ ts: [1], probeErrors: [null] }), [])
 })

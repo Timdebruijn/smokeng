@@ -185,6 +185,7 @@ deletes whole intervals; it never coarsens them.
 | `clock step` | wall clock and monotonic clock diverged; those RTTs are not trusted |
 | ICMP error, by name | "administratively prohibited" is a different finding from silence |
 | `not sent` | the probes never went out; the reason says why. Counted as lost, not drawn as empty |
+| a probe error: `connection refused`, `HTTP 503`, `DNS SERVFAIL`, … | why `tcp`, `http(s)` or `dns` probes failed at the service; these are the loss |
 | `positional loss` | the loss sits at fixed places in the send order; consistent with rate limiting by the target, not proof of it |
 
 The data model, encoding and render pipeline: [DESIGN.md](DESIGN.md) and

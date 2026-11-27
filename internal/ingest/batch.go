@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -46,6 +47,10 @@ var BatchSchema = arrow.NewSchema([]arrow.Field{
 	{Name: store.SeriesIPDVSend, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
 	{Name: store.SeriesIPDVReceive, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
 	{Name: store.SeriesServerProcessing, Type: arrow.ListOf(arrow.PrimitiveTypes.Int32), Nullable: true},
+	// Why the far end gave probes no successful answer (store.ProbeError).
+	// Optional on the wire like send_error. Last, so that adding it moved no
+	// field the encoder addresses by position.
+	{Name: "probe_error", Type: arrow.PrimitiveTypes.Uint16, Nullable: true},
 }, nil)
 
 // seriesColumns are the schema's optional series columns, in field order. They
@@ -77,6 +82,7 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 		seriesB[i] = rb.Field(10 + i).(*array.ListBuilder)
 		seriesV[i] = seriesB[i].ValueBuilder().(*array.Int32Builder)
 	}
+	probeErrB := rb.Field(10 + len(seriesColumns)).(*array.Uint16Builder)
 
 	for _, m := range ms {
 		targetB.Append(m.TargetID)
@@ -115,6 +121,11 @@ func EncodeBatch(ms []store.Measurement) ([]byte, error) {
 			seriesB[i].Append(true)
 			seriesV[i].AppendValues(vals, nil)
 		}
+		if m.ProbeErr != nil {
+			probeErrB.Append(*m.ProbeErr)
+		} else {
+			probeErrB.AppendNull()
+		}
 	}
 	rec := rb.NewRecord()
 	defer rec.Release()
@@ -149,6 +160,12 @@ func DecodeBatch(body []byte, agentID int64) ([]store.Measurement, error) {
 // rows, each materialised outside the Arrow budget and written in one
 // transaction.
 const MaxBatchRows = 10_000
+
+// PushEvery is how often an agent sends what it has buffered. The master uses
+// it too, to tell an agent that is late from one that has simply had nothing
+// to send yet: an agent reports when it has measurements, so its cadence is its
+// shortest target interval plus this.
+const PushEvery = 15 * time.Second
 
 // decodeFrames is DecodeBatch past the framing screen, with the allocation
 // budget as a parameter so a test can run the real reader against a small one.
@@ -246,6 +263,13 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 			if sendErrs, ok = c.(*array.Uint8); !ok {
 				return nil, fmt.Errorf("ingest: column \"send_error\" is not uint8")
 			}
+		}
+		// Optional too, and never a reason to refuse the batch: a column of the
+		// wrong type or with a short bitmap is ignored and the rows are kept
+		// without it. A refused batch costs the measurements; this costs a label.
+		var probeErrs *array.Uint16
+		if c, ok := col("probe_error").(*array.Uint16); ok && checkValidity("probe_error", c) == nil {
+			probeErrs = c
 		}
 		var masks *array.Binary
 		if c := col("loss_mask"); c != nil {
@@ -351,6 +375,13 @@ func decodeFrames(body []byte, agentID int64, limit int) (ms []store.Measurement
 			}
 			if sendErrs != nil && !sendErrs.IsNull(i) {
 				m.SendErr = new(sendErrs.Value(i))
+			}
+			// A value without a kind in its top four bits is no code at all (0
+			// included) and is read as none, not stored to show as "probe error
+			// 0". A kind this master does not know is kept: it is a newer
+			// prober's, and the UI names it by its parts.
+			if probeErrs != nil && !probeErrs.IsNull(i) && probeErrs.Value(i)>>12 != 0 {
+				m.ProbeErr = new(probeErrs.Value(i))
 			}
 			// Only 4 and 6 are families. Any other value is read as none stated,
 			// and the row kept, for the reason a mask that does not fit is dropped

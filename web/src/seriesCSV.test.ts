@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { compareRows, csvFileName, extraSeriesRows, roundTripRows, type RoundTripData } from './seriesCSV.ts'
-import { icmpErrorName, sendReasonName } from './api.ts'
+import { icmpErrorName, probeErrorName, sendReasonName } from './api.ts'
 import { csvCell } from './util.ts'
 
 const FLAGS = [
@@ -20,6 +20,7 @@ const data: RoundTripData = {
   flags: [0, 0, 0, 1 | 8],
   icmpErrors: [null, null, null, null],
   sendErrors: [null, null, null, null],
+  probeErrors: [null, null, null, null],
   lossPositions: [null, null, null, null],
 }
 const csv = (rows: (string | number)[][]) => rows.map((r) => r.map(csvCell).join(','))
@@ -40,6 +41,15 @@ test('an ICMP error and a send error are named in their own columns', () => {
   assert.ok(Number.isNaN(rows[2][send]))
   assert.equal(rows[3][send], sendReasonName(1))
   assert.ok(Number.isNaN(rows[3][icmp]))
+})
+
+test('a probe error is named in its own column', () => {
+  const rows = roundTripRows({ ...data, probeErrors: [null, 0x2000 | 503, null, null] }, FLAGS, 60)
+  const probe = rows[0].indexOf('probe_error')
+  assert.ok(probe > 0)
+  assert.ok(Number.isNaN(rows[1][probe]))
+  assert.equal(rows[2][probe], probeErrorName(0x2000 | 503))
+  assert.equal(rows[2][probe], 'HTTP 503')
 })
 
 test('a value that was not measured is an empty cell, never 0', () => {
@@ -68,7 +78,7 @@ test('a pooled column says what it spans and that its flags are any-interval', (
   )
   assert.deepEqual(rows[0].slice(0, 4), ['column_start_utc', 'column_end_utc', 'intervals', 'covered_percent_estimate'])
   // A pooled read has no per-interval details: no column that would read as "none".
-  assert.ok(!rows[0].includes('icmp_error') && !rows[0].includes('send_error'))
+  assert.ok(!rows[0].includes('icmp_error') && !rows[0].includes('send_error') && !rows[0].includes('probe_error'))
   assert.equal(rows[0].length, rows[1].length)
   assert.equal(rows[1][3], 100)
   assert.equal(rows[4][3], 50)

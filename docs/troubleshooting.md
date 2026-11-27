@@ -183,6 +183,10 @@ Check reachability from the agent host:
 curl -m8 -sS -o /dev/null -w '%{http_code}\n' https://smokeng.example.org/healthz
 ```
 
+The Agents page says whether each agent is reporting, late or silent against its cadence (see
+[Late and silent agents](agents.md#late-and-silent-agents)), and the overview row of each of its
+targets leads with the same sentence.
+
 `/healthz` only proves the process answers. `smokeng_agent_last_seen_seconds` and
 `smokeng_ingest_rejected_total` show whether the agent is reaching the master. The refusal
 reason is in the log only: a metric label would tell a caller which check they failed.
@@ -268,9 +272,10 @@ Set up a log alert on `alert: deliver`, or you will find out from the users. Det
 
 ## Everything is up, but the graph says loss
 
-A TCP refusal and an HTTP status of 400 or higher count as loss, and so does a rejected
-certificate. The log names the first two once per interval. Tables and the fixes (for example
-`http_path`, `--tls-ca-file`): [Probes](probes.md).
+A TCP refusal and an HTTP status of 400 or higher count as loss, and so do a rejected
+certificate and a DNS response code other than NOERROR. The probe error names which: on the
+overview row, as a badge beside the graph, and on the target's page. Tables and the fixes (for
+example `http_path`, `--tls-ca-file`): [Probes](probes.md).
 
 A probe this host could not send carries the `not sent` badge with a reason (see below). Fix
 the local cause (`ulimit -n`, `LimitNOFILE=`, route, firewall), not the target. If nothing at

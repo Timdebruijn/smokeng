@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/heistp/irtt"
 
@@ -74,5 +77,48 @@ func TestSendReasonForOpen(t *testing.T) {
 	// Only an unplaceable error falls back to calling it a refusal.
 	if got := sendReasonForOpen(errors.New("?")); got != store.SendReasonSessionRefused {
 		t.Errorf("an unplaceable open failure = reason %d", got)
+	}
+}
+
+// A probe abandoned because its own context ended (a shutdown, a settings
+// change, the bucket deadline) learned nothing about the far end, so it has no
+// reason; anything else is classified.
+func TestConnErrorSaysNothingForAnAbandonedProbe(t *testing.T) {
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := connError(done, context.Canceled); got != 0 {
+		t.Errorf("abandoned probe: %#x, want no reason", got)
+	}
+	live := context.Background()
+	for err, want := range map[error]uint16{
+		syscall.ECONNREFUSED:        store.ProbeConnRefused,
+		syscall.ECONNRESET:          store.ProbeConnReset,
+		syscall.EHOSTUNREACH:        store.ProbeConnUnreachable,
+		context.DeadlineExceeded:    store.ProbeConnTimeout,
+		io.EOF:                      store.ProbeConnClosed,
+		errors.New("something new"): store.ProbeConnOther,
+	} {
+		if got := connError(live, err); got != store.ProbeError(store.ProbeErrConn, want) {
+			t.Errorf("%v: %#x, want detail %d", err, got, want)
+		}
+	}
+}
+
+// A probe that failed with an answer of its own finished; it was not abandoned
+// by the truncation, so it counts. One still in flight with no answer does not.
+func TestTruncatedIntervalCountsAProbeThatAlreadyFailed(t *testing.T) {
+	var late atomic.Int64
+	col := newCollector(2, &late)
+	now := time.Now()
+	col.markSent(0, 0, now)
+	col.onProbeError(0, store.ProbeError(store.ProbeErrConn, store.ProbeConnRefused))
+	col.markSent(1, 0, now)
+	spec := TargetSpec{TargetID: 1, Pings: 2, TimeoutMS: 60_000, ProbeType: "tcp"}
+	m := col.finalize(spec, 0, conditions{truncated: true})
+	if m.Sent != 1 || m.Received != 0 {
+		t.Fatalf("sent %d received %d, want the refused probe counted and the one in flight left out", m.Sent, m.Received)
+	}
+	if m.ProbeErr == nil || *m.ProbeErr != store.ProbeError(store.ProbeErrConn, store.ProbeConnRefused) {
+		t.Errorf("ProbeErr = %v, want refused", m.ProbeErr)
 	}
 }

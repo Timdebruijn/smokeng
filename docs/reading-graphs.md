@@ -263,7 +263,9 @@ many of the hour's intervals, and when the last of them started, for example `cu
 of 12 intervals, last at 22:25`. A target's own page lists the badges in its window above the
 figures, each with what it means, and the mark before its name follows the overview's rule:
 a row that is yellow there is yellow there too. Both say `ICMP errors` as one entry; the badges
-beside the plot name each error.
+beside the plot name each error. Both also name the probe errors, which explain loss
+rather than flag it: the overview row the same way, for example `HTTP 503 in 12 of 12 intervals,
+last at 22:25`, and the target's page the commonest one in its window.
 
 | Badge | Meaning | What to do |
 | --- | --- | --- |
@@ -273,6 +275,7 @@ beside the plot name each error.
 | `clock step` | The wall clock jumped during these intervals. The affected round-trip times cannot be trusted. | Ignore those intervals' latency. Check NTP on the prober. |
 | `cut short` | The interval ended early, after a restart or a settings change. Its loss figure is not comparable with a whole interval. | Leave it out of any loss figure you quote. |
 | `not sent`, with a reason | The probes never went out: a refused write, an irtt session that never opened. They still draw as loss, so an unreachable target is not an empty graph. The reason says whether the cause was local or the far end. On an interval without data (reasons `no address to send to` and `no route to the target`) nothing was asked of the target: the interval is a gap in the smoke, the median line and the loss rail, and is in no loss figure or median. The hover says `no data`. | Read the reason first. A local cause is yours to fix; a refusal from the far end is evidence. With no data, the problem is the prober's DNS or routing, not the target. |
+| A probe error: `connection refused`, `timed out`, `TLS or certificate rejected`, `HTTP 503`, `DNS SERVFAIL`, … | Why `tcp`, `http(s)` and `dns` probes failed at the service, with how many intervals had it as their commonest. These probes are the loss on the plot; the badge says what kind. It is about the target, not about how well it was measured, so it does not turn the dot yellow. A pooled view names them without counts. | A refusal or a 5xx is the service; a timeout is the service or the path; a TLS rejection is the certificate (see [Internal certificates](probes.md#internal-certificates)); NXDOMAIN is usually `dns_query`. |
 | ICMP error | The target or a router answered with an ICMP error rather than an echo reply. The specific error (host unreachable, admin prohibited, TTL exceeded) appears in the hover readout. | Quote the exact error. It names who refused the traffic. |
 | `positional loss` | The loss in these intervals sits at fixed places in the send order, which loss that falls where it happens to does not do. Hover for the positions and the number of intervals it rests on. It is consistent with rate limiting by the target, a router or a CPE, and does not show that. The loss itself is drawn and counted as before. | Run `smokeng diag loss-pattern` to see the evidence ([Troubleshooting](troubleshooting.md#loss-on-a-graph-that-might-be-rate-limiting), which also says what the flag cannot see). If it is rate limiting, `probe_mode = "spread"` usually stays under the limit: [Probes](probes.md#rate-limiting-and-burst-or-spread). |
 
